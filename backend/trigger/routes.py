@@ -13,7 +13,9 @@ async def recall(
     召回接口——保长手写逻辑，野AI只定义骨架
     接收用户最近一句话，返回应浮现的记忆列表
     """
-    raise NotImplementedError("保长还没写召回逻辑，别催")
+raise NotImplementedError("保长还没写召回逻辑，别催")
+# 保长填完逻辑后，返回格式需包含 calculated_weight 字段
+# return {"memories": [{"id":..., "content":..., "calculated_weight":...}]}
 
 @router.post("/memory")
 async def add_memory(
