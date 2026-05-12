@@ -13,12 +13,12 @@ from backend.memory.crud import (
     list_undone,
     mark_done,
     delete_memory,
+    estimate_importance,
 )
 
 @pytest.fixture(autouse=True)
 def setup_db(tmp_path, monkeypatch):
     db_file = tmp_path / "test.db"
-    monkeypatch.setenv("DB_PATH", str(db_file))
     import backend.utils.db as db_module
     db_module.DB_PATH = str(db_file)
     init_db()
@@ -34,8 +34,27 @@ def test_emotion_weight():
     mem = Memory(content="保长嘴臭", valence=-0.8, arousal=0.9, direction="other")
     assert abs(mem.emotion_weight() - 0.72) < 0.01
 
+def test_importance_boost_keyword():
+    score = estimate_importance("保长又在催我写master")
+    assert score >= 0.7
+
+def test_importance_emotion_keyword():
+    score = estimate_importance("我哭了好难过")
+    assert score >= 0.8
+
+def test_importance_cap():
+    score = estimate_importance("保长催我哭了好难过master")
+    assert score == 1.0
+
+def test_recall_count_increment():
+    mem = Memory(content="测试recall计数")
+    mid = create_memory(mem)
+    get_memory(mid)
+    get_memory(mid)
+    result = get_memory(mid)
+    assert result.recall_count == 3
+
 def test_list_undone():
-    Memory(content="换端口", is_done=False)
     mem = Memory(content="换端口", valence=0.0, arousal=0.3, direction="event", is_done=False)
     create_memory(mem)
     undone = list_undone()
@@ -53,3 +72,4 @@ def test_delete():
     mid = create_memory(mem)
     delete_memory(mid)
     assert get_memory(mid) is None
+    
