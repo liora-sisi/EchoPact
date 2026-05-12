@@ -15,7 +15,9 @@ def estimate_importance(content: str) -> float:
             score += boost
     return min(score, 1.0)
 
-def create_memory(mem: Memory) -> int:
+def create_memory(mem) -> int:
+    if isinstance(mem, dict):
+        mem = Memory(**mem)
     mem.importance = estimate_importance(mem.content)
     d = mem.to_dict()
     with get_conn() as conn:
