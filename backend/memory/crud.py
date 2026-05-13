@@ -42,7 +42,19 @@ def get_memory(memory_id: int) -> Optional[Memory]:
         ).fetchone()
         return _row_to_memory(row) if row else None
 
-def list_memories(limit: int = 20, direction: Optional[str] = None) -> List[Memory]:
+def list_memories(limit: int = 20, direction: Optional[str] = None, agent_id: str = "default") -> List[Memory]:
+    with get_conn() as conn:
+        if direction:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE direction = ? AND agent_id = ? ORDER BY created_at DESC LIMIT ?",
+                (direction, agent_id, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
+                (agent_id, limit)
+            ).fetchall()
+        return [_row_to_memory(r) for r in rows]
     with get_conn() as conn:
         if direction:
             rows = conn.execute(
