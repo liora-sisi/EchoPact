@@ -11,6 +11,7 @@ class Memory:
     summary: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     is_done: bool = False
+    agent_id: str = "default"
     decay_category: str = "fact"
     importance: float = 0.5
     recall_count: int = 0
@@ -32,6 +33,7 @@ class Memory:
             "direction": self.direction,
             "tags": ",".join(self.tags),
             "is_done": int(self.is_done),
+            "agent_id": self.agent_id,
             "decay_category": self.decay_category,
             "importance": self.importance,
             "recall_count": self.recall_count,
