@@ -36,5 +36,12 @@ def init_db():
             "agent_id          TEXT    DEFAULT 'default',"
             "created_at        TEXT    NOT NULL,"
             "updated_at        TEXT"
-            ");"
+            "CREATE TABLE IF NOT EXISTS interaction_log ("
+"id                INTEGER PRIMARY KEY AUTOINCREMENT,"
+"timestamp         TEXT    NOT NULL,"
+"user_msg          TEXT,"
+"ai_reply          TEXT,"
+"toxicity_score    REAL    DEFAULT 0.0,"
+"agent_id          TEXT    DEFAULT 'default'"
+");"
         )
