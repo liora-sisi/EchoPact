@@ -2,6 +2,7 @@ import math
 from datetime import datetime, timezone
 from typing import List, Dict
 from ..utils.db import get_conn
+from ..memory.vector_store import search_similar
 
 HALF_LIFE_DAYS = 7.0
 HIGH_EMOTION_THRESHOLD = 0.5
@@ -20,19 +21,18 @@ def _time_decay(created_at: str, emotion_weight: float) -> float:
     half_life = HIGH_EMOTION_HALF_LIFE_DAYS if emotion_weight >= HIGH_EMOTION_THRESHOLD else HALF_LIFE_DAYS
     return math.pow(0.5, days_elapsed / half_life)
 
-def _keyword_score(content: str, query: str) -> float:
-    if not query.strip():
-        return 1.0
-    keywords = query.strip().split()
-    hits = sum(1 for kw in keywords if kw.lower() in content.lower())
-    return hits / len(keywords) if keywords else 1.0
+def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> List[Dict]:
+    # 向量语义检索
+    vector_results = search_similar(query, limit=limit * 2, agent_id=agent_id)
+    vector_ids = {r["id"]: 1.0 - r["distance"] for r in vector_results}
 
-def recall_memories(query: str, limit: int = 5) -> List[Dict]:
+    # 从数据库读取候选记忆
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, content, valence, arousal, importance, "
             "recall_count, calculated_weight, created_at, is_done "
-            "FROM memories ORDER BY created_at DESC"
+            "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
+            (agent_id,)
         ).fetchall()
 
     results = []
@@ -45,14 +45,14 @@ def recall_memories(query: str, limit: int = 5) -> List[Dict]:
         emotion_weight = max(0, (valence + 1) / 2) * arousal
         decay = _time_decay(row["created_at"], emotion_weight)
         undone_bonus = UNDONE_BONUS if not is_done else 0.0
-        keyword_score = _keyword_score(row["content"], query)
+        semantic_score = vector_ids.get(row["id"], 0.0)
 
         final_weight = (
-            emotion_weight * 0.3 +
-            importance * 0.2 +
-            decay * 0.2 +
+            emotion_weight * 0.25 +
+            importance * 0.15 +
+            decay * 0.15 +
             undone_bonus * 0.1 +
-            keyword_score * 0.2
+            semantic_score * 0.35
         )
 
         results.append({
