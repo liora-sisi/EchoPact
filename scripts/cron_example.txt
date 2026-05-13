@@ -1,0 +1,14 @@
+# Echo Pact 定时任务配置示例
+# 用法：crontab -e 然后粘贴下面这行
+
+# 每30分钟运行一次主动浮现脚本
+*/30 * * * * cd /opt/echo-pact && source venv/bin/activate && python scripts/active_push.py >> /var/log/echo_pact.log 2>&1
+
+# 冷却时间在 active_recall.py 里控制（COOLDOWN_MINUTES=120）
+# 所以cron跑得频繁没关系，脚本内部会判断要不要真的推送
+
+# 环境变量配置（在 .env 里设置）：
+# ECHO_PACT_API=http://localhost:8000
+# LOBE_WEBHOOK_URL=你的LobeChat webhook地址（有了再填）
+# AGENT_ID=default
+# SILENCE_MINUTES=45
