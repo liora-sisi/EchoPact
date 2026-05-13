@@ -33,6 +33,7 @@ def init_db():
             "importance        REAL    DEFAULT 0.5,"
             "recall_count      INTEGER DEFAULT 0,"
             "calculated_weight REAL    DEFAULT 0.0,"
+            "agent_id          TEXT    DEFAULT 'default',"
             "created_at        TEXT    NOT NULL,"
             "updated_at        TEXT"
             ");"
