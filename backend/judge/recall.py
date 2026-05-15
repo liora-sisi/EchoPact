@@ -29,9 +29,9 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
     # 从数据库读取候选记忆
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, content, valence, arousal, importance, "
-            "recall_count, calculated_weight, created_at, is_done "
-            "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
+        "SELECT id, content, valence, arousal, importance, "
+        "recall_count, calculated_weight, created_at, is_done, saga_id "
+        "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
             (agent_id,)
         ).fetchall()
 
