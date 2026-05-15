@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 COOLDOWN_MINUTES = 120
 SILENCE_THRESHOLD_MINUTES = 45
 CHECK_INTERVAL_MINUTES = 30
+def get_dynamic_interval(agent_id: str = "default") -> int:
+    try:
+        from ..memory.profile import get_push_interval
+        return get_push_interval(agent_id)
+    except Exception:
+        return COOLDOWN_MINUTES
 
 def _active_weight(valence: float, arousal: float, 
                    is_done: int, recall_count: int) -> float:
@@ -90,7 +96,8 @@ def should_push(last_message_time: Optional[datetime] = None) -> bool:
     last_push = _get_last_push_time()
     if last_push:
         cooldown_minutes = (now - last_push).total_seconds() / 60
-        if cooldown_minutes < COOLDOWN_MINUTES:
+        dynamic_interval = get_dynamic_interval()
+        if cooldown_minutes < dynamic_interval:
             logger.info(f"冷却中，距上次推送{cooldown_minutes:.1f}分钟，不推送")
             return False
 
