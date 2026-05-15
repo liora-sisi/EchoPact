@@ -43,7 +43,7 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
         is_done = bool(row["is_done"])
 
         emotion_weight = max(0, (valence + 1) / 2) * arousal
-        saga_boost = 1.5 if row.get("saga_id") else 1.0
+        saga_boost = 1.5 if row["saga_id"] else 1.0
         decay = _time_decay(row["created_at"], emotion_weight)
         undone_bonus = UNDONE_BONUS if not is_done else 0.0
         semantic_score = vector_ids.get(row["id"], 0.0)
