@@ -1,23 +1,20 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 import requests
 from typing import List
+from dotenv import load_dotenv
+load_dotenv()
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-4b20c9654ad84e68963eefae2463b0d6")
-
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 def embed(texts: List[str]) -> List[List[float]]:
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
     response = requests.post(
-        f"{DEEPSEEK_BASE_URL}/embeddings",
-        headers=headers,
+        "https://api.openai.com/v1/embeddings",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        },
         json={
-            "model": "deepseek-embedding-v2",
+            "model": "text-embedding-3-small",
             "input": texts
         }
     )
