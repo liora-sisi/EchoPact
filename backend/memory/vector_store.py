@@ -11,7 +11,7 @@ _collection = None
 def get_collection(agent_id: str = "default"):
     global _client, _collection
     if _client is None:
-        _client = chromadb.PersistentClient(CHROMA_PATH = os.getenv("CHROMA_PATH", "/opt/echo-pact/chroma_db"))
+        _client = chromadb.PersistentClient(path=os.getenv("CHROMA_PATH", "/opt/echo-pact/chroma_db"))
     collection_name = f"memories_{agent_id}"
     return _client.get_or_create_collection(
         name=collection_name,
