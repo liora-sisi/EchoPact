@@ -1,19 +1,26 @@
-from sentence_transformers import SentenceTransformer
-from typing import List
 import os
+import requests
+from typing import List
 
-MODEL_NAME = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
-_model = None
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-4b20c9654ad84e68963eefae2463b0d6")
 
-def get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(MODEL_NAME)
-    return _model
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 def embed(texts: List[str]) -> List[List[float]]:
-    model = get_model()
-    return model.encode(texts, normalize_embeddings=True).tolist()
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    response = requests.post(
+        f"{DEEPSEEK_BASE_URL}/embeddings",
+        headers=headers,
+        json={
+            "model": "deepseek-embedding-v2",
+            "input": texts
+        }
+    )
+    data = response.json()
+    return [item["embedding"] for item in data["data"]]
 
 def embed_one(text: str) -> List[float]:
     return embed([text])[0]
