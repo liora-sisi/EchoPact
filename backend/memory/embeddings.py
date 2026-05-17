@@ -2,7 +2,7 @@ from sentence_transformers import SentenceTransformer
 from typing import List
 import os
 
-MODEL_NAME = os.getenv("EMBED_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
+MODEL_NAME = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 _model = None
 
 def get_model() -> SentenceTransformer:
