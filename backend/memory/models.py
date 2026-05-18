@@ -11,6 +11,10 @@ class Memory:
     summary: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     is_done: bool = False
+    source_type: str = "user"        # user/model/tool/system
+    confidence: float = 1.0          # 0~1，置信度
+    conflict_group_id: Optional[str] = None  # 冲突组ID
+    last_verified_at: Optional[str] = None   # 最后验证时间
     agent_id: str = "default"
     decay_category: str = "fact"
     importance: float = 0.5
