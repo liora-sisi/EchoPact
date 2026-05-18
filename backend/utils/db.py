@@ -66,4 +66,13 @@ def init_db():
     "conscientiousness  REAL DEFAULT 0.5,"
     "last_updated       TEXT"
     ");"
+    "CREATE TABLE IF NOT EXISTS memory_conflicts ("
+    "conflict_id       TEXT    PRIMARY KEY,"
+    "group_id          TEXT    NOT NULL,"
+    "fact1_id          INTEGER,"
+    "fact2_id          INTEGER,"
+    "conflict_type     TEXT,"
+    "created_at        TEXT,"
+    "resolved          INTEGER DEFAULT 0"
+    ");"
         )
