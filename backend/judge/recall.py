@@ -59,8 +59,15 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
         results.append({
             "id": row["id"],
             "content": row["content"],
-            "weight": round(final_weight, 4)
-        })
-
+            "weight": round(final_weight, 4),
+            "reason": {
+                "semantic_score": round(semantic_score, 4),
+                "emotion_weight": round(emotion_weight, 4),
+                "importance": round(importance, 4),
+                "decay": round(decay, 4),
+                "undone_bonus": round(undone_bonus, 4),
+                "saga_boost": round(saga_boost, 4),
+            }
+      })
     results.sort(key=lambda x: x["weight"], reverse=True)
     return results[:limit]
