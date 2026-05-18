@@ -23,11 +23,15 @@ def create_memory(mem) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             '''INSERT INTO memories
-               (content, summary, valence, arousal, direction, tags, is_done,
-                decay_category, importance, recall_count, calculated_weight, created_at)
-               VALUES (:content, :summary, :valence, :arousal, :direction, :tags, :is_done,
-                :decay_category, :importance, :recall_count, :calculated_weight, :created_at)''',
-            d
+            (content, summary, valence, arousal, direction, tags, is_done,
+             decay_category, importance, recall_count, calculated_weight,
+             agent_id, source_type, confidence, conflict_group_id, last_verified_at,
+             created_at)
+            VALUES (:content, :summary, :valence, :arousal, :direction, :tags, :is_done,
+             :decay_category, :importance, :recall_count, :calculated_weight,
+             :agent_id, :source_type, :confidence, :conflict_group_id, :last_verified_at,
+             :created_at)''',
+           d
         )
         return cur.lastrowid
 
