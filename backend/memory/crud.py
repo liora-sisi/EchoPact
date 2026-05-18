@@ -33,7 +33,21 @@ def create_memory(mem) -> int:
              :created_at)''',
            d
         )
-        return cur.lastrowid
+        mem_id = cur.lastrowid
+        # 自动计算置信度
+        from .conflict import calc_confidence, check_and_register_conflict
+        confidence = calc_confidence(mem.source_type, mem.content, 
+                                    mem.agent_id if hasattr(mem, 'agent_id') else 'default')
+        conflict_group = check_and_register_conflict(
+            mem_id, mem.content, mem.valence,
+            mem.agent_id if hasattr(mem, 'agent_id') else 'default'
+        )
+        conn.execute(
+            "UPDATE memories SET confidence=?, conflict_group_id=? WHERE id=?",
+            (confidence, conflict_group, mem_id)
+        )
+        return mem_id
+        
 
 def get_memory(memory_id: int) -> Optional[Memory]:
     with get_conn() as conn:
