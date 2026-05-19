@@ -75,4 +75,12 @@ def init_db():
     "created_at        TEXT,"
     "resolved          INTEGER DEFAULT 0"
     ");"
+    "CREATE TABLE IF NOT EXISTS interaction_events ("
+    "id               INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "content          TEXT    NOT NULL,"
+    "source_type      TEXT    DEFAULT 'user',"
+    "agent_id         TEXT    DEFAULT 'default',"
+    "source_event_id  INTEGER,"
+    "created_at       TEXT    NOT NULL"
+    ");"        
         )
