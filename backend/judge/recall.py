@@ -22,16 +22,24 @@ def _time_decay(created_at: str, emotion_weight: float) -> float:
     return math.pow(0.5, days_elapsed / half_life)
 
 def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> List[Dict]:
-    # 向量语义检索
+    from ..memory.embeddings import embed_one
+    import os
+    
+    use_real = os.getenv("USE_REAL_EMBEDDING", "false").lower() == "true"
+    
+    if use_real:
+        query_vec = embed_one(query)
+    else:
+        query_vec = [0.5] * 1536
+
     vector_results = search_similar(query, limit=limit * 2, agent_id=agent_id)
     vector_ids = {r["id"]: 1.0 - r["distance"] for r in vector_results}
 
-    # 从数据库读取候选记忆
     with get_conn() as conn:
         rows = conn.execute(
-        "SELECT id, content, valence, arousal, importance, "
-        "recall_count, calculated_weight, created_at, is_done, saga_id "
-        "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
+            "SELECT id, content, valence, arousal, importance, "
+            "recall_count, calculated_weight, created_at, is_done, saga_id "
+            "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
             (agent_id,)
         ).fetchall()
 
@@ -42,32 +50,42 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
         importance = row["importance"] or 0.5
         is_done = bool(row["is_done"])
 
-        emotion_weight = max(0, (valence + 1) / 2) * arousal
-        saga_boost = 1.5 if row["saga_id"] else 1.0
-        decay = _time_decay(row["created_at"], emotion_weight)
-        undone_bonus = UNDONE_BONUS if not is_done else 0.0
-        semantic_score = vector_ids.get(row["id"], 0.0)
+        # 1. 主题关联度（向量相似度）
+        sim = vector_ids.get(row["id"], 0.5)
 
-        final_weight = max(0.05, (
-            emotion_weight * 0.25 +
-            importance * 0.15 +
-            decay * 0.15 +
-            undone_bonus * 0.1 +
-            semantic_score * 0.35
-        )* saga_boost
+        # 2. 情绪契合度
+        emotion_diff = abs(valence - 0.0)
+        emotion_fit = max(0.0, 1.0 - emotion_diff)
+
+        # 3. 时间衰减
+        emotion_weight = max(0, (valence + 1) / 2) * arousal
+        decay = _time_decay(row["created_at"], emotion_weight)
+
+        # 4. Saga权重
+        saga_boost = 1.5 if row["saga_id"] else 1.0
+
+        # 未完成加分
+        undone_bonus = 0.3 if not is_done else 0.0
+
+        final_weight = (
+            0.35 * sim +
+            0.25 * emotion_fit +
+            0.20 * decay +
+            0.20 * saga_boost
+        ) + undone_bonus
 
         results.append({
             "id": row["id"],
             "content": row["content"],
             "weight": round(final_weight, 4),
             "reason": {
-                "semantic_score": round(semantic_score, 4),
-                "emotion_weight": round(emotion_weight, 4),
-                "importance": round(importance, 4),
+                "sim": round(sim, 4),
+                "emotion_fit": round(emotion_fit, 4),
                 "decay": round(decay, 4),
-                "undone_bonus": round(undone_bonus, 4),
                 "saga_boost": round(saga_boost, 4),
+                "undone_bonus": round(undone_bonus, 4),
             }
-      })
+        })
+
     results.sort(key=lambda x: x["weight"], reverse=True)
     return results[:limit]
