@@ -48,7 +48,7 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
         undone_bonus = UNDONE_BONUS if not is_done else 0.0
         semantic_score = vector_ids.get(row["id"], 0.0)
 
-        final_weight = (
+        final_weight = max(0.05, (
             emotion_weight * 0.25 +
             importance * 0.15 +
             decay * 0.15 +
