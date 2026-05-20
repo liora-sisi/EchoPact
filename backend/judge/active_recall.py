@@ -100,7 +100,13 @@ def should_push(last_message_time: Optional[datetime] = None) -> bool:
         if cooldown_minutes < dynamic_interval:
             logger.info(f"冷却中，距上次推送{cooldown_minutes:.1f}分钟，不推送")
             return False
-
+    # 推断用户状态
+    from ..memory.context import infer_user_state
+    user_state = infer_user_state()
+    if user_state:
+        logger.info(f"用户状态推断：{user_state}")
+    
+    return True
     return True
 
 def run_active_recall(last_message_time: Optional[datetime] = None):
