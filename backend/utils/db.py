@@ -34,6 +34,7 @@ def init_db():
     "recall_count      INTEGER DEFAULT 0,"
     "calculated_weight REAL    DEFAULT 0.0,"
     "agent_id          TEXT    DEFAULT 'default',"
+    "saga_id           INTEGER,"        
     "source_type       TEXT    DEFAULT 'user',"
     "confidence        REAL    DEFAULT 1.0,"
     "conflict_group_id TEXT,"
