@@ -82,5 +82,12 @@ def init_db():
     "agent_id         TEXT    DEFAULT 'default',"
     "source_event_id  INTEGER,"
     "created_at       TEXT    NOT NULL"
+    ");"  
+    "CREATE TABLE IF NOT EXISTS user_context ("
+    "id               INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "agent_id         TEXT    DEFAULT 'default',"
+    "last_action_text TEXT,"
+    "last_action_time TEXT,"
+    "updated_at       TEXT"
     ");"        
         )
