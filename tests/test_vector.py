@@ -1,3 +1,12 @@
+from unittest.mock import patch
+
+@pytest.fixture(autouse=True)
+def mock_embed(monkeypatch):
+    def fake_embed(texts):
+        return [[0.1] * 1536 for _ in texts]
+    monkeypatch.setattr("backend.memory.embeddings.embed", fake_embed)
+    monkeypatch.setattr("backend.memory.embeddings.embed_one", 
+                        lambda t: [0.1] * 1536)
 import pytest
 import os
 from backend.memory.embeddings import embed_one, embed
