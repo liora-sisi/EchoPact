@@ -9,6 +9,24 @@ HIGH_EMOTION_THRESHOLD = 0.5
 HIGH_EMOTION_HALF_LIFE_DAYS = 30.0
 UNDONE_BONUS = 0.3
 
+def _build_explanation(sim, emotion_fit, decay, saga_boost, undone_bonus) -> str:
+    reasons = []
+    if sim > 0.6:
+        reasons.append("语义高度相关")
+    elif sim > 0.3:
+        reasons.append("语义有关联")
+    if emotion_fit > 0.7:
+        reasons.append("情绪契合")
+    if decay > 0.8:
+        reasons.append("记忆较新")
+    elif decay < 0.3:
+        reasons.append("记忆较久远")
+    if saga_boost > 1.0:
+        reasons.append("主线Saga加权")
+    if undone_bonus > 0:
+        reasons.append("未完成事项")
+    return "，".join(reasons) if reasons else "综合权重召回"
+
 def _time_decay(created_at: str, emotion_weight: float) -> float:
     try:
         created = datetime.fromisoformat(created_at)
@@ -84,7 +102,8 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
                 "decay": round(decay, 4),
                 "saga_boost": round(saga_boost, 4),
                 "undone_bonus": round(undone_bonus, 4),
-            }
+                "explanation": _build_explanation(sim, emotion_fit, decay, saga_boost, undone_bonus)
+            },
         })
 
     results.sort(key=lambda x: x["weight"], reverse=True)
