@@ -57,6 +57,8 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
         rows = conn.execute(
             "SELECT id, content, valence, arousal, importance, "
             "recall_count, calculated_weight, created_at, is_done, saga_id "
+            "SELECT id, content, valence, arousal, importance, "
+            "recall_count, calculated_weight, created_at, is_done, saga_id, recall_reason "
             "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
             (agent_id,)
         ).fetchall()
