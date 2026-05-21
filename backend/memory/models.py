@@ -15,6 +15,7 @@ class Memory:
     confidence: float = 1.0          # 0~1，置信度
     conflict_group_id: Optional[str] = None  # 冲突组ID
     last_verified_at: Optional[str] = None   # 最后验证时间
+    recall_reason: Optional[str] = None
     agent_id: str = "default"
     decay_category: str = "fact"
     importance: float = 0.5
@@ -48,4 +49,5 @@ class Memory:
             "calculated_weight": self.calculated_weight,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "recall_reason": self.recall_reason,
         }
