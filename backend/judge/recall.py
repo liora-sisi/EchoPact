@@ -102,6 +102,7 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
                 "decay": round(decay, 4),
                 "saga_boost": round(saga_boost, 4),
                 "undone_bonus": round(undone_bonus, 4),
+                "recall_reason": row["recall_reason"] if row["recall_reason"] else "此条暂无温度",
                 "explanation": _build_explanation(sim, emotion_fit, decay, saga_boost, undone_bonus)
             },
         })
