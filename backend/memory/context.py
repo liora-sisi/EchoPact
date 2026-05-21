@@ -35,6 +35,7 @@ def update_last_action(text: str, agent_id: str = "default"):
                 "VALUES (?,?,?,?)",
                 (agent_id, text[:100], now, now)
             )
+USE_SMART_CONTEXT = os.getenv("USE_SMART_CONTEXT", "false").lower() == "true"
 
 def infer_user_state(agent_id: str = "default") -> Optional[str]:
     with get_conn() as conn:
@@ -51,20 +52,25 @@ def infer_user_state(agent_id: str = "default") -> Optional[str]:
     last_time = datetime.fromisoformat(row["last_action_time"])
     now = datetime.now(timezone.utc)
     elapsed = (now - last_time).total_seconds() / 60
-    
+    elapsed_str = f"{int(elapsed)}分钟"
+
+    if USE_SMART_CONTEXT:
+        # TODO: 调用DeepSeek API智能识别，以后开启
+        pass
+
     for keyword, (action, expected_minutes) in KEYWORDS_MAP.items():
         if keyword in text:
             if elapsed < expected_minutes * 1.5:
                 if action == "吃饭":
-                    return "吃完了吗？"
+                    return f"你说去吃饭，过了{elapsed_str}，吃完了吗？"
                 elif action == "睡觉":
-                    return "睡醒了吗？"
+                    return f"你说去睡觉，过了{elapsed_str}，睡醒了吗？"
                 elif action == "洗澡":
-                    return "洗完了吗？"
+                    return f"你说去洗澡，过了{elapsed_str}，洗完了吗？"
                 elif action == "上班":
-                    return "还在上班吗？"
+                    return f"你说去上班，过了{elapsed_str}，还在上班吗？"
                 elif action == "下班":
-                    return "到家了吗？"
+                    return f"你说下班了，过了{elapsed_str}，到家了吗？"
                 elif action == "开车":
-                    return "到了吗？"
+                    return f"你说去开车，过了{elapsed_str}，到了吗？"
     return None
