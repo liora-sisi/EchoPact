@@ -39,6 +39,7 @@ def init_db():
     "confidence        REAL    DEFAULT 1.0,"
     "conflict_group_id TEXT,"
     "last_verified_at  TEXT,"
+    "recall_reason     TEXT,"        
     "created_at        TEXT    NOT NULL,"
     "updated_at        TEXT"
     ");"
