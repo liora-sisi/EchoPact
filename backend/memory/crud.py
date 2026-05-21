@@ -25,11 +25,11 @@ def create_memory(mem) -> int:
             '''INSERT INTO memories
             (content, summary, valence, arousal, direction, tags, is_done,
              decay_category, importance, recall_count, calculated_weight,
-             agent_id, source_type, confidence, conflict_group_id, last_verified_at,
+             agent_id, source_type, confidence, conflict_group_id, last_verified_at,recall_reason,
              created_at)
             VALUES (:content, :summary, :valence, :arousal, :direction, :tags, :is_done,
              :decay_category, :importance, :recall_count, :calculated_weight,
-             :agent_id, :source_type, :confidence, :conflict_group_id, :last_verified_at,
+             :agent_id, :source_type, :confidence, :conflict_group_id, :last_verified_at,:recall_reason,
              :created_at)''',
            d
         )
