@@ -52,6 +52,16 @@ def import_memories(filepath: str, agent_id: str = "default"):
     
     for i, mem_data in enumerate(memories[start:], start=start):
         try:
+            # 去重检查（时间+内容）
+            with get_conn() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM memories WHERE content=? AND created_at=? AND agent_id=?",
+                    (mem_data.get("content", ""), mem_data.get("created_at", ""), agent_id)
+                ).fetchone()
+            if existing:
+                print(f"\r跳过重复第{i+1}条", end="")
+                save_checkpoint(i + 1, total)
+                continue
             mem = Memory(
                 content=mem_data.get("content", ""),
                 valence=mem_data.get("valence", 0.0),
