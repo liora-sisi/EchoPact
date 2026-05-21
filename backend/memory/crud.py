@@ -43,9 +43,10 @@ def create_memory(mem) -> int:
             mem.agent_id if hasattr(mem, 'agent_id') else 'default'
         )
         conn.execute(
-            "UPDATE memories SET confidence=?, conflict_group_id=? WHERE id=?",
-            (confidence, conflict_group, mem_id)
+            "UPDATE memories SET confidence=?, conflict_group_id=?, recall_reason=? WHERE id=?",
+            (confidence, conflict_group, mem.recall_reason, mem_id)
         )
+        
         return mem_id
 def get_memory(memory_id: int) -> Optional[Memory]:
     with get_conn() as conn:
