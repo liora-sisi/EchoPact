@@ -26,7 +26,53 @@ def _build_explanation(sim, emotion_fit, decay, saga_boost, undone_bonus) -> str
     if undone_bonus > 0:
         reasons.append("未完成事项")
     return "，".join(reasons) if reasons else "综合权重召回"
+def _pick_content_subject(content: str) -> str:
+    text = (content or "").strip()
+    if not text:
+        return ""
 
+    keywords = [
+        "保长", "小执", "克里", "Elion", "EchoPact", "Lobe", "LobeChat",
+        "登录", "召回", "记忆", "外置大脑", "画图", "同框", "猫", "豆豆", "贝贝",
+        "夜班", "服务器", "Docker", "Clerk", "API", "token",
+    ]
+    hits = [keyword for keyword in keywords if keyword.lower() in text.lower()]
+    if hits:
+        return "、".join(hits[:2])
+
+    for sep in ["。", "！", "？", "\n", ",", "，"]:
+        if sep in text:
+            text = text.split(sep, 1)[0]
+            break
+
+    return text[:18].strip()
+
+
+def _emotion_label(valence: float, arousal: float) -> str:
+    if arousal >= 0.7 and valence >= 0.25:
+        return "情绪很亮"
+    if arousal >= 0.7 and valence <= -0.25:
+        return "情绪起伏很强"
+    if arousal >= 0.7:
+        return "能量很高"
+    if valence >= 0.45:
+        return "带着明显的正向感受"
+    if valence <= -0.45:
+        return "带着明显的低落或烦躁"
+    if arousal <= 0.25:
+        return "语气比较安静"
+    return "有一定情绪温度"
+
+def _build_recall_reason(content: str, valence: float, arousal: float) -> str:
+    subject = _pick_content_subject(content)
+    if not subject:
+        return "此条暂无温度"
+
+    emotion = _emotion_label(valence, arousal)
+    if subject in (content or "") and len(subject) <= 8:
+        return f"这条记忆提到了{subject}，{emotion}。"
+    return f"这条记忆和“{subject}”有关，{emotion}。"
+    
 def _time_decay(created_at: str, emotion_weight: float) -> float:
     try:
         created = datetime.fromisoformat(created_at)
@@ -102,7 +148,7 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
                 "decay": round(decay, 4),
                 "saga_boost": round(saga_boost, 4),
                 "undone_bonus": round(undone_bonus, 4),
-                "recall_reason": row["recall_reason"] if row["recall_reason"] else "此条暂无温度",
+                "recall_reason": row["recall_reason"] if row["recall_reason"] else _build_recall_reason(row["content"], valence, arousal),
                 "explanation": _build_explanation(sim, emotion_fit, decay, saga_boost, undone_bonus)
             },
         })
