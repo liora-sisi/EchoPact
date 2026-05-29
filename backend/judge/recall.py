@@ -26,6 +26,7 @@ def _build_explanation(sim, emotion_fit, decay, saga_boost, undone_bonus) -> str
     if undone_bonus > 0:
         reasons.append("未完成事项")
     return "，".join(reasons) if reasons else "综合权重召回"
+    
 def _pick_content_subject(content: str) -> str:
     text = (content or "").strip()
     if not text:
