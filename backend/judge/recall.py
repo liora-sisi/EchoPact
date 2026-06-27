@@ -51,23 +51,23 @@ def _pick_content_subject(content: str) -> str:
 
 def _emotion_label(valence: float, arousal: float) -> str:
     if arousal >= 0.7 and valence >= 0.25:
-        return "情绪很亮"
+        return "情绪明亮，记下它的时候心情正好"
     if arousal >= 0.7 and valence <= -0.25:
-        return "情绪起伏很强"
+        return "情绪起伏很大，当时心里不平静"
     if arousal >= 0.7:
-        return "能量很高"
+        return "能量很足，语气是激动的"
     if valence >= 0.45:
-        return "带着明显的正向感受"
+        return "带着明显的暖意"
     if valence <= -0.45:
-        return "带着明显的低落或烦躁"
+        return "带着低落或烦躁，值得轻拿轻放"
     if arousal <= 0.25:
-        return "语气比较安静"
-    return "有一定情绪温度"
+        return "语气安静，像随手记下的一笔"
+    return "情绪不浓，但记下了就是在意"
 
 def _build_recall_reason(content: str, valence: float, arousal: float) -> str:
     subject = _pick_content_subject(content)
     if not subject:
-        return "此条暂无温度"
+        return "这条记忆很安静，还没读出情绪"
 
     emotion = _emotion_label(valence, arousal)
     if subject in (content or "") and len(subject) <= 8:
@@ -87,16 +87,6 @@ def _time_decay(created_at: str, emotion_weight: float) -> float:
     return math.pow(0.5, days_elapsed / half_life)
 
 def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> List[Dict]:
-    from ..memory.embeddings import embed_one
-    import os
-    
-    use_real = os.getenv("USE_REAL_EMBEDDING", "false").lower() == "true"
-    
-    if use_real:
-        query_vec = embed_one(query)
-    else:
-        query_vec = [0.5] * 1536
-
     vector_results = search_similar(query, limit=limit * 2, agent_id=agent_id)
     vector_ids = {r["id"]: 1.0 - r["distance"] for r in vector_results}
 
@@ -144,8 +134,9 @@ def recall_memories(query: str, limit: int = 5, agent_id: str = "default") -> Li
             "content": row["content"],
             "weight": round(final_weight, 4),
             "reason": {
-                "sim": round(sim, 4),
-                "emotion_fit": round(emotion_fit, 4),
+                "semantic_score": round(sim, 4),
+                "emotion_weight": round(emotion_fit, 4),
+                "importance": round(importance, 4),
                 "decay": round(decay, 4),
                 "saga_boost": round(saga_boost, 4),
                 "undone_bonus": round(undone_bonus, 4),
