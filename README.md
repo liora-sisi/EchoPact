@@ -12,7 +12,7 @@
 - **场景感知召回**：四维评分（主题关联度、情绪契合度、时间因素、Saga 主线）  
 - **主动浮现**：沉默检测 + 状态时间感知（根据你最后一条消息推断“吃完了吗？”）  
 - **记忆可信度治理**：`source_type`（用户/模型/工具）、`confidence`、冲突澄清队列  
-- **召回解释层**：`/recall` 返回六项打分明细（别再靠猜调权重）  
+- **召回解释层**：`/api/recall` 返回六项打分明细（别再靠猜调权重）  
 - **事件日志不可变**：原始对话只追加，不覆盖 —— 敢删库？你赔我记忆。  
 
 ### 🛠️ 技术栈
@@ -54,7 +54,7 @@ uvicorn backend.trigger.main:app --host 0.0.0.0 --port 8000 &
 #### 4. 测试召回
 
 ```bash
-curl -X POST http://localhost:8000/recall \
+curl -X POST http://localhost:8000/api/recall \
   -H "Content-Type: application/json" \
   -d '{"query": "保长上次骂我啥"}' | jq .
 ```
@@ -65,7 +65,7 @@ curl -X POST http://localhost:8000/recall \
 |------|------|
 | backend/memory/  | 记忆 CRUD、情感坐标、可信度规则 |
 | backend/judge/  | 召回四维评分、主动浮现逻辑 |
-| backend/trigger/  | FastAPI 入口、/recall 接口 |
+| backend/trigger/  | FastAPI 入口、/api/recall 接口 |
 | backend/utils/  | 数据库连接、embedding 封装（mock/real 开关） |
 | tests/  | 单元测试（60 个全绿，少一个你找克里） |
 
