@@ -44,10 +44,13 @@ def test_reason_fields():
     create_memory(m)
     results = recall_memories("测试", limit=1, agent_id="test")
     assert "reason" in results[0]
-    assert "sim" in results[0]["reason"]
-    assert "emotion_fit" in results[0]["reason"]
+    assert "semantic_score" in results[0]["reason"]
+    assert "emotion_weight" in results[0]["reason"]
+    assert "importance" in results[0]["reason"]
     assert "decay" in results[0]["reason"]
     assert "saga_boost" in results[0]["reason"]
+    assert "undone_bonus" in results[0]["reason"]
+    assert "recall_reason" in results[0]["reason"]
 
 def test_agent_isolation():
     m1 = Memory(content="克里的记忆", agent_id="keli")
