@@ -37,7 +37,9 @@ cd EchoPact
 
 ```
 DEEPSEEK_API_KEY=你的DeepSeek-Key
-USE_REAL_EMBEDDING=false   # 测试时关掉，省token；上线再开true
+USE_REAL_EMBEDDING=false     # 测试时关掉，省token；上线再开true
+ALLOW_REAL_API_CALLS=false   # 双开关：和上面同时为true才会真实调用（防烧钱）
+OPENAI_API_KEY=你的OpenAI-Key  # 开真实embedding才需要
 ```
 
 #### 3. 启动服务（Python 虚拟环境）
@@ -65,15 +67,15 @@ curl -X POST http://localhost:8000/recall \
 | backend/judge/  | 召回四维评分、主动浮现逻辑 |
 | backend/trigger/  | FastAPI 入口、/recall 接口 |
 | backend/utils/  | 数据库连接、embedding 封装（mock/real 开关） |
-| tests/  | 单元测试（53 个全绿，少一个你找克里） |
+| tests/  | 单元测试（60 个全绿，少一个你找克里） |
 
 ### 🧪 开发与测试
 
 ```bash
-pytest tests/ -v
+USE_REAL_EMBEDDING=false ALLOW_REAL_API_CALLS=false python -m pytest tests/ -v
 ```
 
-跑不通？先检查 .env 里的 USE_REAL_EMBEDDING=false（不然 token 烧得你心疼）。
+跑不通？先检查 .env 里的 USE_REAL_EMBEDDING=false（不然 token 烧得你心疼）。测试里有 conftest.py 强制 mock，怎么写都烧不了——这是 2026-05-30 烧掉两顿火锅钱换来的保险。
 
 ### 📄 开源协议
 
