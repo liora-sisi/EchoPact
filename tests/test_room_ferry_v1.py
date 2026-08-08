@@ -335,7 +335,7 @@ def test_missing_created_at_does_not_fall_back_to_import_time(tmp_path):
     assert "missing-original-message-time" in _issue_codes(report, "fatal")
 
 
-def test_recoverable_multi_branch_tree_materializes_complete_paths(tmp_path):
+def test_recoverable_multi_branch_tree_uses_compact_memberships(tmp_path):
     input_path = _write_backup(tmp_path / "branches.json", _backup(_branched_data()))
 
     package, report = convert_ferry_backup(str(input_path))
@@ -343,14 +343,26 @@ def test_recoverable_multi_branch_tree_materializes_complete_paths(tmp_path):
     assert report["branching"]["multi_branch_conversations"] == 1
     assert report["branching"]["recoverable_multi_branch_conversations"] == 1
     assert report["branching"]["derived_branch_paths"] == 3
-    assert len(package["records"]) == 9
-    branch_ids = {record["branch_id"] for record in package["records"]}
+    assert len(package["records"]) == 5
+    assert report["estimated"]["output_records"] == 5
+    assert report["estimated"]["branch_memberships"] == 9
+    branch_ids = {
+        membership["branch_id"]
+        for record in package["records"]
+        for membership in record["branch_memberships"]
+    }
     assert len(branch_ids) == 3
     for branch_id in branch_ids:
-        branch_contents = [
-            record["content"] for record in package["records"]
-            if record["branch_id"] == branch_id
-        ]
+        branch_contents = sorted(
+            (
+                membership["position"],
+                record["content"],
+            )
+            for record in package["records"]
+            for membership in record["branch_memberships"]
+            if membership["branch_id"] == branch_id
+        )
+        branch_contents = [content for _, content in branch_contents]
         assert branch_contents[:2] == ["分支根节点", "请选择合成航线"]
         assert len(branch_contents) == 3
 
@@ -367,7 +379,8 @@ def test_one_declared_ferry_branch_means_a_real_two_path_fork(tmp_path):
     assert report["branching"]["single_branch_conversations"] == 0
     assert report["branching"]["multi_branch_conversations"] == 1
     assert report["branching"]["derived_branch_paths"] == 2
-    assert len(package["records"]) == 6
+    assert len(package["records"]) == 4
+    assert report["estimated"]["branch_memberships"] == 6
 
 
 def test_one_omitted_structural_parent_is_compressed_without_losing_messages(tmp_path):
@@ -408,7 +421,8 @@ def test_stale_zero_branch_count_does_not_flatten_recoverable_tree(tmp_path):
     assert "stale-branch-count-metadata" in _issue_codes(report, "warnings")
     assert report["branching"]["multi_branch_conversations"] == 1
     assert report["branching"]["derived_branch_paths"] == 2
-    assert len(package["records"]) == 6
+    assert len(package["records"]) == 4
+    assert report["estimated"]["branch_memberships"] == 6
 
 
 def test_long_linear_conversation_does_not_depend_on_python_recursion(tmp_path):
@@ -445,6 +459,67 @@ def test_long_linear_conversation_does_not_depend_on_python_recursion(tmp_path):
     assert len(package["records"]) == len(messages)
     assert package["records"][0]["message_id"] == "room-ferry-v1:ferry-long-0000"
     assert package["records"][-1]["message_id"] == "room-ferry-v1:ferry-long-1204"
+
+
+def test_shared_trunk_growth_is_stored_once_with_many_branch_memberships(tmp_path):
+    conversation_id = "synthetic-scale-conversation"
+    messages = []
+    trunk_count = 25
+    branch_count = 10
+    for index in range(trunk_count):
+        source_id = f"source-trunk-{index:03d}"
+        messages.append(
+            _message(
+                f"ferry-trunk-{index:03d}",
+                conversation_id,
+                source_id,
+                f"source-trunk-{index - 1:03d}" if index else None,
+                "user" if index % 2 == 0 else "assistant",
+                1_700_400_000_000 + index,
+                f"完全虚构的共享主干 {index}",
+                f"{index:08d}:0001700400000000:{source_id}",
+            )
+        )
+    for index in range(branch_count):
+        source_id = f"source-leaf-{index:03d}"
+        messages.append(
+            _message(
+                f"ferry-leaf-{index:03d}",
+                conversation_id,
+                source_id,
+                f"source-trunk-{trunk_count - 1:03d}",
+                "assistant",
+                1_700_400_100_000 + index,
+                f"完全虚构的分支叶片 {index}",
+                f"{trunk_count:08d}:0001700400100000:{source_id}",
+            )
+        )
+    data = {
+        "conversations": [
+            _conversation(
+                conversation_id,
+                len(messages),
+                branch_count=branch_count - 1,
+            )
+        ],
+        "messages": messages,
+        "importBatches": [],
+        "handoffDrafts": [],
+        "appMeta": [{"key": "schemaVersion", "value": 1}],
+    }
+    input_path = _write_backup(tmp_path / "shared-trunk.json", _backup(data))
+
+    package, report = convert_ferry_backup(str(input_path))
+
+    assert len(package["records"]) == trunk_count + branch_count
+    assert report["estimated"]["output_records"] == trunk_count + branch_count
+    assert report["estimated"]["branch_memberships"] == (
+        trunk_count * branch_count + branch_count
+    )
+    assert all(
+        len(record["branch_memberships"]) == branch_count
+        for record in package["records"][:trunk_count]
+    )
 
 
 def test_multi_branch_without_message_mapping_fails_closed(tmp_path):
@@ -582,8 +657,11 @@ def test_deterministic_conversion_then_m1_import_recall_and_index(
     initial = import_record_package(str(first_output), db_path=str(db_path))
     repeated = import_record_package(str(first_output), db_path=str(db_path))
     assert initial["added"] == 3
+    assert initial["branch_memberships_added"] == 3
     assert repeated["added"] == 0
     assert repeated["skipped"] == 3
+    assert repeated["branch_memberships_added"] == 0
+    assert repeated["branch_memberships_skipped"] == 3
 
     def network_forbidden(*args, **kwargs):
         pytest.fail("Room Ferry end-to-end recall must remain offline")
@@ -598,6 +676,7 @@ def test_deterministic_conversion_then_m1_import_recall_and_index(
     )
     assert result["conversation_id"] == "room-ferry-v1:ferry-conversation-one"
     assert result["branch_id"].startswith("rfv1_branch_")
+    assert result["branch_ids"] == [result["branch_id"]]
     assert result["authority"] == "room-ferry-unverified-archive"
     assert result["verified"] is False
     assert result["source_cutoff_at"].endswith("Z")

@@ -2,8 +2,8 @@
 
 This module is deliberately source-specific.  It validates a single UTF-8
 ``liora-elion-room-ferry-backup`` JSON file, performs a non-writing dry-run,
-and converts eligible input to the source-neutral ``echo-pact-records-v1``
-package consumed by the M1 importer.
+and converts eligible input to the source-neutral compact records package
+consumed by the M1 importer.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ FERRY_FORMAT = "liora-elion-room-ferry-backup"
 FERRY_FORMAT_VERSION = 1
 FERRY_SCHEMA_VERSION = 1
 ADAPTER_ID = "room-ferry-backup-v1"
-RECORD_SCHEMA_VERSION = "echo-pact-records-v1"
+RECORD_SCHEMA_VERSION = "echo-pact-records-v2"
 MAX_INPUT_BYTES = 500 * 1024 * 1024
 
 TOP_LEVEL_FIELDS = {
@@ -276,6 +276,7 @@ def _blank_report(input_sha256: Optional[str] = None) -> Dict[str, Any]:
         },
         "estimated": {
             "output_records": 0,
+            "branch_memberships": 0,
             "skipped_messages": 0,
             "warnings": 0,
             "fatal": 0,
@@ -854,12 +855,21 @@ def inspect_ferry_backup(path: str) -> FerryInspection:
             branch_paths[conversation_id] = paths
             report["branching"]["derived_branch_paths"] += len(paths)
 
-    report["estimated"]["output_records"] = sum(
+    report["estimated"]["branch_memberships"] = sum(
         1
         for paths in branch_paths.values()
         for path in paths
         for message in path.messages
         if message.get("id") in rendered_content
+    )
+    report["estimated"]["output_records"] = len(
+        {
+            (conversation_id, message["id"])
+            for conversation_id, paths in branch_paths.items()
+            for path in paths
+            for message in path.messages
+            if message.get("id") in rendered_content
+        }
     )
     report["estimated"]["skipped_messages"] = empty_messages
     _finish_report(report, issues)
@@ -879,7 +889,7 @@ def _source_ref(input_sha256: str, conversation_id: str, message_id: str) -> str
 
 
 def convert_ferry_backup(path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Return a deterministic records-v1 package and its redacted dry-run."""
+    """Return a deterministic compact record package and its redacted dry-run."""
 
     inspection = inspect_ferry_backup(path)
     report = inspection.report
@@ -891,37 +901,59 @@ def convert_ferry_backup(path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
         raise FerryAdapterError("Room Ferry exportedAt became invalid", report=report)
     source_cutoff_at = _timestamp_iso(exported_at)
     input_sha256 = report["input_sha256"]
-    records: List[Dict[str, Any]] = []
+    compact_messages: Dict[tuple[str, str], Dict[str, Any]] = {}
 
     for conversation_id in sorted(inspection.branch_paths):
         paths = inspection.branch_paths[conversation_id]
         for branch in sorted(paths, key=lambda item: item.branch_id):
-            for message in branch.messages:
+            for position, message in enumerate(branch.messages):
                 ferry_message_id = message["id"]
                 content = inspection.rendered_content.get(ferry_message_id)
                 if content is None:
                     continue
-                created_at = _as_epoch_ms(message.get("createdAt"))
-                if created_at is None:
-                    raise FerryAdapterError("Room Ferry message time became invalid", report=report)
-                record_seed = f"{conversation_id}\n{branch.branch_id}\n{ferry_message_id}"
-                records.append(
-                    {
-                        "record_id": f"rfv1_{_sha256_text(record_seed)}",
-                        "source_kind": ADAPTER_ID,
-                        "source_ref": _source_ref(input_sha256, conversation_id, ferry_message_id),
-                        "conversation_id": f"room-ferry-v1:{conversation_id}",
-                        "branch_id": branch.branch_id,
-                        "message_id": f"room-ferry-v1:{ferry_message_id}",
-                        "role": message["role"],
-                        "content": content,
-                        "created_at": _timestamp_iso(created_at),
-                        "verified": False,
-                        "authority": "room-ferry-unverified-archive",
-                        "source_cutoff_at": source_cutoff_at,
-                        "conflict_group_id": None,
-                    }
-                )
+                key = (conversation_id, ferry_message_id)
+                item = compact_messages.get(key)
+                if item is None:
+                    item = {"message": message, "memberships": {}}
+                    compact_messages[key] = item
+                item["memberships"][branch.branch_id] = position
+
+    records: List[Dict[str, Any]] = []
+    ordered_messages = sorted(
+        compact_messages.items(),
+        key=lambda item: (
+            item[0][0],
+            str(item[1]["message"].get("sortKey", "")),
+            item[0][1],
+        ),
+    )
+    for (conversation_id, ferry_message_id), item in ordered_messages:
+        message = item["message"]
+        content = inspection.rendered_content[ferry_message_id]
+        created_at = _as_epoch_ms(message.get("createdAt"))
+        if created_at is None:
+            raise FerryAdapterError("Room Ferry message time became invalid", report=report)
+        record_seed = f"{conversation_id}\n{ferry_message_id}"
+        records.append(
+            {
+                "record_id": f"rfv1_{_sha256_text(record_seed)}",
+                "source_kind": ADAPTER_ID,
+                "source_ref": _source_ref(input_sha256, conversation_id, ferry_message_id),
+                "conversation_id": f"room-ferry-v1:{conversation_id}",
+                "branch_memberships": [
+                    {"branch_id": branch_id, "position": item["memberships"][branch_id]}
+                    for branch_id in sorted(item["memberships"])
+                ],
+                "message_id": f"room-ferry-v1:{ferry_message_id}",
+                "role": message["role"],
+                "content": content,
+                "created_at": _timestamp_iso(created_at),
+                "verified": False,
+                "authority": "room-ferry-unverified-archive",
+                "source_cutoff_at": source_cutoff_at,
+                "conflict_group_id": None,
+            }
+        )
 
     package = {
         "schema_version": RECORD_SCHEMA_VERSION,
@@ -943,13 +975,19 @@ def convert_ferry_backup(path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
 
 
 def serialize_record_package(package: Mapping[str, Any]) -> bytes:
-    return (
-        json.dumps(package, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
-    ).encode("utf-8")
+    options: Dict[str, Any] = {
+        "ensure_ascii": False,
+        "allow_nan": False,
+    }
+    if package.get("schema_version") == RECORD_SCHEMA_VERSION:
+        options["separators"] = (",", ":")
+    else:
+        options["indent"] = 2
+    return (json.dumps(package, **options) + "\n").encode("utf-8")
 
 
 def write_converted_package(path: str, output_path: str) -> Dict[str, Any]:
-    """Atomically create one formal records-v1 package without overwriting."""
+    """Atomically create one formal compact package without overwriting."""
 
     destination = Path(output_path)
     if destination.exists():

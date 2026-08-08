@@ -14,12 +14,17 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
 RECORD_SCHEMA_VERSION = "echo-pact-records-v1"
+COMPACT_RECORD_SCHEMA_VERSION = "echo-pact-records-v2"
+SUPPORTED_RECORD_SCHEMA_VERSIONS = {
+    RECORD_SCHEMA_VERSION,
+    COMPACT_RECORD_SCHEMA_VERSION,
+}
 RECALL_SCHEMA_VERSION = "echo-pact-recall-v1"
-MIGRATION_VERSION = 1
+MIGRATION_VERSION = 2
 
 REQUIRED_FIELDS = (
     "record_id",
@@ -35,6 +40,10 @@ REQUIRED_FIELDS = (
     "authority",
     "source_cutoff_at",
 )
+
+COMPACT_REQUIRED_FIELDS = tuple(
+    field for field in REQUIRED_FIELDS if field != "branch_id"
+) + ("branch_memberships",)
 
 ALLOWED_ROLES = {"system", "user", "assistant", "tool", "developer"}
 AUTHORITATIVE_VALUES = {
@@ -67,6 +76,7 @@ class RecordConflictError(RecordPackageError):
 class LoadedRecordPackage:
     records: List[Dict[str, Any]]
     duplicate_skips: int = 0
+    schema_version: str = RECORD_SCHEMA_VERSION
 
 
 def _resolve_db_path(db_path: Optional[str] = None) -> str:
@@ -164,9 +174,32 @@ MIGRATION_1_STATEMENTS = (
     """,
 )
 
+MIGRATION_2_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS records_v1_branch_memberships (
+        record_rowid INTEGER NOT NULL,
+        branch_id TEXT NOT NULL,
+        position INTEGER,
+        PRIMARY KEY (record_rowid, branch_id),
+        FOREIGN KEY (record_rowid) REFERENCES records_v1(id) ON DELETE CASCADE,
+        CHECK (position IS NULL OR position >= 0)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_records_v1_branch_membership
+    ON records_v1_branch_memberships (branch_id, position, record_rowid)
+    """,
+    """
+    INSERT OR IGNORE INTO records_v1_branch_memberships(
+        record_rowid, branch_id, position
+    )
+    SELECT id, branch_id, NULL FROM records_v1
+    """,
+)
+
 
 def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Apply the forward-only V1 migration in one transaction."""
+    """Apply all forward-only record migrations in one transaction."""
 
     conn = _connect(db_path)
     applied: List[int] = []
@@ -181,23 +214,25 @@ def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
             )
             """
         )
-        exists = conn.execute(
-            "SELECT 1 FROM schema_migrations WHERE version = ?",
-            (MIGRATION_VERSION,),
-        ).fetchone()
-        if not exists:
-            for statement in MIGRATION_1_STATEMENTS:
+        migrations = (
+            (1, "echo-pact-records-v1-with-fts5", MIGRATION_1_STATEMENTS),
+            (2, "echo-pact-record-branch-memberships", MIGRATION_2_STATEMENTS),
+        )
+        for version, name, statements in migrations:
+            exists = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = ?",
+                (version,),
+            ).fetchone()
+            if exists:
+                continue
+            for statement in statements:
                 conn.execute(statement)
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) "
                 "VALUES (?, ?, ?)",
-                (
-                    MIGRATION_VERSION,
-                    "echo-pact-records-v1-with-fts5",
-                    datetime.now(timezone.utc).isoformat(),
-                ),
+                (version, name, datetime.now(timezone.utc).isoformat()),
             )
-            applied.append(MIGRATION_VERSION)
+            applied.append(version)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -227,6 +262,41 @@ def _required_text(record: Mapping[str, Any], field_name: str) -> str:
     return value.strip() if field_name != "content" else value
 
 
+def _normalize_branch_memberships(
+    value: Any,
+    *,
+    legacy_branch_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    if legacy_branch_id is not None:
+        return [{"branch_id": legacy_branch_id, "position": None}]
+    if not isinstance(value, list) or not value:
+        raise ValueError("branch_memberships must be a non-empty JSON array")
+    memberships: Dict[str, Optional[int]] = {}
+    for index, membership in enumerate(value, start=1):
+        if not isinstance(membership, Mapping):
+            raise ValueError(f"branch_memberships item {index} must be an object")
+        branch_id = _required_text(membership, "branch_id")
+        position = membership.get("position")
+        if (
+            not isinstance(position, int)
+            or isinstance(position, bool)
+            or position < 0
+        ):
+            raise ValueError(
+                f"branch_memberships item {index} position must be a non-negative integer"
+            )
+        existing = memberships.get(branch_id)
+        if existing is not None and existing != position:
+            raise ValueError(
+                f"branch_id {branch_id!r} has conflicting positions in one record"
+            )
+        memberships[branch_id] = position
+    return [
+        {"branch_id": branch_id, "position": memberships[branch_id]}
+        for branch_id in sorted(memberships)
+    ]
+
+
 def validate_record(
     raw_record: Mapping[str, Any], *, inherited_schema_version: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -234,15 +304,20 @@ def validate_record(
 
     if not isinstance(raw_record, Mapping):
         raise ValueError("record must be a JSON object")
-    missing = [field for field in REQUIRED_FIELDS if field not in raw_record]
+    schema_version = raw_record.get("schema_version", inherited_schema_version)
+    if schema_version not in SUPPORTED_RECORD_SCHEMA_VERSIONS:
+        raise ValueError(
+            "schema_version must be one of "
+            f"{sorted(SUPPORTED_RECORD_SCHEMA_VERSIONS)!r}, got {schema_version!r}"
+        )
+    required_fields = (
+        REQUIRED_FIELDS
+        if schema_version == RECORD_SCHEMA_VERSION
+        else COMPACT_REQUIRED_FIELDS
+    )
+    missing = [field for field in required_fields if field not in raw_record]
     if missing:
         raise ValueError(f"missing required fields: {', '.join(missing)}")
-
-    schema_version = raw_record.get("schema_version", inherited_schema_version)
-    if schema_version != RECORD_SCHEMA_VERSION:
-        raise ValueError(
-            f"schema_version must be {RECORD_SCHEMA_VERSION!r}, got {schema_version!r}"
-        )
 
     role = _required_text(raw_record, "role")
     if role not in ALLOWED_ROLES:
@@ -262,13 +337,25 @@ def validate_record(
     if not content.strip():
         raise ValueError("content must not be blank")
 
+    if schema_version == RECORD_SCHEMA_VERSION:
+        branch_id = _required_text(raw_record, "branch_id")
+        branch_memberships = _normalize_branch_memberships(
+            None, legacy_branch_id=branch_id
+        )
+    else:
+        branch_memberships = _normalize_branch_memberships(
+            raw_record.get("branch_memberships")
+        )
+        branch_id = branch_memberships[0]["branch_id"]
+
     return {
-        "schema_version": RECORD_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "record_id": _required_text(raw_record, "record_id"),
         "source_kind": _required_text(raw_record, "source_kind"),
         "source_ref": _required_text(raw_record, "source_ref"),
         "conversation_id": _required_text(raw_record, "conversation_id"),
-        "branch_id": _required_text(raw_record, "branch_id"),
+        "branch_id": branch_id,
+        "branch_memberships": branch_memberships,
         "message_id": _required_text(raw_record, "message_id"),
         "role": role,
         "content": content,
@@ -283,6 +370,26 @@ def validate_record(
     }
 
 
+def _merge_branch_memberships(
+    existing: Sequence[Mapping[str, Any]], incoming: Sequence[Mapping[str, Any]]
+) -> List[Dict[str, Any]]:
+    merged = {item["branch_id"]: item.get("position") for item in existing}
+    for item in incoming:
+        branch_id = item["branch_id"]
+        position = item.get("position")
+        previous = merged.get(branch_id)
+        if previous is not None and position is not None and previous != position:
+            raise RecordConflictError(
+                f"branch membership position conflict for branch_id {branch_id!r}"
+            )
+        if previous is None:
+            merged[branch_id] = position
+    return [
+        {"branch_id": branch_id, "position": merged[branch_id]}
+        for branch_id in sorted(merged)
+    ]
+
+
 def _deduplicate_package(records: Iterable[Dict[str, Any]]) -> LoadedRecordPackage:
     unique: Dict[str, Dict[str, Any]] = {}
     duplicate_skips = 0
@@ -291,13 +398,20 @@ def _deduplicate_package(records: Iterable[Dict[str, Any]]) -> LoadedRecordPacka
         if existing is None:
             unique[record["record_id"]] = record
         elif existing["content_sha256"] == record["content_sha256"]:
+            existing["branch_memberships"] = _merge_branch_memberships(
+                existing["branch_memberships"], record["branch_memberships"]
+            )
             duplicate_skips += 1
         else:
             raise RecordConflictError(
                 "record_id appears more than once with different content: "
                 f"{record['record_id']}"
             )
-    return LoadedRecordPackage(list(unique.values()), duplicate_skips)
+    versions = {record["schema_version"] for record in unique.values()}
+    schema_version = (
+        versions.pop() if len(versions) == 1 else COMPACT_RECORD_SCHEMA_VERSION
+    )
+    return LoadedRecordPackage(list(unique.values()), duplicate_skips, schema_version)
 
 
 def load_record_package(path: str) -> LoadedRecordPackage:
@@ -429,27 +543,70 @@ def import_record_package(
 
     conn = _connect(db_path)
     try:
-        existing: Dict[str, str] = {}
-        for record in loaded.records:
-            row = conn.execute(
-                "SELECT content_sha256 FROM records_v1 WHERE record_id = ?",
-                (record["record_id"],),
-            ).fetchone()
-            if row:
-                existing[record["record_id"]] = row["content_sha256"]
+        existing: Dict[str, Dict[str, Any]] = {}
+        record_ids = [record["record_id"] for record in loaded.records]
+        for start in range(0, len(record_ids), 500):
+            chunk = record_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in conn.execute(
+                "SELECT id, record_id, content_sha256 FROM records_v1 "
+                f"WHERE record_id IN ({placeholders})",
+                chunk,
+            ).fetchall():
+                existing[row["record_id"]] = {
+                    "rowid": row["id"],
+                    "content_sha256": row["content_sha256"],
+                    "memberships": {},
+                }
+
+        existing_items = list(existing.items())
+        for start in range(0, len(existing_items), 500):
+            chunk = existing_items[start : start + 500]
+            rowid_to_record_id = {item[1]["rowid"]: item[0] for item in chunk}
+            placeholders = ",".join("?" for _ in chunk)
+            for row in conn.execute(
+                "SELECT record_rowid, branch_id, position "
+                "FROM records_v1_branch_memberships "
+                f"WHERE record_rowid IN ({placeholders})",
+                list(rowid_to_record_id),
+            ).fetchall():
+                existing[rowid_to_record_id[row["record_rowid"]]]["memberships"][
+                    row["branch_id"]
+                ] = row["position"]
 
         conflicts = [
             record["record_id"]
             for record in loaded.records
             if record["record_id"] in existing
-            and existing[record["record_id"]] != record["content_sha256"]
+            and existing[record["record_id"]]["content_sha256"]
+            != record["content_sha256"]
         ]
+        membership_conflicts: List[str] = []
+        for record in loaded.records:
+            current = existing.get(record["record_id"])
+            if current is None:
+                continue
+            for membership in record["branch_memberships"]:
+                branch_id = membership["branch_id"]
+                incoming_position = membership["position"]
+                if branch_id not in current["memberships"]:
+                    continue
+                stored_position = current["memberships"][branch_id]
+                if (
+                    stored_position is not None
+                    and incoming_position is not None
+                    and stored_position != incoming_position
+                ):
+                    membership_conflicts.append(
+                        f"{record['record_id']}@{branch_id}"
+                    )
+        conflicts.extend(membership_conflicts)
         if conflicts:
             raise RecordConflictError(
-                "record_id content conflict; existing records were not overwritten: "
+                "record content or branch membership conflict; existing data was not overwritten: "
                 + ", ".join(conflicts),
                 summary={
-                    "schema_version": RECORD_SCHEMA_VERSION,
+                    "schema_version": loaded.schema_version,
                     "added": 0,
                     "skipped": 0,
                     "failed": len(conflicts),
@@ -457,19 +614,40 @@ def import_record_package(
                 },
             )
 
-        pending = [
-            record
-            for record in loaded.records
-            if record["record_id"] not in existing
-        ]
+        work_records = []
+        membership_skips = 0
+        for record in loaded.records:
+            current = existing.get(record["record_id"])
+            if current is None:
+                work_records.append(record)
+                continue
+            missing_memberships = [
+                membership
+                for membership in record["branch_memberships"]
+                if membership["branch_id"] not in current["memberships"]
+            ]
+            membership_skips += len(record["branch_memberships"]) - len(
+                missing_memberships
+            )
+            if missing_memberships:
+                work_record = dict(record)
+                work_record["branch_memberships"] = missing_memberships
+                work_records.append(work_record)
         summary: Dict[str, Any] = {
-            "schema_version": RECORD_SCHEMA_VERSION,
+            "schema_version": loaded.schema_version,
             "added": 0,
             "skipped": loaded.duplicate_skips + len(existing),
             "failed": 0,
             "knowledge_cutoff_at": None,
             "latest_record_at": None,
         }
+        if loaded.schema_version == COMPACT_RECORD_SCHEMA_VERSION:
+            summary.update(
+                {
+                    "branch_memberships_added": 0,
+                    "branch_memberships_skipped": membership_skips,
+                }
+            )
         inserted_at = datetime.now(timezone.utc).isoformat()
         insert_sql = """
             INSERT INTO records_v1 (
@@ -485,20 +663,55 @@ def import_record_package(
             )
         """
 
-        for start in range(0, len(pending), batch_size):
-            batch = pending[start : start + batch_size]
+        membership_sql = """
+            INSERT INTO records_v1_branch_memberships(
+                record_rowid, branch_id, position
+            ) VALUES (?, ?, ?)
+        """
+
+        for start in range(0, len(work_records), batch_size):
+            batch = work_records[start : start + batch_size]
+            batch_added = 0
+            batch_memberships_added = 0
             try:
                 conn.execute("BEGIN IMMEDIATE")
+                membership_values = []
                 for record in batch:
-                    values = dict(record)
-                    values["verified"] = int(record["verified"])
-                    values["imported_at"] = inserted_at
-                    conn.execute(insert_sql, values)
+                    current = existing.get(record["record_id"])
+                    if current is None:
+                        values = dict(record)
+                        values["verified"] = int(record["verified"])
+                        values["imported_at"] = inserted_at
+                        cursor = conn.execute(insert_sql, values)
+                        record_rowid = cursor.lastrowid
+                        existing[record["record_id"]] = {
+                            "rowid": record_rowid,
+                            "content_sha256": record["content_sha256"],
+                            "memberships": {},
+                        }
+                        batch_added += 1
+                    else:
+                        record_rowid = current["rowid"]
+                    for membership in record["branch_memberships"]:
+                        membership_values.append(
+                            (
+                                record_rowid,
+                                membership["branch_id"],
+                                membership["position"],
+                            )
+                        )
+                        existing[record["record_id"]]["memberships"][
+                            membership["branch_id"]
+                        ] = membership["position"]
+                        batch_memberships_added += 1
+                conn.executemany(membership_sql, membership_values)
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
-            summary["added"] += len(batch)
+            summary["added"] += batch_added
+            if loaded.schema_version == COMPACT_RECORD_SCHEMA_VERSION:
+                summary["branch_memberships_added"] += batch_memberships_added
             coverage = _coverage_from_connection(conn)
             summary["knowledge_cutoff_at"] = coverage[
                 "verified_knowledge_cutoff_at"
@@ -507,7 +720,7 @@ def import_record_package(
             if progress_callback:
                 progress_callback(dict(summary))
 
-        if not pending:
+        if not work_records:
             coverage = _coverage_from_connection(conn)
             summary["knowledge_cutoff_at"] = coverage[
                 "verified_knowledge_cutoff_at"
@@ -543,6 +756,12 @@ def check_records_index_consistency(
                 "SELECT id FROM records_v1_fts_docsize"
             ).fetchall()
         }
+        membership_rowids = {
+            row["record_rowid"]
+            for row in conn.execute(
+                "SELECT DISTINCT record_rowid FROM records_v1_branch_memberships"
+            ).fetchall()
+        }
         missing_state = sorted(set(records) - set(states))
         orphan_state = sorted(set(states) - set(records))
         stale_state = sorted(
@@ -552,8 +771,18 @@ def check_records_index_consistency(
         )
         missing_fts = sorted(set(records) - fts_rowids)
         orphan_fts = sorted(fts_rowids - set(records))
+        missing_memberships = sorted(set(records) - membership_rowids)
+        orphan_memberships = sorted(membership_rowids - set(records))
         ok = not any(
-            (missing_state, orphan_state, stale_state, missing_fts, orphan_fts)
+            (
+                missing_state,
+                orphan_state,
+                stale_state,
+                missing_fts,
+                orphan_fts,
+                missing_memberships,
+                orphan_memberships,
+            )
         )
         return {
             "ok": ok,
@@ -565,6 +794,9 @@ def check_records_index_consistency(
             "stale_state": stale_state,
             "missing_fts": missing_fts,
             "orphan_fts": orphan_fts,
+            "branch_membership_records": len(membership_rowids),
+            "missing_memberships": missing_memberships,
+            "orphan_memberships": orphan_memberships,
         }
     finally:
         conn.close()
@@ -629,7 +861,10 @@ def _confidence(record: Mapping[str, Any], query: str) -> tuple[float, List[str]
 
 
 def _row_to_recall_result(
-    row: sqlite3.Row, query: str, recall_mode: str
+    row: sqlite3.Row,
+    query: str,
+    recall_mode: str,
+    branch_memberships: Sequence[Mapping[str, Any]],
 ) -> Dict[str, Any]:
     confidence, confidence_basis = _confidence(row, query)
     return {
@@ -640,6 +875,8 @@ def _row_to_recall_result(
         "source_ref": row["source_ref"],
         "conversation_id": row["conversation_id"],
         "branch_id": row["branch_id"],
+        "branch_ids": [item["branch_id"] for item in branch_memberships],
+        "branch_memberships": [dict(item) for item in branch_memberships],
         "message_id": row["message_id"],
         "role": row["role"],
         "verified": bool(row["verified"]),
@@ -726,6 +963,25 @@ def recall_records(
                 "coverage_gap": coverage_gap,
             }
         )
+        memberships_by_rowid: Dict[int, List[Dict[str, Any]]] = {}
+        if rows:
+            rowids = [row["id"] for row in rows]
+            placeholders = ",".join("?" for _ in rowids)
+            for membership in conn.execute(
+                "SELECT record_rowid, branch_id, position "
+                "FROM records_v1_branch_memberships "
+                f"WHERE record_rowid IN ({placeholders}) "
+                "ORDER BY branch_id",
+                rowids,
+            ).fetchall():
+                memberships_by_rowid.setdefault(
+                    membership["record_rowid"], []
+                ).append(
+                    {
+                        "branch_id": membership["branch_id"],
+                        "position": membership["position"],
+                    }
+                )
         return {
             "schema_version": RECALL_SCHEMA_VERSION,
             "query": query,
@@ -737,7 +993,16 @@ def recall_records(
             ),
             "coverage": coverage,
             "memories": [
-                _row_to_recall_result(row, query, recall_mode) for row in rows
+                _row_to_recall_result(
+                    row,
+                    query,
+                    recall_mode,
+                    memberships_by_rowid.get(
+                        row["id"],
+                        [{"branch_id": row["branch_id"], "position": None}],
+                    ),
+                )
+                for row in rows
             ],
         }
     finally:

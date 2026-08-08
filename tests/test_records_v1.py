@@ -9,6 +9,7 @@ import pytest
 import backend.memory.records_v1 as records_module
 import backend.utils.db as db_module
 from backend.memory.records_v1 import (
+    COMPACT_RECORD_SCHEMA_VERSION,
     RECORD_SCHEMA_VERSION,
     RecordConflictError,
     RecordPackageError,
@@ -77,6 +78,140 @@ def test_jsonl_import_leaves_source_file_unchanged(tmp_path):
     after = hashlib.sha256(jsonl_path.read_bytes()).hexdigest()
     assert summary["added"] == 4
     assert before == after
+
+
+def test_compact_package_stores_content_once_and_preserves_all_branch_memberships(
+    tmp_path,
+):
+    db_path = tmp_path / "compact.db"
+    compact_path = tmp_path / "compact.json"
+    base = dict(_fixture_payload()["records"][0])
+    base.pop("branch_id")
+    base["record_id"] = "compact-shared-message"
+    base["schema_version"] = COMPACT_RECORD_SCHEMA_VERSION
+    base["branch_memberships"] = [
+        {"branch_id": "alternate", "position": 0},
+        {"branch_id": "main", "position": 0},
+    ]
+    compact_path.write_text(
+        json.dumps(
+            {
+                "schema_version": COMPACT_RECORD_SCHEMA_VERSION,
+                "records": [base],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    first = import_record_package(str(compact_path), db_path=str(db_path))
+    repeated = import_record_package(str(compact_path), db_path=str(db_path))
+
+    assert first["added"] == 1
+    assert first["branch_memberships_added"] == 2
+    assert repeated["added"] == 0
+    assert repeated["skipped"] == 1
+    assert repeated["branch_memberships_added"] == 0
+    assert repeated["branch_memberships_skipped"] == 2
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM records_v1").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM records_v1_branch_memberships"
+        ).fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM records_v1_fts_docsize"
+        ).fetchone()[0] == 1
+    recalled = recall_records("ORCHID-731", db_path=str(db_path))["memories"][0]
+    assert recalled["branch_ids"] == ["alternate", "main"]
+    assert recalled["branch_memberships"] == [
+        {"branch_id": "alternate", "position": 0},
+        {"branch_id": "main", "position": 0},
+    ]
+
+
+def test_compact_repeat_can_add_a_new_branch_without_copying_content(tmp_path):
+    db_path = tmp_path / "growing-branches.db"
+    first_path = tmp_path / "first.json"
+    expanded_path = tmp_path / "expanded.json"
+    record = dict(_fixture_payload()["records"][0])
+    record.pop("branch_id")
+    record["record_id"] = "compact-growing-message"
+    record["schema_version"] = COMPACT_RECORD_SCHEMA_VERSION
+    record["branch_memberships"] = [{"branch_id": "main", "position": 1}]
+    first_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": [record]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    expanded_record = dict(record)
+    expanded_record["branch_memberships"] = [
+        {"branch_id": "alternate", "position": 1},
+        {"branch_id": "main", "position": 1},
+    ]
+    expanded_path.write_text(
+        json.dumps(
+            {
+                "schema_version": COMPACT_RECORD_SCHEMA_VERSION,
+                "records": [expanded_record],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    import_record_package(str(first_path), db_path=str(db_path))
+    result = import_record_package(str(expanded_path), db_path=str(db_path))
+
+    assert result["added"] == 0
+    assert result["skipped"] == 1
+    assert result["branch_memberships_added"] == 1
+    assert result["branch_memberships_skipped"] == 1
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM records_v1").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM records_v1_branch_memberships"
+        ).fetchone()[0] == 2
+
+
+def test_compact_branch_position_conflict_fails_without_overwrite(tmp_path):
+    db_path = tmp_path / "branch-conflict.db"
+    first_path = tmp_path / "first.json"
+    conflict_path = tmp_path / "conflict.json"
+    record = dict(_fixture_payload()["records"][0])
+    record.pop("branch_id")
+    record["record_id"] = "compact-position-conflict"
+    record["schema_version"] = COMPACT_RECORD_SCHEMA_VERSION
+    record["branch_memberships"] = [{"branch_id": "main", "position": 1}]
+    first_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": [record]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    conflicting = dict(record)
+    conflicting["branch_memberships"] = [{"branch_id": "main", "position": 2}]
+    conflict_path.write_text(
+        json.dumps(
+            {
+                "schema_version": COMPACT_RECORD_SCHEMA_VERSION,
+                "records": [conflicting],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    import_record_package(str(first_path), db_path=str(db_path))
+    with pytest.raises(RecordConflictError):
+        import_record_package(str(conflict_path), db_path=str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT position FROM records_v1_branch_memberships"
+        ).fetchall() == [(1,)]
 
 
 def test_same_record_id_with_different_content_fails_without_overwrite(tmp_path):
@@ -292,7 +427,7 @@ def test_migration_is_forward_only_repeatable_and_rolls_back_on_failure(
 
     first = migrate_records_db(str(db_path))
     second = migrate_records_db(str(db_path))
-    assert first["applied"] == [1]
+    assert first["applied"] == [1, 2]
     assert second["applied"] == []
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "keep-me"

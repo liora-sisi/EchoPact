@@ -1,9 +1,9 @@
-# Echo Pact V1 record package and offline recall
+# Echo Pact record packages and offline recall
 
 ## Protocol
 
-The protocol identifier is `echo-pact-records-v1`. A JSON package has this
-shape:
+The original protocol identifier is `echo-pact-records-v1`. It remains fully
+supported. A JSON package has this shape:
 
 ```json
 {
@@ -32,6 +32,47 @@ JSONL contains one complete record object per non-empty line. Each JSONL record
 must carry `schema_version`. Timestamps must be timezone-aware ISO-8601 values.
 `conflict_group_id` is optional and otherwise preserved as provided.
 
+### Compact multi-branch records
+
+`echo-pact-records-v2` is the source-neutral compact form for a message that
+belongs to more than one branch. It stores content and provenance once and
+uses ordered branch memberships instead of copying the complete record for
+every root-to-leaf path:
+
+```json
+{
+  "schema_version": "echo-pact-records-v2",
+  "records": [
+    {
+      "record_id": "stable-source-message-id",
+      "source_kind": "conversation_export",
+      "source_ref": "synthetic://example/conversation#message-1",
+      "conversation_id": "conversation-1",
+      "branch_memberships": [
+        {"branch_id": "alternate", "position": 0},
+        {"branch_id": "main", "position": 0}
+      ],
+      "message_id": "message-1",
+      "role": "user",
+      "content": "shared record text",
+      "created_at": "2026-08-01T10:00:00Z",
+      "verified": true,
+      "authority": "user-confirmed",
+      "source_cutoff_at": "2026-08-01T00:00:00Z",
+      "conflict_group_id": null
+    }
+  ]
+}
+```
+
+Each membership requires a stable `branch_id` and a zero-based `position`.
+V2 record identity is the source message within its conversation, not one
+branch occurrence. Reimporting the same content may add a previously unseen
+branch membership, but it never duplicates or overwrites message content.
+Conflicting content or conflicting positions fail preflight.
+V2 JSON is serialized without presentation whitespace to keep large offline
+packages smaller; this does not change its canonical field or array order.
+
 Identity is `record_id`, not `message_id`. The same message identifier may
 legitimately exist in different conversations or branches. Import behavior is:
 
@@ -56,12 +97,18 @@ package is only read and is never rewritten.
 
 ## Migration and index safety
 
-Migration version 1 only creates these new objects:
+Migration version 1 creates these objects:
 
 - `schema_migrations`;
 - `records_v1` and non-unique provenance indexes;
 - `records_v1_fts` using local SQLite FTS5 with the trigram tokenizer;
 - `records_v1_index_state` and synchronization triggers.
+
+Migration version 2 adds only
+`records_v1_branch_memberships` and its lookup index. Existing V1 rows receive
+one compatibility membership with unknown position; no existing record or
+content is rewritten. New V2 rows store one record/FTS document plus as many
+small membership rows as their branch topology requires.
 
 It does not remove or rewrite legacy tables or columns. Migration statements
 run inside `BEGIN IMMEDIATE`; any error rolls the migration back. A record, its
@@ -101,11 +148,12 @@ Content-Type: application/json
 {"query":"ORCHID-731","limit":5,"as_of":"2026-08-01T00:00:00Z"}
 ```
 
-V1 runs entirely in SQLite. It does not use Chroma, the constant mock vector,
+Recall runs entirely in SQLite. It does not use Chroma, the constant mock vector,
 an API key, or a network request. Every result includes record content and
 timestamp, source kind/reference, conversation/branch/message identifiers,
 role, verification and authority, conflict group, source cutoff, confidence,
-and the actual recall mode.
+the compatibility `branch_id`, complete `branch_ids`/ordered memberships, and
+the actual recall mode.
 
 `confidence` is a deterministic evidence score, not a probability:
 
@@ -128,4 +176,3 @@ When `as_of` is later than the verified cutoff, `coverage_status` is
 `outside_verified_cutoff` and `coverage_gap` is true. Without `as_of`, temporal
 coverage is deliberately reported as `not_assessed_without_as_of`; the system
 does not guess a date from free-form query text.
-

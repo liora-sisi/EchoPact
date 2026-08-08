@@ -90,8 +90,9 @@ ID. Every `source_ref` contains:
 - the Ferry conversation ID;
 - the Ferry message ID.
 
-Record IDs are deterministic SHA-256 identities over Ferry conversation ID,
-derived branch ID, and Ferry message ID. `contentFingerprint` is not used as an
+Record IDs are deterministic SHA-256 identities over Ferry conversation ID and
+Ferry message ID. Branch membership is stored separately, so adding a branch
+does not change the message identity. `contentFingerprint` is not used as an
 identity: Room Ferry computes it from normalized text, role, and part types for
 change/merge detection, so it is content-derived and may change.
 
@@ -113,9 +114,9 @@ Room Ferry has no explicit `branchId`. It preserves `sourceMessageId`,
   not overridden by, the declaration.
 - A single omitted structural parent ID may anchor one root component without
   creating a message. Multiple unconnected missing-parent anchors are fatal.
-- Each root-to-leaf path becomes one deterministic branch. Shared ancestors are
-  materialized once per path because records-v1 represents branch histories,
-  not a parent-pointer graph.
+- Each root-to-leaf path becomes one deterministic branch. Compact records-v2
+  stores each message body once and attaches one `{branch_id, position}`
+  membership per path, so shared ancestors do not duplicate content or FTS rows.
 - A branch ID hashes the conversation identity and the choices made at actual
   divergence points. It does not guess from title, content similarity, or time.
 
@@ -150,11 +151,11 @@ python scripts/adapt_room_ferry.py BACKUP.json --dry-run
 ```
 
 Formal conversion refuses an existing output path and atomically creates a new
-records-v1 JSON only after a clean dry-run:
+compact records-v2 JSON only after a clean dry-run:
 
 ```bash
-python scripts/adapt_room_ferry.py BACKUP.json --output RECORDS_V1.json
-python scripts/import_history.py RECORDS_V1.json --db TEMPORARY_COPY.db
+python scripts/adapt_room_ferry.py BACKUP.json --output RECORDS_V2.json
+python scripts/import_history.py RECORDS_V2.json --db TEMPORARY_COPY.db
 ```
 
 The same input produces byte-identical output. A fatal conversion removes its

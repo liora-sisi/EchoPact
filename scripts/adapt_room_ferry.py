@@ -25,7 +25,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Validate a UTF-8 Room Ferry full-backup v1 JSON and convert it "
-            "to echo-pact-records-v1 without network access."
+            "to compact echo-pact-records-v2 without network access."
         )
     )
     parser.add_argument("input", help="one Room Ferry full-backup JSON file")
@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     action.add_argument(
         "--output",
-        help="create a new echo-pact-records-v1 JSON file atomically",
+        help="create a new echo-pact-records-v2 JSON file atomically",
     )
     return parser
 

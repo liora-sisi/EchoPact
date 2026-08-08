@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Import versioned Echo Pact record packages into a local SQLite database.
 
-The supported interchange format is ``echo-pact-records-v1`` in JSON or
-JSONL.  The source file is read-only.  Import batches are transactional and
-idempotent by record_id plus exact content.
+The supported interchange formats are legacy ``echo-pact-records-v1`` and
+compact ``echo-pact-records-v2``. The source file is read-only. Import batches
+are transactional and idempotent by record_id plus exact content.
 """
 
 from __future__ import annotations
@@ -88,9 +88,9 @@ def import_memories(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Import echo-pact-records-v1 JSON/JSONL without network access."
+        description="Import Echo Pact records-v1/v2 packages without network access."
     )
-    parser.add_argument("input", nargs="?", help="V1 JSON or JSONL record package")
+    parser.add_argument("input", nargs="?", help="V1/V2 JSON or V1 JSONL record package")
     parser.add_argument(
         "--db",
         dest="db_path",

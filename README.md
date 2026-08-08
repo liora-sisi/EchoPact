@@ -92,7 +92,8 @@ pytest tests/ -v
 
 ### V1 离线记录闭环
 
-V1 支持版本化的 `echo-pact-records-v1` JSON/JSONL 记录包。导入时不会修改
+V1 支持原有 `echo-pact-records-v1` JSON/JSONL，以及向前兼容的紧凑
+`echo-pact-records-v2` JSON。导入时不会修改
 原文件；记录主表与 SQLite FTS5 文本索引在同一事务中更新。相同
 `record_id` 与相同内容会跳过，相同 `record_id` 但内容不同会明确失败，
 不会覆盖已有记录。
@@ -104,7 +105,7 @@ python scripts/import_history.py --db ./demo-v1.db --check-index
 
 新增的 `POST /api/v1/recall` 使用离线 SQLite FTS5，不调用 embedding API；
 旧 `POST /api/recall` 保持不变。V1 每条结果会回传来源、conversation、
-branch、message、核验状态、冲突组、知识截止时间和实际召回模式。请求可传
+branch、完整分支成员关系、message、核验状态、冲突组、知识截止时间和实际召回模式。请求可传
 `as_of`；超过已核验截止线时，响应会明确标记覆盖缺口。未核验的
 `recent_patch` 可以被召回，但不会推进已核验知识截止线。
 
@@ -118,12 +119,13 @@ branch、message、核验状态、冲突组、知识截止时间和实际召回�
 
 ```bash
 python scripts/adapt_room_ferry.py ROOM_FERRY_BACKUP.json --dry-run
-python scripts/adapt_room_ferry.py ROOM_FERRY_BACKUP.json --output RECORDS_V1.json
+python scripts/adapt_room_ferry.py ROOM_FERRY_BACKUP.json --output RECORDS_V2.json
 ```
 
 dry-run 校验格式、版本、schema、`SHA-256(JSON.stringify(data))`、分支可还原性、
 原始消息时间、角色和内容类型，不写数据库或正式记录包。正式转换仅在无 fatal
-时原子创建 `echo-pact-records-v1`，随后可交给现有 M1 导入器。渡房船导入批次、
+时原子创建紧凑的 `echo-pact-records-v2`，正文只保存和索引一次，分支路径作为
+有序成员关系保存；随后可交给现有导入器。渡房船导入批次、
 交接草稿和 appMeta 不会被当作聊天正文。
 
 详细协议证据、分支派生规则和安全拒绝条件见
