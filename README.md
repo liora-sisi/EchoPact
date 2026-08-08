@@ -111,6 +111,24 @@ branch、message、核验状态、冲突组、知识截止时间和实际召回�
 协议、置信度规则、迁移检查和恢复方法见
 [`docs/V1_RECORDS.md`](docs/V1_RECORDS.md)。
 
+### Room Ferry 完整备份适配器
+
+渡房船是第一个正式来源适配器，但 Echo Pact 核心仍保持来源无关。适配器
+只接受单个 UTF-8 `liora-elion-room-ferry-backup` format v1 JSON：
+
+```bash
+python scripts/adapt_room_ferry.py ROOM_FERRY_BACKUP.json --dry-run
+python scripts/adapt_room_ferry.py ROOM_FERRY_BACKUP.json --output RECORDS_V1.json
+```
+
+dry-run 校验格式、版本、schema、`SHA-256(JSON.stringify(data))`、分支可还原性、
+原始消息时间、角色和内容类型，不写数据库或正式记录包。正式转换仅在无 fatal
+时原子创建 `echo-pact-records-v1`，随后可交给现有 M1 导入器。渡房船导入批次、
+交接草稿和 appMeta 不会被当作聊天正文。
+
+详细协议证据、分支派生规则和安全拒绝条件见
+[`docs/ROOM_FERRY_V1_ADAPTER.md`](docs/ROOM_FERRY_V1_ADAPTER.md)。
+
 ### 📄 开源协议
 
 MIT —— 代码随便用，但保长的毒舌是宝气专属，你拿去也学不会。

@@ -1,0 +1,101 @@
+{
+  "format": "liora-elion-room-ferry-backup",
+  "formatVersion": 1,
+  "appVersion": "0.1.9",
+  "schemaVersion": 1,
+  "exportedAt": 1786147200000,
+  "checksumAlgorithm": "SHA-256",
+  "checksum": "69497cc01ff013cf5d04e795822f1bf9551ebbd7867d891a46d5f7a873aad6b8",
+  "data": {
+    "conversations": [
+      {
+        "id": "synthetic-ferry-demo-conversation",
+        "sourceType": "chatgpt-conversations-json",
+        "sourceConversationId": "synthetic-official-conversation",
+        "title": "纯合成渡房船演示",
+        "createdAt": 1700300000000,
+        "updatedAt": 1700300001000,
+        "messageCount": 2,
+        "branchCount": 0,
+        "currentLeafSourceMessageId": "synthetic-source-user",
+        "contentFingerprint": "synthetic-conversation-fingerprint",
+        "tags": [],
+        "favorite": false,
+        "archived": false,
+        "userNotes": "",
+        "firstImportedAt": 1799999999999,
+        "lastImportedAt": 1799999999999,
+        "lastImportBatchId": "synthetic-import-batch"
+      }
+    ],
+    "messages": [
+      {
+        "id": "synthetic-ferry-demo-system",
+        "conversationId": "synthetic-ferry-demo-conversation",
+        "sourceType": "chatgpt-conversations-json",
+        "sourceMessageId": "synthetic-source-system",
+        "role": "system",
+        "createdAt": 1700300000000,
+        "contentParts": [
+          {
+            "type": "text",
+            "text": "这是完全虚构的渡房船演示。"
+          }
+        ],
+        "plainText": "这是完全虚构的渡房船演示。",
+        "contentFingerprint": "synthetic-system-fingerprint",
+        "sortKey": "00000000:0001700300000000:system",
+        "firstImportedAt": 1799999999999,
+        "lastImportedAt": 1799999999999,
+        "lastImportBatchId": "synthetic-import-batch"
+      },
+      {
+        "id": "synthetic-ferry-demo-user",
+        "conversationId": "synthetic-ferry-demo-conversation",
+        "sourceType": "chatgpt-conversations-json",
+        "sourceMessageId": "synthetic-source-user",
+        "parentSourceMessageId": "synthetic-source-system",
+        "role": "user",
+        "createdAt": 1700300001000,
+        "contentParts": [
+          {
+            "type": "text",
+            "text": "合成事实：FERRY-DEMO-2042 停靠在月光码头。\n换行与 Unicode 🌙 均需保留。"
+          }
+        ],
+        "plainText": "合成事实：FERRY-DEMO-2042 停靠在月光码头。\n换行与 Unicode 🌙 均需保留。",
+        "contentFingerprint": "synthetic-user-fingerprint",
+        "sortKey": "00000001:0001700300001000:user",
+        "firstImportedAt": 1799999999999,
+        "lastImportedAt": 1799999999999,
+        "lastImportBatchId": "synthetic-import-batch"
+      }
+    ],
+    "importBatches": [
+      {
+        "id": "synthetic-import-batch",
+        "sourceType": "chatgpt-conversations-json",
+        "fileName": "synthetic-source.json",
+        "fileSize": 1,
+        "startedAt": 1799999999999,
+        "finishedAt": 1799999999999,
+        "status": "completed",
+        "addedConversations": 1,
+        "updatedConversations": 0,
+        "unchangedConversations": 0,
+        "addedMessages": 2,
+        "updatedMessages": 0,
+        "skippedItems": 0,
+        "conflicts": 0,
+        "errors": []
+      }
+    ],
+    "handoffDrafts": [],
+    "appMeta": [
+      {
+        "key": "schemaVersion",
+        "value": 1
+      }
+    ]
+  }
+}
