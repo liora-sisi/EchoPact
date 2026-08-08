@@ -79,7 +79,7 @@ curl -X POST http://localhost:8000/recall \
 | backend/judge/  | 召回四维评分、主动浮现逻辑 |
 | backend/trigger/  | FastAPI 入口、/recall 接口 |
 | backend/utils/  | 数据库连接、embedding 封装（mock/real 开关） |
-| tests/  | 单元测试（53 个全绿，少一个你找克里） |
+| tests/  | 单元测试与纯合成 V1 记录包夹具 |
 
 ### 🧪 开发与测试
 
@@ -89,6 +89,27 @@ pytest tests/ -v
 
 测试默认由 `tests/conftest.py` 同时关闭 `USE_REAL_EMBEDDING` 和
 `ALLOW_REAL_API_CALLS`，不会读取真实 embedding key 或发出真实 API 请求。
+
+### V1 离线记录闭环
+
+V1 支持版本化的 `echo-pact-records-v1` JSON/JSONL 记录包。导入时不会修改
+原文件；记录主表与 SQLite FTS5 文本索引在同一事务中更新。相同
+`record_id` 与相同内容会跳过，相同 `record_id` 但内容不同会明确失败，
+不会覆盖已有记录。
+
+```bash
+python scripts/import_history.py tests/fixtures/echo_pact_records_v1.json --db ./demo-v1.db
+python scripts/import_history.py --db ./demo-v1.db --check-index
+```
+
+新增的 `POST /api/v1/recall` 使用离线 SQLite FTS5，不调用 embedding API；
+旧 `POST /api/recall` 保持不变。V1 每条结果会回传来源、conversation、
+branch、message、核验状态、冲突组、知识截止时间和实际召回模式。请求可传
+`as_of`；超过已核验截止线时，响应会明确标记覆盖缺口。未核验的
+`recent_patch` 可以被召回，但不会推进已核验知识截止线。
+
+协议、置信度规则、迁移检查和恢复方法见
+[`docs/V1_RECORDS.md`](docs/V1_RECORDS.md)。
 
 ### 📄 开源协议
 

@@ -1,0 +1,65 @@
+{
+  "schema_version": "echo-pact-records-v1",
+  "records": [
+    {
+      "record_id": "synthetic-lighthouse-main-001",
+      "source_kind": "conversation_export",
+      "source_ref": "synthetic://fixtures/lighthouse/main#message-001",
+      "conversation_id": "synthetic-lighthouse",
+      "branch_id": "main",
+      "message_id": "message-001",
+      "role": "user",
+      "content": "合成事实：灯塔计划的离线代号是 ORCHID-731。",
+      "created_at": "2026-07-30T10:00:00Z",
+      "verified": true,
+      "authority": "user-confirmed",
+      "source_cutoff_at": "2026-08-01T00:00:00Z",
+      "conflict_group_id": null
+    },
+    {
+      "record_id": "synthetic-lighthouse-alt-001",
+      "source_kind": "conversation_export",
+      "source_ref": "synthetic://fixtures/lighthouse/alternate#message-001",
+      "conversation_id": "synthetic-lighthouse",
+      "branch_id": "alternate",
+      "message_id": "message-001",
+      "role": "user",
+      "content": "合成分支事实：灯塔计划的备用色是琥珀色。",
+      "created_at": "2026-07-30T10:01:00Z",
+      "verified": true,
+      "authority": "user-confirmed",
+      "source_cutoff_at": "2026-08-01T00:00:00Z",
+      "conflict_group_id": "synthetic-lighthouse-options"
+    },
+    {
+      "record_id": "synthetic-lighthouse-main-002",
+      "source_kind": "conversation_export",
+      "source_ref": "synthetic://fixtures/lighthouse/main#message-002",
+      "conversation_id": "synthetic-lighthouse",
+      "branch_id": "main",
+      "message_id": "message-002",
+      "role": "assistant",
+      "content": "合成确认：ORCHID-731 只用于本地离线召回测试。",
+      "created_at": "2026-07-30T10:02:00Z",
+      "verified": true,
+      "authority": "official",
+      "source_cutoff_at": "2026-08-01T00:00:00Z",
+      "conflict_group_id": null
+    },
+    {
+      "record_id": "synthetic-lighthouse-patch-001",
+      "source_kind": "recent_patch",
+      "source_ref": "synthetic://fixtures/lighthouse/recent-patch#message-003",
+      "conversation_id": "synthetic-lighthouse",
+      "branch_id": "recent-patch",
+      "message_id": "message-003",
+      "role": "assistant",
+      "content": "未核验合成补丁：ORCHID-731 的演示标签是 NOVA-9。",
+      "created_at": "2026-08-05T09:30:00Z",
+      "verified": false,
+      "authority": "unverified-patch",
+      "source_cutoff_at": "2026-08-01T00:00:00Z",
+      "conflict_group_id": "synthetic-lighthouse-options"
+    }
+  ]
+}

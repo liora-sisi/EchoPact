@@ -2,7 +2,10 @@ import sqlite3
 import os
 from contextlib import contextmanager
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "echo_pact.db")
+DB_PATH = os.getenv(
+    "DB_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "..", "echo_pact.db"),
+)
 
 @contextmanager
 def get_conn():

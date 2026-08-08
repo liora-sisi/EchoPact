@@ -1,97 +1,144 @@
 #!/usr/bin/env python3
+"""Import versioned Echo Pact record packages into a local SQLite database.
+
+The supported interchange format is ``echo-pact-records-v1`` in JSON or
+JSONL.  The source file is read-only.  Import batches are transactional and
+idempotent by record_id plus exact content.
 """
-Echo Pact 历史对话批量导入脚本
-支持断点续传、进度条
-"""
-import sys
-import os
+
+from __future__ import annotations
+
+import argparse
 import json
-import time
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dotenv import load_dotenv
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.utils.db import init_db, get_conn
-from backend.memory.models import Memory
-from backend.memory.crud import create_memory
-from backend.memory.vector_store import upsert_memory
+from backend.memory.records_v1 import (  # noqa: E402
+    RecordPackageError,
+    check_records_index_consistency,
+    import_record_package,
+    load_record_package,
+    migrate_records_db,
+    rebuild_records_index,
+)
 
+
+# Retained for callers of the pre-V1 scaffold.  V1 recovery does not depend on
+# this file: committed transactional batches are discovered by record_id.
 CHECKPOINT_FILE = "/opt/echo-pact/import_checkpoint.json"
 
-def load_checkpoint():
+
+def load_checkpoint() -> Dict[str, int]:
     if os.path.exists(CHECKPOINT_FILE):
-        with open(CHECKPOINT_FILE) as f:
-            return json.load(f)
+        with open(CHECKPOINT_FILE, encoding="utf-8") as checkpoint:
+            return json.load(checkpoint)
     return {"last_index": 0, "total": 0}
 
-def save_checkpoint(index, total):
-    with open(CHECKPOINT_FILE, "w") as f:
-        json.dump({"last_index": index, "total": total}, f)
+
+def save_checkpoint(index: int, total: int) -> None:
+    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as checkpoint:
+        json.dump({"last_index": index, "total": total}, checkpoint)
+
 
 def parse_conversations(filepath: str):
-    """解析对话文件，返回记忆列表——待实现"""
-    # TODO: 根据实际导出格式解析
-    # 现在返回空列表作为框架
-    return []
+    """Compatibility name: parse a standard V1 package into normalized records."""
 
-def import_memories(filepath: str, agent_id: str = "default"):
-    init_db()
-    checkpoint = load_checkpoint()
-    start = checkpoint["last_index"]
-    
-    memories = parse_conversations(filepath)
-    total = len(memories)
-    
-    if total == 0:
-        print("没有找到可导入的记忆，请检查文件格式")
-        return
-    
-    print(f"共 {total} 条记忆，从第 {start} 条开始导入...")
-    
-    for i, mem_data in enumerate(memories[start:], start=start):
-        try:
-            # 去重检查（时间+内容）
-            with get_conn() as conn:
-                existing = conn.execute(
-                    "SELECT id FROM memories WHERE content=? AND created_at=? AND agent_id=?",
-                    (mem_data.get("content", ""), mem_data.get("created_at", ""), agent_id)
-                ).fetchone()
-            if existing:
-                print(f"\r跳过重复第{i+1}条", end="")
-                save_checkpoint(i + 1, total)
-                continue
-            mem = Memory(
-                content=mem_data.get("content", ""),
-                valence=mem_data.get("valence", 0.0),
-                arousal=mem_data.get("arousal", 0.0),
-                source_type=mem_data.get("source_type", "user"),
-                agent_id=agent_id
+    return load_record_package(filepath).records
+
+
+def import_memories(
+    filepath: str,
+    agent_id: str = "default",
+    *,
+    db_path: Optional[str] = None,
+    batch_size: int = 100,
+) -> Dict[str, Any]:
+    """Compatibility entry point backed by the real V1 importer.
+
+    ``agent_id`` is intentionally ignored because V1 identity is expressed by
+    conversation_id and branch_id rather than a process-wide agent label.
+    """
+
+    del agent_id
+    if not Path(filepath).is_file():
+        summary = {
+            "schema_version": "echo-pact-records-v1",
+            "added": 0,
+            "skipped": 0,
+            "failed": 0,
+            "knowledge_cutoff_at": None,
+            "latest_record_at": None,
+            "notice": f"record package not found: {filepath}",
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return summary
+    summary = import_record_package(
+        filepath, db_path=db_path, batch_size=batch_size
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Import echo-pact-records-v1 JSON/JSONL without network access."
+    )
+    parser.add_argument("input", nargs="?", help="V1 JSON or JSONL record package")
+    parser.add_argument(
+        "--db",
+        dest="db_path",
+        help="SQLite target path (back up a real database before migration)",
+    )
+    parser.add_argument("--batch-size", type=int, default=100)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--migrate-only", action="store_true")
+    action.add_argument("--check-index", action="store_true")
+    action.add_argument("--repair-index", action="store_true")
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = _build_parser().parse_args(argv)
+    try:
+        if args.migrate_only:
+            result = migrate_records_db(args.db_path)
+        elif args.check_index:
+            result = check_records_index_consistency(args.db_path)
+        elif args.repair_index:
+            result = rebuild_records_index(args.db_path)
+        else:
+            if not args.input:
+                _build_parser().error("input is required unless an index action is used")
+            result = import_record_package(
+                args.input,
+                db_path=args.db_path,
+                batch_size=args.batch_size,
             )
-            mid = create_memory(mem)
-            upsert_memory(mid, mem.content, agent_id)
-            
-            save_checkpoint(i + 1, total)
-            
-            # 进度条
-            progress = (i + 1) / total * 100
-            print(f"\r导入进度: {i+1}/{total} ({progress:.1f}%)", end="")
-            
-            time.sleep(0.1)  # 避免API限流
-            
-        except Exception as e:
-            print(f"\n第{i}条导入失败: {e}")
-            save_checkpoint(i, total)
-            break
-    
-    print(f"\n导入完成！成功导入 {total} 条记忆")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok", True) else 3
+    except RecordPackageError as exc:
+        output = dict(exc.summary)
+        output["error"] = str(exc)
+        print(json.dumps(output, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(
+            json.dumps(
+                {"failed": 1, "error": f"{type(exc).__name__}: {exc}"},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("用法: python scripts/import_history.py <对话文件路径>")
-        sys.exit(1)
-    
-    filepath = sys.argv[1]
-    agent_id = sys.argv[2] if len(sys.argv) > 2 else "default"
-    import_memories(filepath, agent_id)
+    raise SystemExit(main())
