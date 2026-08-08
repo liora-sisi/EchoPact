@@ -37,8 +37,22 @@ cd EchoPact
 
 ```
 DEEPSEEK_API_KEY=你的DeepSeek-Key
-USE_REAL_EMBEDDING=false   # 测试时关掉，省token；上线再开true
+
+# embedding 默认使用本地 mock，不访问外部 API
+USE_REAL_EMBEDDING=false
+ALLOW_REAL_API_CALLS=false
+OPENAI_API_KEY=
+REAL_API_MAX_CALLS=50
 ```
+
+真实 OpenAI embedding 受双开关保护：只有 `USE_REAL_EMBEDDING=true` 和
+`ALLOW_REAL_API_CALLS=true` **同时成立**，并且 `OPENAI_API_KEY` 非空时，
+才会请求 `text-embedding-3-small`。安全行为如下：
+
+- 任一开关没有明确设为 `true`：不联网，返回兼容旧行为的本地 mock 向量。
+- 两个开关都为 `true`，但缺少 `OPENAI_API_KEY`：在发出网络请求前抛出错误。
+- `REAL_API_MAX_CALLS` 默认限制单个进程最多发出 50 次真实 embedding 请求；它是防误调用熔断器，不是跨进程的费用额度。
+- 测试套件会强制关闭真实 API；不要在测试配置中放入真实 key。
 
 #### 3. 启动服务（Python 虚拟环境）
 
@@ -73,7 +87,8 @@ curl -X POST http://localhost:8000/recall \
 pytest tests/ -v
 ```
 
-跑不通？先检查 .env 里的 USE_REAL_EMBEDDING=false（不然 token 烧得你心疼）。
+测试默认由 `tests/conftest.py` 同时关闭 `USE_REAL_EMBEDDING` 和
+`ALLOW_REAL_API_CALLS`，不会读取真实 embedding key 或发出真实 API 请求。
 
 ### 📄 开源协议
 

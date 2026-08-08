@@ -1,6 +1,4 @@
-import hashlib
 import os
-import random
 from typing import List
 
 import requests
@@ -28,10 +26,8 @@ def _real_api_max_calls() -> int:
         return 50
 
 
-def _mock_vector(text: str) -> List[float]:
-    seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:8], "big")
-    rng = random.Random(seed)
-    return [rng.uniform(-1.0, 1.0) for _ in range(EMBEDDING_DIM)]
+def _mock_vector(_text: str) -> List[float]:
+    return [0.1] * EMBEDDING_DIM
 
 
 def embed(texts: List[str]) -> List[List[float]]:
