@@ -101,22 +101,25 @@ Room Ferry has no explicit `branchId`. It preserves `sourceMessageId`,
 `parentSourceMessageId`, `branchCount`, and current leaf information.
 `branchCount` is only a count, never treated as topology.
 
-- Ferry computes `branchCount` as the number of additional child choices, so
-  `0` is linear and `1` already represents a real two-path fork.
-- For `branchCount == 0`, messages require unique non-empty `sortKey` values
-  and form one deterministic branch in sortKey order when source IDs are not
-  available. When IDs are complete, the preserved parent graph must still be
-  one valid linear path and takes precedence over sortKey.
-- For `branchCount > 0`, every message must have a unique `sourceMessageId`,
-  every parent reference must resolve, the graph must be acyclic/reachable, and
-  the branch count reconstructed from the tree must equal the declaration.
+- Ferry computes `branchCount` as the number of additional child choices, but
+  old imported rows can contain stale counts. The recoverable parent graph is
+  authoritative; a disagreement is reported and never used to flatten paths.
+- When source IDs are complete, the preserved parent graph takes precedence and
+  may reveal real paths even when a stale `branchCount` says zero.
+- When source IDs are unavailable and `branchCount <= 1`, messages require
+  unique non-empty `sortKey` values and form one deterministic fallback branch.
+- Graph recovery requires unique `sourceMessageId` values and an acyclic,
+  reachable topology. Its reconstructed branch count is compared with, but is
+  not overridden by, the declaration.
+- A single omitted structural parent ID may anchor one root component without
+  creating a message. Multiple unconnected missing-parent anchors are fatal.
 - Each root-to-leaf path becomes one deterministic branch. Shared ancestors are
   materialized once per path because records-v1 represents branch histories,
   not a parent-pointer graph.
 - A branch ID hashes the conversation identity and the choices made at actual
   divergence points. It does not guess from title, content similarity, or time.
 
-Incomplete multi-branch mapping is fatal and produces no formal output.
+Ambiguous or cyclic multi-branch mapping is fatal and produces no formal output.
 
 ## Content parts and non-message data
 
@@ -162,5 +165,6 @@ own temporary output and leaves no half package.
 Formal conversion is refused for malformed/non-UTF-8 JSON, files over 500 MB,
 wrong format/version/schema/checksum algorithm, checksum mismatch, invalid or
 duplicate Ferry IDs, orphan messages, message-count mismatch, missing original
-time, unsupported role, ambiguous single-branch order, incomplete/cyclic
-multi-branch mapping, schema metadata conflict, or a new content-part type.
+time, unsupported role, ambiguous single-branch order, ambiguous/cyclic branch
+mapping, multiple unconnected missing-parent anchors, schema metadata conflict,
+or a new content-part type.

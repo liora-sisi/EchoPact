@@ -370,15 +370,81 @@ def test_one_declared_ferry_branch_means_a_real_two_path_fork(tmp_path):
     assert len(package["records"]) == 6
 
 
-def test_linear_conversation_with_complete_ids_must_still_have_a_valid_tree(tmp_path):
+def test_one_omitted_structural_parent_is_compressed_without_losing_messages(tmp_path):
     data = _single_branch_data()
+    data["messages"][0]["parentSourceMessageId"] = "missing-parent"
     data["messages"][1]["parentSourceMessageId"] = "missing-parent"
     input_path = _write_backup(tmp_path / "broken-linear-tree.json", _backup(data))
+
+    package, report = convert_ferry_backup(str(input_path))
+
+    assert report["can_convert"] is True
+    assert "compressed-missing-structural-parent" in _issue_codes(report, "warnings")
+    assert len(package["records"]) == 3
+
+
+def test_multiple_unconnected_missing_parent_anchors_fail_closed(tmp_path):
+    data = _single_branch_data()
+    data["messages"][0]["parentSourceMessageId"] = "missing-parent-a"
+    data["messages"][1]["parentSourceMessageId"] = "missing-parent-b"
+    input_path = _write_backup(tmp_path / "ambiguous-roots.json", _backup(data))
 
     report = dry_run_ferry_backup(str(input_path))
 
     assert report["can_convert"] is False
-    assert "branch-tree-missing-parent" in _issue_codes(report, "fatal")
+    assert "branch-tree-ambiguous-root-components" in _issue_codes(report, "fatal")
+
+
+def test_stale_zero_branch_count_does_not_flatten_recoverable_tree(tmp_path):
+    data = _branched_data()
+    data["messages"] = data["messages"][:-1]
+    data["conversations"][0]["messageCount"] = len(data["messages"])
+    data["conversations"][0]["branchCount"] = 0
+    input_path = _write_backup(tmp_path / "stale-branch-count.json", _backup(data))
+
+    package, report = convert_ferry_backup(str(input_path))
+
+    assert report["can_convert"] is True
+    assert "stale-branch-count-metadata" in _issue_codes(report, "warnings")
+    assert report["branching"]["multi_branch_conversations"] == 1
+    assert report["branching"]["derived_branch_paths"] == 2
+    assert len(package["records"]) == 6
+
+
+def test_long_linear_conversation_does_not_depend_on_python_recursion(tmp_path):
+    conversation_id = "synthetic-long-ferry-conversation"
+    messages = []
+    for index in range(1_205):
+        source_id = f"source-long-{index:04d}"
+        messages.append(
+            _message(
+                f"ferry-long-{index:04d}",
+                conversation_id,
+                source_id,
+                f"source-long-{index - 1:04d}" if index else None,
+                "user" if index % 2 == 0 else "assistant",
+                1_700_300_000_000 + index,
+                f"完全虚构的长链消息 {index}",
+                f"{index:08d}:0001700300000000:{source_id}",
+            )
+        )
+    messages[0]["parentSourceMessageId"] = None
+    data = {
+        "conversations": [_conversation(conversation_id, len(messages))],
+        "messages": messages,
+        "importBatches": [],
+        "handoffDrafts": [],
+        "appMeta": [{"key": "schemaVersion", "value": 1}],
+    }
+    input_path = _write_backup(tmp_path / "long-linear.json", _backup(data))
+
+    package, report = convert_ferry_backup(str(input_path))
+
+    assert report["can_convert"] is True
+    assert report["branching"]["derived_branch_paths"] == 1
+    assert len(package["records"]) == len(messages)
+    assert package["records"][0]["message_id"] == "room-ferry-v1:ferry-long-0000"
+    assert package["records"][-1]["message_id"] == "room-ferry-v1:ferry-long-1204"
 
 
 def test_multi_branch_without_message_mapping_fails_closed(tmp_path):

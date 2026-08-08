@@ -464,20 +464,40 @@ def _tree_branch_paths(
 
     children: Dict[str, List[Dict[str, Any]]] = {source_id: [] for source_id in source_ids}
     roots: List[Dict[str, Any]] = []
+    root_anchors: set[Optional[str]] = set()
     missing_parents = 0
+    invalid_parents = 0
     for message in messages:
         parent_id = message.get("parentSourceMessageId")
         if parent_id is None or parent_id == "":
             roots.append(message)
-        elif not isinstance(parent_id, str) or parent_id not in source_ids:
+            root_anchors.add(None)
+        elif not isinstance(parent_id, str):
+            invalid_parents += 1
+        elif parent_id not in source_ids:
             missing_parents += 1
+            roots.append(message)
+            root_anchors.add(parent_id)
         else:
             children[parent_id].append(message)
-    if missing_parents:
+    if invalid_parents:
         issues.fail(
-            "branch-tree-missing-parent",
-            "branch parentSourceMessageId could not be resolved",
+            "branch-tree-invalid-parent",
+            "branch parentSourceMessageId must be text when present",
+            invalid_parents,
+        )
+        return []
+    if missing_parents:
+        issues.warning(
+            "compressed-missing-structural-parent",
+            "stored messages share an omitted structural parent with no content",
             missing_parents,
+        )
+    if len(root_anchors) > 1:
+        issues.fail(
+            "branch-tree-ambiguous-root-components",
+            "branch topology has multiple unconnected root anchors",
+            len(root_anchors),
         )
         return []
     if not roots and messages:
@@ -491,43 +511,46 @@ def _tree_branch_paths(
         max(0, len(items) - 1) for items in children.values()
     )
     if computed_branch_count != declared_branch_count:
-        issues.fail(
-            "branch-count-topology-mismatch",
-            "declared branchCount does not match recoverable message topology",
+        issues.warning(
+            "stale-branch-count-metadata",
+            "declared branchCount differs from the recoverable parent topology",
         )
-        return []
 
-    paths: List[BranchPath] = []
-    visited_nodes: set[str] = set()
+    parent_by_source_id: Dict[str, Optional[str]] = {}
+    for source_id, message in source_ids.items():
+        parent_id = message.get("parentSourceMessageId")
+        parent_by_source_id[source_id] = (
+            parent_id
+            if isinstance(parent_id, str) and parent_id in source_ids
+            else None
+        )
 
-    def walk(
-        message: Dict[str, Any],
-        path: List[Dict[str, Any]],
-        decisions: List[str],
-        ancestors: set[str],
-    ) -> None:
-        source_id = message["sourceMessageId"]
-        if source_id in ancestors:
+    # Follow parent pointers iteratively. Real archives can contain conversations
+    # longer than Python's recursion limit, so tree validation must not recurse.
+    state: Dict[str, int] = {}
+    for start in source_ids:
+        if state.get(start) == 2:
+            continue
+        trail: List[str] = []
+        current: Optional[str] = start
+        while current is not None and state.get(current, 0) == 0:
+            state[current] = 1
+            trail.append(current)
+            current = parent_by_source_id[current]
+        if current is not None and state.get(current) == 1:
             issues.fail("branch-tree-cycle", "branch topology contains a cycle")
-            return
+            return []
+        for source_id in trail:
+            state[source_id] = 2
+
+    visited_nodes: set[str] = set()
+    pending = [root["sourceMessageId"] for root in roots]
+    while pending:
+        source_id = pending.pop()
+        if source_id in visited_nodes:
+            continue
         visited_nodes.add(source_id)
-        next_ancestors = set(ancestors)
-        next_ancestors.add(source_id)
-        next_path = path + [message]
-        child_items = children[source_id]
-        if not child_items:
-            paths.append(BranchPath(_branch_id(conversation_id, decisions), next_path))
-            return
-        for child in child_items:
-            child_decisions = list(decisions)
-            if len(child_items) > 1:
-                child_decisions.append(child["id"])
-            walk(child, next_path, child_decisions, next_ancestors)
-
-    for root in roots:
-        decisions = [root["id"]] if len(roots) > 1 else []
-        walk(root, [], decisions, set())
-
+        pending.extend(child["sourceMessageId"] for child in children[source_id])
     if len(visited_nodes) != len(messages):
         issues.fail(
             "branch-tree-unreachable-message",
@@ -535,6 +558,29 @@ def _tree_branch_paths(
             len(messages) - len(visited_nodes),
         )
         return []
+
+    paths: List[BranchPath] = []
+    leaves = _stable_messages(
+        message
+        for source_id, message in source_ids.items()
+        if not children[source_id]
+    )
+    for leaf in leaves:
+        reversed_path: List[Dict[str, Any]] = []
+        current = leaf["sourceMessageId"]
+        while current is not None:
+            reversed_path.append(source_ids[current])
+            current = parent_by_source_id[current]
+        path = list(reversed(reversed_path))
+        decisions: List[str] = []
+        if len(roots) > 1:
+            decisions.append(path[0]["id"])
+        for message in path[1:]:
+            parent_id = message["parentSourceMessageId"]
+            if len(children[parent_id]) > 1:
+                decisions.append(message["id"])
+        paths.append(BranchPath(_branch_id(conversation_id, decisions), path))
+
     unique_branch_ids = {path.branch_id for path in paths}
     if len(unique_branch_ids) != len(paths):
         issues.fail("derived-branch-id-collision", "derived branch IDs are not unique")
@@ -775,25 +821,35 @@ def inspect_ferry_backup(path: str) -> FerryInspection:
         if not isinstance(branch_count, int) or isinstance(branch_count, bool) or branch_count < 0:
             issues.fail("invalid-branch-count", "conversation branchCount must be a non-negative integer")
             continue
-        # Ferry's normalizer stores the number of additional child choices,
-        # not the number of complete paths.  Zero is linear; one already
-        # means a real two-path fork that must be reconstructed from parents.
-        if branch_count == 0:
-            report["branching"]["single_branch_conversations"] += 1
-            paths = _single_branch_paths(conversation_id, conversation_messages, issues)
-        else:
-            report["branching"]["multi_branch_conversations"] += 1
-            fatal_before = len(issues.fatal)
+        fatal_before = sum(issue["count"] for issue in issues.fatal)
+        complete_source_ids = all(
+            isinstance(message.get("sourceMessageId"), str)
+            and bool(message.get("sourceMessageId"))
+            for message in conversation_messages
+        )
+        if complete_source_ids or branch_count > 0:
             paths = _tree_branch_paths(
                 conversation_id,
                 conversation_messages,
                 branch_count,
                 issues,
             )
-            if paths and len(issues.fatal) == fatal_before:
+        else:
+            paths = _single_branch_paths(
+                conversation_id, conversation_messages, issues
+            )
+        fatal_after = sum(issue["count"] for issue in issues.fatal)
+        if paths and fatal_after == fatal_before:
+            if len(paths) > 1:
+                report["branching"]["multi_branch_conversations"] += 1
                 report["branching"]["recoverable_multi_branch_conversations"] += 1
             else:
-                report["branching"]["unrecoverable_multi_branch_conversations"] += 1
+                report["branching"]["single_branch_conversations"] += 1
+        elif branch_count > 0:
+            report["branching"]["multi_branch_conversations"] += 1
+            report["branching"]["unrecoverable_multi_branch_conversations"] += 1
+        else:
+            report["branching"]["single_branch_conversations"] += 1
         if paths:
             branch_paths[conversation_id] = paths
             report["branching"]["derived_branch_paths"] += len(paths)
