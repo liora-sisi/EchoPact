@@ -16,7 +16,7 @@ def setup_db(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def mock_vector(monkeypatch):
     monkeypatch.setattr(
-        "backend.memory.vector_store.search_similar",
+        "backend.judge.recall.search_similar",
         lambda query, limit, agent_id: []
     )
 

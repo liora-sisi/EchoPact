@@ -118,6 +118,12 @@ def _row_to_memory(row) -> Memory:
         importance=row["importance"],
         recall_count=row["recall_count"],
         calculated_weight=row["calculated_weight"],
+        agent_id=row["agent_id"],
+        source_type=row["source_type"],
+        confidence=row["confidence"],
+        conflict_group_id=row["conflict_group_id"],
+        last_verified_at=row["last_verified_at"],
+        recall_reason=row["recall_reason"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
