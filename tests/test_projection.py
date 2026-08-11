@@ -77,7 +77,7 @@ def test_build_creates_claim_with_full_trace(setup_db):
 def test_migration_v3_forward_only_repeatable(setup_db):
     first = migrate_records_db(setup_db)
     assert first["applied"] == []  # fixture 导入时已迁移到 v3
-    assert first["current_version"] == 3
+    assert first["current_version"] == 4
 
 
 # ---------- 多对多来源关联 ----------

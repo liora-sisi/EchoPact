@@ -24,7 +24,7 @@ SUPPORTED_RECORD_SCHEMA_VERSIONS = {
     COMPACT_RECORD_SCHEMA_VERSION,
 }
 RECALL_SCHEMA_VERSION = "echo-pact-recall-v1"
-MIGRATION_VERSION = 3
+MIGRATION_VERSION = 4
 
 REQUIRED_FIELDS = (
     "record_id",
@@ -286,6 +286,124 @@ MIGRATION_3_STATEMENTS = (
     """,
 )
 
+MIGRATION_4_STATEMENTS = (
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projection_claims_row_agent
+    ON projection_claims (id, agent_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS claim_conflicts (
+        conflict_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL CHECK (length(trim(agent_id)) > 0),
+        topic_key TEXT NOT NULL CHECK (length(trim(topic_key)) > 0),
+        created_at TEXT NOT NULL,
+        UNIQUE (agent_id, topic_key),
+        UNIQUE (conflict_id, agent_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS conflict_members (
+        member_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        conflict_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL CHECK (length(trim(agent_id)) > 0),
+        claim_rowid INTEGER NOT NULL,
+        role TEXT NOT NULL DEFAULT 'contender'
+            CHECK (role IN ('contender')),
+        added_at TEXT NOT NULL,
+        UNIQUE (conflict_id, claim_rowid),
+        UNIQUE (conflict_id, agent_id, claim_rowid),
+        FOREIGN KEY (conflict_id, agent_id)
+            REFERENCES claim_conflicts(conflict_id, agent_id)
+            ON DELETE RESTRICT,
+        FOREIGN KEY (claim_rowid, agent_id)
+            REFERENCES projection_claims(id, agent_id)
+            ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_conflict_members_claim
+    ON conflict_members (claim_rowid)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS conflict_decisions (
+        decision_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_id TEXT NOT NULL UNIQUE,
+        conflict_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL CHECK (length(trim(agent_id)) > 0),
+        decision TEXT NOT NULL CHECK (decision IN
+            ('unresolved', 'confirm_claim', 'keep_all', 'invalidate')),
+        target_claim_rowid INTEGER,
+        rationale TEXT CHECK (rationale IS NULL OR length(rationale) <= 4000),
+        decided_by TEXT NOT NULL
+            CHECK (length(trim(decided_by)) > 0 AND length(decided_by) <= 128),
+        created_at TEXT NOT NULL,
+        CHECK (
+            (decision = 'confirm_claim' AND target_claim_rowid IS NOT NULL)
+            OR (decision != 'confirm_claim' AND target_claim_rowid IS NULL)
+        ),
+        FOREIGN KEY (conflict_id, agent_id)
+            REFERENCES claim_conflicts(conflict_id, agent_id)
+            ON DELETE RESTRICT,
+        FOREIGN KEY (conflict_id, agent_id, target_claim_rowid)
+            REFERENCES conflict_members(conflict_id, agent_id, claim_rowid)
+            ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_conflict_decisions_conflict
+    ON conflict_decisions (conflict_id, decision_seq)
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS conflict_members_no_append_after_decision
+    BEFORE INSERT ON conflict_members
+    WHEN EXISTS (
+        SELECT 1 FROM conflict_decisions
+        WHERE conflict_id = NEW.conflict_id
+    ) BEGIN
+        SELECT RAISE(
+            ABORT,
+            'decided conflict cannot accept new members'
+        );
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS claim_conflicts_immutable_update
+    BEFORE UPDATE ON claim_conflicts BEGIN
+        SELECT RAISE(ABORT, 'claim_conflicts is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS claim_conflicts_immutable_delete
+    BEFORE DELETE ON claim_conflicts BEGIN
+        SELECT RAISE(ABORT, 'claim_conflicts is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS conflict_members_immutable_update
+    BEFORE UPDATE ON conflict_members BEGIN
+        SELECT RAISE(ABORT, 'conflict_members is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS conflict_members_immutable_delete
+    BEFORE DELETE ON conflict_members BEGIN
+        SELECT RAISE(ABORT, 'conflict_members is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS conflict_decisions_immutable_update
+    BEFORE UPDATE ON conflict_decisions BEGIN
+        SELECT RAISE(ABORT, 'conflict_decisions is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS conflict_decisions_immutable_delete
+    BEFORE DELETE ON conflict_decisions BEGIN
+        SELECT RAISE(ABORT, 'conflict_decisions is append-only');
+    END
+    """,
+)
+
 def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
     """Apply all forward-only record migrations in one transaction."""
 
@@ -306,6 +424,7 @@ def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
             (1, "echo-pact-records-v1-with-fts5", MIGRATION_1_STATEMENTS),
             (2, "echo-pact-record-branch-memberships", MIGRATION_2_STATEMENTS),
             (3, "echo-pact-claims-projection-v1", MIGRATION_3_STATEMENTS),
+            (4, "echo-pact-claim-conflicts-v1", MIGRATION_4_STATEMENTS),
         )
         for version, name, statements in migrations:
             exists = conn.execute(
