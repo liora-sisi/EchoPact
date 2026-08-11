@@ -24,7 +24,7 @@ SUPPORTED_RECORD_SCHEMA_VERSIONS = {
     COMPACT_RECORD_SCHEMA_VERSION,
 }
 RECALL_SCHEMA_VERSION = "echo-pact-recall-v1"
-MIGRATION_VERSION = 2
+MIGRATION_VERSION = 3
 
 REQUIRED_FIELDS = (
     "record_id",
@@ -198,6 +198,94 @@ MIGRATION_2_STATEMENTS = (
 )
 
 
+MIGRATION_3_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS projection_runs (
+        run_id TEXT PRIMARY KEY,
+        rule_id TEXT NOT NULL CHECK (length(trim(rule_id)) > 0),
+        rule_version INTEGER NOT NULL CHECK (rule_version >= 1),
+        agent_id TEXT NOT NULL CHECK (length(trim(agent_id)) > 0),
+        source_hash TEXT NOT NULL CHECK (length(source_hash) = 64),
+        claim_count INTEGER NOT NULL CHECK (claim_count >= 0),
+        status TEXT NOT NULL CHECK (status IN ('completed')),
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS projection_claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        claim_id TEXT NOT NULL,
+        claim_version INTEGER NOT NULL CHECK (claim_version >= 1),
+        agent_id TEXT NOT NULL CHECK (length(trim(agent_id)) > 0),
+        claim_kind TEXT NOT NULL
+            CHECK (claim_kind IN ('fact', 'preference', 'relationship', 'task', 'note')),
+        content TEXT NOT NULL CHECK (length(trim(content)) > 0),
+        status TEXT NOT NULL DEFAULT 'active'
+            CHECK (status IN ('active', 'superseded', 'sealed')),
+        rule_id TEXT NOT NULL CHECK (length(trim(rule_id)) > 0),
+        rule_version INTEGER NOT NULL CHECK (rule_version >= 1),
+        source_hash TEXT NOT NULL CHECK (length(source_hash) = 64),
+        projection_hash TEXT NOT NULL CHECK (length(projection_hash) = 64),
+        run_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        superseded_by_version INTEGER,
+        CHECK (
+            superseded_by_version IS NULL
+            OR superseded_by_version > claim_version
+        ),
+        UNIQUE (claim_id, claim_version),
+        FOREIGN KEY (run_id) REFERENCES projection_runs(run_id)
+            DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (claim_id, superseded_by_version)
+            REFERENCES projection_claims(claim_id, claim_version)
+            DEFERRABLE INITIALLY DEFERRED
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_projection_claims_agent_status
+    ON projection_claims (agent_id, status, claim_kind)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projection_claims_one_active
+    ON projection_claims (claim_id)
+    WHERE status = 'active'
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS claim_evidence (
+        claim_rowid INTEGER NOT NULL,
+        record_rowid INTEGER NOT NULL,
+        link_kind TEXT NOT NULL DEFAULT 'supports',
+        PRIMARY KEY (claim_rowid, record_rowid, link_kind),
+        FOREIGN KEY (claim_rowid) REFERENCES projection_claims(id)
+            ON DELETE RESTRICT,
+        FOREIGN KEY (record_rowid) REFERENCES records_v1(id)
+            ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_claim_evidence_record
+    ON claim_evidence (record_rowid)
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS records_v1_immutable_update
+    BEFORE UPDATE ON records_v1 BEGIN
+        SELECT RAISE(
+            ABORT,
+            'records_v1 evidence is immutable; append a new record instead'
+        );
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS records_v1_immutable_delete
+    BEFORE DELETE ON records_v1 BEGIN
+        SELECT RAISE(
+            ABORT,
+            'records_v1 evidence is immutable; append a tombstone record instead'
+        );
+    END
+    """,
+)
+
 def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
     """Apply all forward-only record migrations in one transaction."""
 
@@ -217,6 +305,7 @@ def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
         migrations = (
             (1, "echo-pact-records-v1-with-fts5", MIGRATION_1_STATEMENTS),
             (2, "echo-pact-record-branch-memberships", MIGRATION_2_STATEMENTS),
+            (3, "echo-pact-claims-projection-v1", MIGRATION_3_STATEMENTS),
         )
         for version, name, statements in migrations:
             exists = conn.execute(
