@@ -48,14 +48,17 @@ def create_memory(mem) -> int:
         )
         
         return mem_id
-def get_memory(memory_id: int) -> Optional[Memory]:
+def get_memory(memory_id: int, agent_id: str = "default") -> Optional[Memory]:
     with get_conn() as conn:
+        # 计数与读取同一归属条件：错误 agent 既读不到，也不会增加 recall_count
         conn.execute(
-            "UPDATE memories SET recall_count = recall_count + 1, updated_at = ? WHERE id = ?",
-            (datetime.now().isoformat(), memory_id)
+            "UPDATE memories SET recall_count = recall_count + 1, updated_at = ? "
+            "WHERE id = ? AND agent_id = ?",
+            (datetime.now().isoformat(), memory_id, agent_id)
         )
         row = conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            "SELECT * FROM memories WHERE id = ? AND agent_id = ?",
+            (memory_id, agent_id)
         ).fetchone()
         return _row_to_memory(row) if row else None
 
@@ -85,24 +88,27 @@ def list_memories(limit: int = 20, direction: Optional[str] = None, agent_id: st
             ).fetchall()
         return [_row_to_memory(r) for r in rows]
 
-def list_undone(limit: int = 10) -> List[Memory]:
+def list_undone(limit: int = 10, agent_id: str = "default") -> List[Memory]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM memories WHERE is_done = 0 ORDER BY created_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM memories WHERE is_done = 0 AND agent_id = ? ORDER BY created_at DESC LIMIT ?",
+            (agent_id, limit)
         ).fetchall()
         return [_row_to_memory(r) for r in rows]
 
-def mark_done(memory_id: int):
+def mark_done(memory_id: int, agent_id: str = "default"):
     with get_conn() as conn:
         conn.execute(
-            "UPDATE memories SET is_done = 1, updated_at = ? WHERE id = ?",
-            (datetime.now().isoformat(), memory_id)
+            "UPDATE memories SET is_done = 1, updated_at = ? WHERE id = ? AND agent_id = ?",
+            (datetime.now().isoformat(), memory_id, agent_id)
         )
 
-def delete_memory(memory_id: int):
+def delete_memory(memory_id: int, agent_id: str = "default"):
     with get_conn() as conn:
-        conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        conn.execute(
+            "DELETE FROM memories WHERE id = ? AND agent_id = ?",
+            (memory_id, agent_id)
+        )
 
 def _row_to_memory(row) -> Memory:
     return Memory(

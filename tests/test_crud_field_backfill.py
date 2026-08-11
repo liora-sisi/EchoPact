@@ -62,7 +62,7 @@ def _assert_provenance(loaded: Memory) -> None:
 
 
 def test_get_memory_preserves_non_default_provenance_fields():
-    loaded = get_memory(_create_non_default_row())
+    loaded = get_memory(_create_non_default_row(), agent_id=EXPECTED_PROVENANCE["agent_id"])
     assert loaded is not None
     _assert_provenance(loaded)
 

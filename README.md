@@ -65,9 +65,28 @@ uvicorn backend.trigger.main:app --host 0.0.0.0 --port 8000 &
 
 #### 4. 测试召回
 
+所有 `/api` 召回接口都需要 Bearer 访问码（fail-closed）：
+`ACCESS_CODE` 未配置、为空或仍是示例占位符时接口返回 503；
+缺少或错误的 Bearer 一律返回 401。
+
+当前 `ACCESS_CODE` 是整项服务共用的一道门锁，`agent_id` 只负责把旧记忆查询和
+主动召回限定在指定范围内，还不是经过认证的 agent 身份。持有同一访问码的调用者
+仍可自行选择 `agent_id`；在未来引入按 agent 授权的身份层之前，不应把当前接口暴露
+给彼此不信任的多租户。V1 records 记录池同样尚未具备 agent 级身份隔离。
+
 ```bash
-curl -X POST http://localhost:8000/recall \
+curl -X POST http://localhost:8000/api/recall \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_CODE" \
+  -d '{"query": "保长上次骂我啥", "agent_id": "default"}' | jq .
+```
+
+V1 离线记录召回走 `/api/v1/recall`，同样需要 Bearer：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/recall \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_CODE" \
   -d '{"query": "保长上次骂我啥"}' | jq .
 ```
 

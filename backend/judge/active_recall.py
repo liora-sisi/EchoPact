@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 COOLDOWN_MINUTES = 120
 SILENCE_THRESHOLD_MINUTES = 45
 CHECK_INTERVAL_MINUTES = 30
+
 def get_dynamic_interval(agent_id: str = "default") -> int:
     try:
         from ..memory.profile import get_push_interval
@@ -17,7 +18,7 @@ def get_dynamic_interval(agent_id: str = "default") -> int:
     except Exception:
         return COOLDOWN_MINUTES
 
-def _active_weight(valence: float, arousal: float, 
+def _active_weight(valence: float, arousal: float,
                    is_done: int, recall_count: int) -> float:
     undone = 1.0 if is_done == 0 else 0.0
     emotion = (valence ** 2) * arousal
@@ -29,22 +30,27 @@ def _get_last_message_time() -> Optional[datetime]:
     # TODO: 接入interaction_log表后实现
     return None
 
-def _get_last_push_time() -> Optional[datetime]:
-    """获取上次主动推送时间"""
+def _push_key(agent_id: str) -> str:
+    """冷却键按 agent 分键，不再全局共享。"""
+    return f"last_active_push:{agent_id}"
+
+def _get_last_push_time(agent_id: str = "default") -> Optional[datetime]:
+    """获取该 agent 上次主动推送时间"""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT value FROM system_meta WHERE key = 'last_active_push'"
+            "SELECT value FROM system_meta WHERE key = ?",
+            (_push_key(agent_id),)
         ).fetchone()
         if row:
             return datetime.fromisoformat(row["value"])
     return None
 
-def _update_last_push_time():
+def _update_last_push_time(agent_id: str = "default"):
     with get_conn() as conn:
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT OR REPLACE INTO system_meta (key, value) VALUES ('last_active_push', ?)",
-            (now,)
+            "INSERT OR REPLACE INTO system_meta (key, value) VALUES (?, ?)",
+            (_push_key(agent_id), now)
         )
 
 def _ensure_meta_table():
@@ -54,12 +60,13 @@ def _ensure_meta_table():
             "(key TEXT PRIMARY KEY, value TEXT);"
         )
 
-def pick_memory_to_push() -> Optional[Dict]:
-    """选出最该主动推送的一条记忆"""
+def pick_memory_to_push(agent_id: str = "default") -> Optional[Dict]:
+    """选出该 agent 最该主动推送的一条记忆"""
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, content, valence, arousal, is_done, recall_count "
-            "FROM memories ORDER BY created_at DESC"
+            "FROM memories WHERE agent_id = ? ORDER BY created_at DESC",
+            (agent_id,)
         ).fetchall()
 
     if not rows:
@@ -81,8 +88,9 @@ def pick_memory_to_push() -> Optional[Dict]:
 
     return best
 
-def should_push(last_message_time: Optional[datetime] = None) -> bool:
-    """判断是否需要主动推送"""
+def should_push(last_message_time: Optional[datetime] = None,
+                agent_id: str = "default") -> bool:
+    """判断该 agent 是否需要主动推送"""
     now = datetime.now(timezone.utc)
 
     if last_message_time is None:
@@ -93,35 +101,35 @@ def should_push(last_message_time: Optional[datetime] = None) -> bool:
         logger.info(f"沉默时间{silence_minutes:.1f}分钟，未到阈值，不推送")
         return False
 
-    last_push = _get_last_push_time()
+    last_push = _get_last_push_time(agent_id)
     if last_push:
         cooldown_minutes = (now - last_push).total_seconds() / 60
-        dynamic_interval = get_dynamic_interval()
+        dynamic_interval = get_dynamic_interval(agent_id)
         if cooldown_minutes < dynamic_interval:
             logger.info(f"冷却中，距上次推送{cooldown_minutes:.1f}分钟，不推送")
             return False
     # 推断用户状态
     from ..memory.context import infer_user_state
-    user_state = infer_user_state()
+    user_state = infer_user_state(agent_id)
     if user_state:
         logger.info(f"用户状态推断：{user_state}")
-    
-    return True
+
     return True
 
-def run_active_recall(last_message_time: Optional[datetime] = None):
+def run_active_recall(last_message_time: Optional[datetime] = None,
+                      agent_id: str = "default"):
     """主动召回主函数，由cron每30分钟调用"""
     _ensure_meta_table()
 
-    if not should_push(last_message_time):
+    if not should_push(last_message_time, agent_id):
         return
 
-    memory = pick_memory_to_push()
+    memory = pick_memory_to_push(agent_id)
     if not memory:
         logger.info("记忆库为空，无可推送内容")
         return
 
-    _update_last_push_time()
+    _update_last_push_time(agent_id)
     logger.info(f"[主动浮现] 推送记忆ID={memory['id']} | 权重={memory['weight']}")
     logger.info(f"[主动浮现] 内容：{memory['content']}")
     # TODO: 接入LobeChat API后在这里发送推送

@@ -11,12 +11,15 @@ def create_saga(title: str, agent_id: str = "default") -> int:
         )
         return cur.lastrowid
 
-def complete_saga(saga_id: int):
+def complete_saga(saga_id: int, agent_id: str = "default"):
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE sagas SET status = 'completed', updated_at = ? WHERE id = ?",
-            (datetime.now(timezone.utc).isoformat(), saga_id)
+        cur = conn.execute(
+            "UPDATE sagas SET status = 'completed', updated_at = ? WHERE id = ? AND agent_id = ?",
+            (datetime.now(timezone.utc).isoformat(), saga_id, agent_id)
         )
+        if cur.rowcount == 0:
+            # 不存在与跨 agent 共用同一措辞，不泄露记录归属
+            raise ValueError("Saga 不存在或不属于当前 agent")
 
 def list_sagas(agent_id: str = "default", status: str = "active") -> List[Dict]:
     with get_conn() as conn:
@@ -26,9 +29,9 @@ def list_sagas(agent_id: str = "default", status: str = "active") -> List[Dict]:
         ).fetchall()
     return [dict(r) for r in rows]
 
-def get_saga(saga_id: int) -> Optional[Dict]:
+def get_saga(saga_id: int, agent_id: str = "default") -> Optional[Dict]:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM sagas WHERE id = ?", (saga_id,)
+            "SELECT * FROM sagas WHERE id = ? AND agent_id = ?", (saga_id, agent_id)
         ).fetchone()
     return dict(row) if row else None

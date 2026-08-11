@@ -15,14 +15,14 @@ def setup_db(tmp_path, monkeypatch):
 
 def test_create_saga():
     sid = create_saga("拖master", agent_id="baozhang")
-    saga = get_saga(sid)
+    saga = get_saga(sid, agent_id="baozhang")
     assert saga["title"] == "拖master"
     assert saga["status"] == "active"
 
 def test_complete_saga():
     sid = create_saga("写完master", agent_id="baozhang")
-    complete_saga(sid)
-    saga = get_saga(sid)
+    complete_saga(sid, agent_id="baozhang")
+    saga = get_saga(sid, agent_id="baozhang")
     assert saga["status"] == "completed"
 
 def test_list_active_sagas():
