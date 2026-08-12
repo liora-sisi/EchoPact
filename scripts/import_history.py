@@ -62,11 +62,10 @@ def import_memories(
 ) -> Dict[str, Any]:
     """Compatibility entry point backed by the real V1 importer.
 
-    ``agent_id`` is intentionally ignored because V1 identity is expressed by
-    conversation_id and branch_id rather than a process-wide agent label.
+    ``agent_id`` is the explicit owner for newly inserted records. Ownership is
+    never inferred from the record package or the audit actor.
     """
 
-    del agent_id
     if not Path(filepath).is_file():
         summary = {
             "schema_version": "echo-pact-records-v1",
@@ -79,8 +78,10 @@ def import_memories(
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return summary
+    owner_agent_id = "agt-legacy" if agent_id == "default" else agent_id
     summary = import_record_package(
-        filepath, db_path=db_path, batch_size=batch_size
+        filepath, db_path=db_path, batch_size=batch_size,
+        owner_agent_id=owner_agent_id, actor="import_memories",
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
@@ -97,6 +98,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="SQLite target path (back up a real database before migration)",
     )
     parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument(
+        "--owner-agent-id",
+        help="Required owner for newly inserted records",
+    )
+    parser.add_argument(
+        "--actor",
+        help="Required audit attribution for an import (not authentication)",
+    )
+    parser.add_argument("--batch-id", help="Stable retry identifier")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--migrate-only", action="store_true")
     action.add_argument("--check-index", action="store_true")
@@ -116,10 +126,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         else:
             if not args.input:
                 _build_parser().error("input is required unless an index action is used")
+            if not args.owner_agent_id:
+                _build_parser().error("--owner-agent-id is required for imports")
+            if not args.actor:
+                _build_parser().error("--actor is required for imports")
             result = import_record_package(
                 args.input,
                 db_path=args.db_path,
                 batch_size=args.batch_size,
+                owner_agent_id=args.owner_agent_id,
+                actor=args.actor,
+                batch_id=args.batch_id,
             )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("ok", True) else 3

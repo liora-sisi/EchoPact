@@ -117,7 +117,8 @@ def test_correct_bearer_projected_recall_ok(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["schema_version"] == "echo-pact-recall-projection-v1"
-    assert body["agent_id"] == "default"
+    # M5-04：响应里的 agent_id 是认证派生身份；body 的 "default" 只是别名断言
+    assert body["agent_id"] == "agt-legacy"
     assert "memories" in body
 
 

@@ -658,6 +658,9 @@ def test_deterministic_conversion_then_m1_import_recall_and_index(
     repeated = import_record_package(str(first_output), db_path=str(db_path))
     assert initial["added"] == 3
     assert initial["branch_memberships_added"] == 3
+    # M5-04：已完成批次重放返回既有 summary；记录不动由下方召回断言保证
+    assert repeated["idempotent_replay"] is True
+    assert repeated["batch_id"] == initial["batch_id"]
     assert repeated["added"] == 0
     assert repeated["skipped"] == 3
     assert repeated["branch_memberships_added"] == 0

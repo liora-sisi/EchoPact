@@ -24,7 +24,7 @@ SUPPORTED_RECORD_SCHEMA_VERSIONS = {
     COMPACT_RECORD_SCHEMA_VERSION,
 }
 RECALL_SCHEMA_VERSION = "echo-pact-recall-v1"
-MIGRATION_VERSION = 4
+MIGRATION_VERSION = 5
 
 REQUIRED_FIELDS = (
     "record_id",
@@ -404,6 +404,203 @@ MIGRATION_4_STATEMENTS = (
     """,
 )
 
+
+MIGRATION_5_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS agents (
+        agent_id TEXT PRIMARY KEY CHECK (length(trim(agent_id)) > 0),
+        display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_events (
+        event_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('registered', 'disabled', 're-enabled')),
+        actor TEXT NOT NULL CHECK (length(trim(actor)) > 0),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_credentials (
+        cred_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        kdf TEXT NOT NULL CHECK (kdf = 'scrypt'),
+        params_json TEXT NOT NULL,
+        salt_hex TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        issued_by TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS credential_events (
+        event_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        cred_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('issued', 'rotated', 'revoked', 'expired')),
+        replacement_cred_id TEXT,
+        grace_until TEXT,
+        actor TEXT NOT NULL CHECK (length(trim(actor)) > 0),
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (cred_id) REFERENCES agent_credentials(cred_id) ON DELETE RESTRICT,
+        FOREIGN KEY (replacement_cred_id) REFERENCES agent_credentials(cred_id)
+            ON DELETE RESTRICT,
+        CHECK (
+            (kind = 'rotated' AND replacement_cred_id IS NOT NULL
+                AND grace_until IS NOT NULL)
+            OR (kind <> 'rotated' AND replacement_cred_id IS NULL
+                AND grace_until IS NULL)
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS record_visibility_events (
+        event_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        record_rowid INTEGER NOT NULL,
+        event_kind TEXT NOT NULL CHECK (event_kind IN
+            ('set_owner', 'scope_private', 'scope_shared', 'grant', 'revoke')),
+        target_agent TEXT,
+        actor TEXT NOT NULL CHECK (length(trim(actor)) > 0),
+        target_event_seq INTEGER,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (record_rowid) REFERENCES records_v1(id) ON DELETE RESTRICT,
+        FOREIGN KEY (target_agent) REFERENCES agents(agent_id) ON DELETE RESTRICT,
+        FOREIGN KEY (target_event_seq) REFERENCES record_visibility_events(event_seq),
+        CHECK (
+            (event_kind IN ('set_owner', 'grant') AND target_agent IS NOT NULL
+                AND target_event_seq IS NULL)
+            OR (event_kind = 'revoke' AND target_agent IS NOT NULL
+                AND target_event_seq IS NOT NULL)
+            OR (event_kind IN ('scope_private', 'scope_shared')
+                AND target_agent IS NULL AND target_event_seq IS NULL)
+        )
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_visibility_events_record
+    ON record_visibility_events (record_rowid, event_seq)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS import_batches (
+        batch_id TEXT PRIMARY KEY,
+        package_sha256 TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        owner_agent_id TEXT,
+        grant_policy_json TEXT,
+        status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+        record_count INTEGER NOT NULL DEFAULT 0,
+        membership_count INTEGER NOT NULL DEFAULT 0,
+        grant_count INTEGER NOT NULL DEFAULT 0,
+        summary_json TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        FOREIGN KEY (owner_agent_id) REFERENCES agents(agent_id) ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS config_kv (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    # legacy 锚点：迁移一次性写入，之后由触发器锁死
+    """
+    INSERT INTO agents (agent_id, display_name, created_at)
+    VALUES ('agt-legacy', 'Legacy principal (pre-v5 records)',
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    """,
+    """
+    INSERT INTO agent_events (agent_id, kind, actor, idempotency_key, created_at)
+    VALUES ('agt-legacy', 'registered', 'migration-v5',
+            'm5-v5-legacy-principal', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    """,
+    """
+    INSERT INTO config_kv (key, value, updated_at)
+    VALUES ('legacy_principal', 'agt-legacy',
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    """,
+    # 审计/事件/锚点表：只插不改不删
+    """
+    CREATE TRIGGER IF NOT EXISTS agents_immutable_update
+    BEFORE UPDATE ON agents BEGIN
+        SELECT RAISE(ABORT, 'agents is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS agents_immutable_delete
+    BEFORE DELETE ON agents BEGIN
+        SELECT RAISE(ABORT, 'agents is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_events_immutable_update
+    BEFORE UPDATE ON agent_events BEGIN
+        SELECT RAISE(ABORT, 'agent_events is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_events_immutable_delete
+    BEFORE DELETE ON agent_events BEGIN
+        SELECT RAISE(ABORT, 'agent_events is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_credentials_immutable_update
+    BEFORE UPDATE ON agent_credentials BEGIN
+        SELECT RAISE(ABORT, 'agent_credentials is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_credentials_immutable_delete
+    BEFORE DELETE ON agent_credentials BEGIN
+        SELECT RAISE(ABORT, 'agent_credentials is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS credential_events_immutable_update
+    BEFORE UPDATE ON credential_events BEGIN
+        SELECT RAISE(ABORT, 'credential_events is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS credential_events_immutable_delete
+    BEFORE DELETE ON credential_events BEGIN
+        SELECT RAISE(ABORT, 'credential_events is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS record_visibility_events_immutable_update
+    BEFORE UPDATE ON record_visibility_events BEGIN
+        SELECT RAISE(ABORT, 'record_visibility_events is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS record_visibility_events_immutable_delete
+    BEFORE DELETE ON record_visibility_events BEGIN
+        SELECT RAISE(ABORT, 'record_visibility_events is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS config_kv_immutable_update
+    BEFORE UPDATE ON config_kv BEGIN
+        SELECT RAISE(ABORT, 'config_kv anchors are immutable');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS config_kv_immutable_delete
+    BEFORE DELETE ON config_kv BEGIN
+        SELECT RAISE(ABORT, 'config_kv anchors are immutable');
+    END
+    """,
+)
+
 def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
     """Apply all forward-only record migrations in one transaction."""
 
@@ -425,6 +622,7 @@ def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
             (2, "echo-pact-record-branch-memberships", MIGRATION_2_STATEMENTS),
             (3, "echo-pact-claims-projection-v1", MIGRATION_3_STATEMENTS),
             (4, "echo-pact-claim-conflicts-v1", MIGRATION_4_STATEMENTS),
+            (5, "echo-pact-identity-visibility-v1", MIGRATION_5_STATEMENTS),
         )
         for version, name, statements in migrations:
             exists = conn.execute(
@@ -699,9 +897,29 @@ def load_record_package(path: str) -> LoadedRecordPackage:
     return _deduplicate_package(normalized)
 
 
-def _coverage_from_connection(conn: sqlite3.Connection) -> Dict[str, Any]:
+def _coverage_from_connection(
+    conn: sqlite3.Connection,
+    visible_rowids: Optional[Set[int]] = None,
+) -> Dict[str, Any]:
+    """coverage 必须与正文同口径：传入可见集时只反映可见集合。"""
+    if visible_rowids is not None and not visible_rowids:
+        return {
+            "verified_knowledge_cutoff_at": None,
+            "latest_imported_record_at": None,
+            "contains_post_cutoff_unverified_recent_patch": False,
+        }
+    if visible_rowids is None:
+        where = ""
+        params: List[Any] = []
+    else:
+        where = (
+            "WHERE id IN ("
+            + ",".join("?" for _ in visible_rowids)
+            + ")"
+        )
+        params = list(visible_rowids)
     row = conn.execute(
-        """
+        f"""
         SELECT
             MAX(CASE
                 WHEN verified = 1 AND source_kind <> 'recent_patch'
@@ -709,19 +927,30 @@ def _coverage_from_connection(conn: sqlite3.Connection) -> Dict[str, Any]:
             END) AS verified_cutoff,
             MAX(created_at) AS latest_record_at
         FROM records_v1
-        """
+        {where}
+        """,
+        params,
     ).fetchone()
     verified_cutoff = row["verified_cutoff"] if row else None
     latest_record_at = row["latest_record_at"] if row else None
+    if visible_rowids is None:
+        recent_where = ""
+        recent_params: List[Any] = [verified_cutoff, verified_cutoff]
+    else:
+        recent_where = (
+            "AND id IN (" + ",".join("?" for _ in visible_rowids) + ")"
+        )
+        recent_params = [verified_cutoff, verified_cutoff] + list(visible_rowids)
     recent_row = conn.execute(
-        """
+        f"""
         SELECT 1 FROM records_v1
         WHERE source_kind = 'recent_patch'
           AND verified = 0
           AND (? IS NULL OR created_at > ?)
+          {recent_where}
         LIMIT 1
         """,
-        (verified_cutoff, verified_cutoff),
+        recent_params,
     ).fetchone()
     return {
         "verified_knowledge_cutoff_at": verified_cutoff,
@@ -730,24 +959,161 @@ def _coverage_from_connection(conn: sqlite3.Connection) -> Dict[str, Any]:
     }
 
 
+def _package_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def import_record_package(
     path: str,
     *,
     db_path: Optional[str] = None,
     batch_size: int = 100,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    owner_agent_id: Optional[str] = None,
+    actor: str = "internal",
+    batch_id: Optional[str] = None,
+    grant_policy: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Import a validated package in retry-safe transactional batches.
 
     Validation and conflict preflight happen before inserting any package
     record.  A process interruption can therefore leave only complete batches;
     rerunning the same package skips those record_ids and resumes the remainder.
+
+    M5-04 批次绑定：每个批次在启动时写入 import_batches（running），绑定
+    package_sha256/schema/actor/owner/grant_policy；同 batch_id 换输入冲突
+    失败；相同输入可安全续跑；已完成批次重放直接返回既有 summary。
+    owner_agent_id 显式给出时，每个分块事务同步写入 set_owner 事件
+    （同事务提交，不存在"证据已写、授权未写"）。不给 owner（内部/旧测试
+    路径）则不产生授权事件，记录按 legacy 兜底归属。
     """
 
     if batch_size < 1:
         raise ValueError("batch_size must be at least 1")
+    if grant_policy:
+        raise ValueError(
+            "grant_policy 尚未实现；请通过本地管理入口显式授权"
+        )
+    actor = actor.strip() if isinstance(actor, str) else ""
+    if not actor:
+        raise ValueError("actor must be a non-empty string")
+    package_hash = _package_sha256(path)
     loaded = load_record_package(path)
     migrate_records_db(db_path)
+    if batch_id is None:
+        batch_id = "imp-" + hashlib.sha256(
+            "|".join(
+                [
+                    package_hash,
+                    loaded.schema_version,
+                    actor,
+                    owner_agent_id or "",
+                    json.dumps(grant_policy or {}, sort_keys=True,
+                               ensure_ascii=False),
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+
+    # ---- 批次登记 / 冲突 / 重放（独立事务先行） ----
+    reg_conn = _connect(db_path)
+    resumed_counts = {
+        "record_count": 0,
+        "membership_count": 0,
+        "grant_count": 0,
+    }
+    try:
+        reg_conn.execute("BEGIN IMMEDIATE")
+        existing_batch = reg_conn.execute(
+            "SELECT * FROM import_batches WHERE batch_id = ?", (batch_id,)
+        ).fetchone()
+        policy_json = json.dumps(
+            grant_policy or {}, sort_keys=True, ensure_ascii=False
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if existing_batch is not None:
+            mismatches = []
+            if existing_batch["package_sha256"] != package_hash:
+                mismatches.append("package_sha256")
+            if existing_batch["schema_version"] != loaded.schema_version:
+                mismatches.append("schema_version")
+            if existing_batch["actor"] != actor:
+                mismatches.append("actor")
+            if (existing_batch["owner_agent_id"] or None) != owner_agent_id:
+                mismatches.append("owner_agent_id")
+            if existing_batch["grant_policy_json"] != policy_json:
+                mismatches.append("grant_policy")
+            if mismatches:
+                reg_conn.rollback()
+                raise ValueError(
+                    "batch_id 已绑定不同输入，拒绝执行: "
+                    + ", ".join(mismatches)
+                )
+            if existing_batch["status"] == "completed":
+                summary = dict(json.loads(existing_batch["summary_json"]))
+                summary["batch_id"] = batch_id
+                summary["idempotent_replay"] = True
+                summary["added"] = 0
+                summary["skipped"] = loaded.duplicate_skips + len(loaded.records)
+                if loaded.schema_version == COMPACT_RECORD_SCHEMA_VERSION:
+                    summary["branch_memberships_added"] = 0
+                    summary["branch_memberships_skipped"] = sum(
+                        len(record["branch_memberships"])
+                        for record in loaded.records
+                    )
+                reg_conn.commit()
+                return summary
+            resumed_counts = {
+                "record_count": existing_batch["record_count"],
+                "membership_count": existing_batch["membership_count"],
+                "grant_count": existing_batch["grant_count"],
+            }
+            # running/failed：相同输入，允许续跑；失败批次重置为 running
+            if existing_batch["status"] == "failed":
+                reg_conn.execute(
+                    "UPDATE import_batches SET status = 'running' "
+                    "WHERE batch_id = ?",
+                    (batch_id,),
+                )
+            reg_conn.commit()
+        else:
+            if owner_agent_id is not None:
+                owner_row = reg_conn.execute(
+                    "SELECT agent_id FROM agents WHERE agent_id = ?",
+                    (owner_agent_id,),
+                ).fetchone()
+                if owner_row is None:
+                    reg_conn.rollback()
+                    raise ValueError("owner_agent_id 必须是已注册的 agent")
+                # 新批次登记前就拒掉停用 owner，不留 running 孤儿行
+                from .identity import _agent_state
+                if _agent_state(reg_conn, owner_agent_id) != "active":
+                    reg_conn.rollback()
+                    raise ValueError("owner_agent_id 必须是启用状态的 agent")
+            reg_conn.execute(
+                "INSERT INTO import_batches "
+                "(batch_id, package_sha256, schema_version, actor, "
+                " owner_agent_id, grant_policy_json, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'running', ?)",
+                (batch_id, package_hash, loaded.schema_version, actor,
+                 owner_agent_id, policy_json, now_iso),
+            )
+            reg_conn.commit()
+    except Exception:
+        if reg_conn.in_transaction:
+            reg_conn.rollback()
+        raise
+    finally:
+        reg_conn.close()
+
+    if owner_agent_id is not None:
+        from .identity import _require_agent_active
+        with _connect(db_path) as check_conn:
+            check_conn.execute("PRAGMA query_only = ON")
+            _require_agent_active(check_conn, owner_agent_id)
 
     conn = _connect(db_path)
     try:
@@ -881,6 +1247,7 @@ def import_record_package(
             batch = work_records[start : start + batch_size]
             batch_added = 0
             batch_memberships_added = 0
+            newly_owned: List[str] = []
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 membership_values = []
@@ -898,6 +1265,7 @@ def import_record_package(
                             "memberships": {},
                         }
                         batch_added += 1
+                        newly_owned.append(record["record_id"])
                     else:
                         record_rowid = current["rowid"]
                     for membership in record["branch_memberships"]:
@@ -912,6 +1280,45 @@ def import_record_package(
                             membership["branch_id"]
                         ] = membership["position"]
                         batch_memberships_added += 1
+                # M5-04：owner 授权事件与证据同事务提交
+                if owner_agent_id is not None and batch_added:
+                    from .identity import _emit_event
+
+                    for record in batch:
+                        if record["record_id"] in newly_owned:
+                            _emit_event(
+                                conn,
+                                existing[record["record_id"]]["rowid"],
+                                "set_owner",
+                                target_agent=owner_agent_id,
+                                actor=actor,
+                                target_event_seq=None,
+                                now=inserted_at,
+                                idem_parts=[batch_id, record["record_id"],
+                                            owner_agent_id],
+                            )
+                    conn.execute(
+                        "UPDATE import_batches SET record_count = ?, "
+                        "membership_count = ?, grant_count = grant_count + ? "
+                        "WHERE batch_id = ?",
+                        (resumed_counts["record_count"]
+                         + summary["added"] + batch_added,
+                         resumed_counts["membership_count"]
+                         + summary.get("branch_memberships_added", 0)
+                         + batch_memberships_added,
+                         resumed_counts["grant_count"]
+                         + summary["added"] + batch_added, batch_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE import_batches SET record_count = ?, "
+                        "membership_count = ? WHERE batch_id = ?",
+                        (resumed_counts["record_count"]
+                         + summary["added"] + batch_added,
+                         resumed_counts["membership_count"]
+                         + summary.get("branch_memberships_added", 0)
+                         + batch_memberships_added, batch_id),
+                    )
                 conn.executemany(membership_sql, membership_values)
                 conn.commit()
             except Exception:
@@ -934,7 +1341,41 @@ def import_record_package(
                 "verified_knowledge_cutoff_at"
             ]
             summary["latest_record_at"] = coverage["latest_imported_record_at"]
+        summary["batch_id"] = batch_id
+        summary["idempotent_replay"] = False
+        fin = _connect(db_path)
+        try:
+            fin.execute("BEGIN IMMEDIATE")
+            fin.execute(
+                "UPDATE import_batches SET status = 'completed', "
+                "summary_json = ?, "
+                "completed_at = ? WHERE batch_id = ?",
+                (json.dumps(summary, sort_keys=True, ensure_ascii=False),
+                 datetime.now(timezone.utc).isoformat(), batch_id),
+            )
+            fin.commit()
+        except Exception:
+            if fin.in_transaction:
+                fin.rollback()
+            raise
+        finally:
+            fin.close()
         return summary
+    except Exception:
+        # 分块阶段任意失败：持久化 failed 状态（批次行此时必存在且为
+        # running；登记阶段的异常在上方独立事务里已处理，不会走到这里）。
+        # 失败批次的唯一恢复路径是按裁定 2 重放相同输入续跑。
+        fail_conn = _connect(db_path)
+        try:
+            fail_conn.execute(
+                "UPDATE import_batches SET status = 'failed' "
+                "WHERE batch_id = ? AND status = 'running'",
+                (batch_id,),
+            )
+            fail_conn.commit()
+        finally:
+            fail_conn.close()
+        raise
     finally:
         conn.close()
 
@@ -1103,8 +1544,15 @@ def recall_records(
     limit: int = 5,
     as_of: Optional[str] = None,
     db_path: Optional[str] = None,
+    agent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Recall V1 records using only local SQLite FTS5 data."""
+    """Recall V1 records using only local SQLite FTS5 data.
+
+    agent_id 为 None：内部/测试路径，不加可见性谓词（旧行为）。
+    agent_id 显式给出：先圈定该 principal 的可见全集（active 校验），
+    可见性条件进入 WHERE，先于 bm25/LIKE 排序与 LIMIT；coverage 与正文
+    使用同一份可见集合。
+    """
 
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
@@ -1113,46 +1561,79 @@ def recall_records(
     normalized_as_of = _normalize_timestamp(as_of, "as_of") if as_of else None
     migrate_records_db(db_path)
 
+    visible_rowids: Optional[Set[int]] = None
+    if agent_id is not None:
+        from .identity import all_visible_rowids
+
+        with _connect(db_path) as vis_conn:
+            vis_conn.execute("PRAGMA query_only = ON")
+            visible_rowids = all_visible_rowids(vis_conn, agent_id)
+
     conn = _connect(db_path)
     try:
+        if visible_rowids is None:
+            vis_where = ""
+            vis_params: List[Any] = []
+        elif not visible_rowids:
+            vis_where = "AND 0"
+            vis_params = []
+        else:
+            vis_where = (
+                "AND r.id IN (" + ",".join("?" for _ in visible_rowids) + ")"
+            )
+            vis_params = list(visible_rowids)
         expression = _fts_expression(query)
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
         if expression:
-            rows = conn.execute(
-                """
-                SELECT r.*, bm25(records_v1_fts) AS lexical_rank
-                FROM records_v1_fts
-                JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
-                WHERE records_v1_fts MATCH ?
-                ORDER BY lexical_rank ASC, r.created_at DESC
-                LIMIT ?
-                """,
-                (expression, limit),
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT r.*, bm25(records_v1_fts) AS lexical_rank
+                    FROM records_v1_fts
+                    JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
+                    WHERE records_v1_fts MATCH ?
+                    {vis_where}
+                    ORDER BY lexical_rank ASC, r.created_at DESC
+                    LIMIT ?
+                    """,
+                    [expression] + vis_params + [limit],
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # FTS query syntax/tokenizer edge cases must fail safely into
+                # the escaped LIKE path, not become a 500 response.
+                rows = []
         if not rows:
             recall_mode = "sqlite_like_fallback"
             rows = conn.execute(
-                """
+                f"""
                 SELECT r.*, 0 AS lexical_rank
                 FROM records_v1 AS r
                 WHERE r.content LIKE ? ESCAPE '\\'
+                {vis_where}
                 ORDER BY r.created_at DESC
                 LIMIT ?
                 """,
-                (
+                [
                     "%"
                     + query.replace("\\", "\\\\")
                     .replace("%", "\\%")
                     .replace("_", "\\_")
-                    + "%",
-                    limit,
-                ),
+                    + "%"
+                ] + vis_params + [limit],
             ).fetchall()
 
-        coverage = _coverage_from_connection(conn)
+        if agent_id is None:
+            coverage = _coverage_from_connection(conn)
+        else:
+            from .identity import visible_coverage
+
+            coverage = visible_coverage(conn, agent_id)
         verified_cutoff = coverage["verified_knowledge_cutoff_at"]
-        if verified_cutoff is None:
+        if visible_rowids is not None and not visible_rowids:
+            coverage_status = "no_visible_records"
+            coverage_gap = True
+        elif verified_cutoff is None:
             coverage_status = "verified_cutoff_unknown"
             coverage_gap = True
         elif normalized_as_of is None:

@@ -206,10 +206,22 @@ def build_projection(
     try:
         conn.execute("BEGIN IMMEDIATE")
         # 汇总全部证据，计算运行级 source_hash 与幂等 run_id
+        # M5-04 裁定 5：投影输入先按目标 agent 的可见证据过滤
+        from .identity import filter_visible_records
+
         per_item: List[Dict[str, Any]] = []
         all_rows: List[sqlite3.Row] = []
         for item in normalized_items:
             rows = _fetch_evidence(conn, item["evidence_record_ids"])
+            visible = filter_visible_records(
+                conn, agent_id, [row["id"] for row in rows]
+            )
+            hidden = [row["record_id"] for row in rows if row["id"] not in visible]
+            if hidden:
+                raise ValueError(
+                    "证据对当前 agent 不可见，拒绝投影: 涉及 "
+                    f"{len(hidden)} 条记录"
+                )
             source_hash = _source_hash(rows)
             per_item.append({
                 "item": item,
@@ -346,6 +358,9 @@ def get_claim(
     """按归属读取 Claim；其他 agent 的 Claim 一律返回 None。"""
     agent_id = _require_agent_id(agent_id)
     with closing(_connect(_resolve_db_path(db_path))) as conn:
+        from .identity import EvidenceNotVisible, require_all_claim_evidence_visible
+
+        conn.execute("PRAGMA query_only = ON")
         if version is None:
             row = conn.execute(
                 "SELECT * FROM projection_claims WHERE claim_id = ? AND agent_id = ? "
@@ -358,7 +373,13 @@ def get_claim(
                 "AND claim_version = ?",
                 (claim_id, agent_id, version),
             ).fetchone()
-    return dict(row) if row else None
+        if row is None:
+            return None
+        try:
+            require_all_claim_evidence_visible(conn, agent_id, row["id"])
+        except EvidenceNotVisible:
+            return None
+        return dict(row)
 
 
 def list_claims(
@@ -369,12 +390,22 @@ def list_claims(
     if status not in CLAIM_STATUSES:
         raise ValueError(f"status 必须是以下值之一: {CLAIM_STATUSES!r}")
     with closing(_connect(_resolve_db_path(db_path))) as conn:
+        from .identity import EvidenceNotVisible, require_all_claim_evidence_visible
+
+        conn.execute("PRAGMA query_only = ON")
         rows = conn.execute(
             "SELECT * FROM projection_claims WHERE agent_id = ? AND status = ? "
             "ORDER BY created_at DESC",
             (agent_id, status),
         ).fetchall()
-    return [dict(r) for r in rows]
+        visible = []
+        for row in rows:
+            try:
+                require_all_claim_evidence_visible(conn, agent_id, row["id"])
+            except EvidenceNotVisible:
+                continue
+            visible.append(dict(row))
+        return visible
 
 
 def claim_provenance(
@@ -386,6 +417,10 @@ def claim_provenance(
     if claim is None:
         return None
     with closing(_connect(_resolve_db_path(db_path))) as conn:
+        from .identity import require_all_claim_evidence_visible
+
+        conn.execute("PRAGMA query_only = ON")
+        require_all_claim_evidence_visible(conn, agent_id, claim["id"])
         rows = conn.execute(
             "SELECT r.record_id, r.source_kind, r.source_ref, r.content, "
             "       r.content_sha256, r.verified, r.authority, ce.link_kind "
@@ -395,4 +430,4 @@ def claim_provenance(
             "ORDER BY r.record_id",
             (claim["id"],),
         ).fetchall()
-    return {"claim": claim, "evidence": [dict(r) for r in rows]}
+        return {"claim": claim, "evidence": [dict(r) for r in rows]}

@@ -330,6 +330,9 @@ def get_conflict(
     agent_id = _require_agent_id(agent_id)
     conflict_id = _require_non_empty_string(conflict_id, "conflict_id")
     with closing(_connect(_resolve_db_path(db_path))) as conn:
+        from .identity import EvidenceNotVisible, require_all_claim_evidence_visible
+
+        conn.execute("PRAGMA query_only = ON")
         row = conn.execute(
             "SELECT * FROM claim_conflicts WHERE conflict_id = ? AND agent_id = ?",
             (conflict_id, agent_id),
@@ -349,6 +352,19 @@ def get_conflict(
         ).fetchall()
         member_views = []
         for member in members:
+            try:
+                require_all_claim_evidence_visible(
+                    conn, agent_id, member["claim_rowid"]
+                )
+            except EvidenceNotVisible:
+                return {
+                    "conflict": {
+                        "conflict_id": conflict_id,
+                        "status": "restricted",
+                    },
+                    "members": [],
+                    "decisions": [],
+                }
             member_view = dict(member)
             evidence = conn.execute(
                 "SELECT r.record_id, r.source_kind, r.source_ref, r.verified, "
@@ -381,6 +397,9 @@ def list_conflicts(
     if status is not None and status not in CONFLICT_STATUSES:
         raise ValueError(f"status 必须是以下值之一: {CONFLICT_STATUSES!r}")
     with closing(_connect(_resolve_db_path(db_path))) as conn:
+        from .identity import EvidenceNotVisible, require_all_claim_evidence_visible
+
+        conn.execute("PRAGMA query_only = ON")
         rows = conn.execute(
             "SELECT * FROM claim_conflicts WHERE agent_id = ? "
             "ORDER BY created_at DESC",
@@ -388,6 +407,18 @@ def list_conflicts(
         ).fetchall()
         results = []
         for row in rows:
+            member_ids = conn.execute(
+                "SELECT claim_rowid FROM conflict_members "
+                "WHERE conflict_id = ? AND agent_id = ?",
+                (row["conflict_id"], agent_id),
+            ).fetchall()
+            try:
+                for member in member_ids:
+                    require_all_claim_evidence_visible(
+                        conn, agent_id, member["claim_rowid"]
+                    )
+            except EvidenceNotVisible:
+                continue
             item = dict(row)
             item["status"] = _derive_status(conn, item["conflict_id"])
             if status is None or item["status"] == status:

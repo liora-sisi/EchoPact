@@ -16,6 +16,7 @@ import pytest
 
 import backend.utils.db as db_module
 import backend.memory.records_v1 as records_module
+from backend.memory.identity import register_agent, set_scope
 from backend.memory.projection import (
     build_projection, get_claim, list_claims, claim_provenance,
 )
@@ -33,7 +34,15 @@ REC_PATCH = "synthetic-lighthouse-patch-001"
 def setup_db(tmp_path, monkeypatch):
     db_path = tmp_path / "proj.db"
     monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
-    import_record_package(str(FIXTURE), db_path=str(db_path))
+    # M5-04：投影构建有可见性闸门。fixture 证据归属 agent-a 并设为 shared，
+    # 保持"多 agent 共享证据、各自命名空间建 Claim"的原测试语义
+    register_agent("agent-a", "测试 Agent A", actor="test", db_path=str(db_path))
+    register_agent("agent-b", "测试 Agent B", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(FIXTURE), db_path=str(db_path), owner_agent_id="agent-a"
+    )
+    for record_id in (REC_MAIN_1, REC_MAIN_2, REC_ALT, REC_PATCH):
+        set_scope(record_id, "shared", actor="test", db_path=str(db_path))
     return str(db_path)
 
 
@@ -77,7 +86,7 @@ def test_build_creates_claim_with_full_trace(setup_db):
 def test_migration_v3_forward_only_repeatable(setup_db):
     first = migrate_records_db(setup_db)
     assert first["applied"] == []  # fixture 导入时已迁移到 v3
-    assert first["current_version"] == 4
+    assert first["current_version"] == 5
 
 
 # ---------- 多对多来源关联 ----------
@@ -242,6 +251,9 @@ def test_same_claim_key_different_agents_are_distinct(setup_db):
 
 
 def test_claim_identity_has_no_delimiter_collision(setup_db):
+    # M5-04：ad-hoc agent 也须先注册才过可见性闸门的 active 校验
+    register_agent("a|b", "合成左", actor="test", db_path=setup_db)
+    register_agent("a", "合成右", actor="test", db_path=setup_db)
     left = build_projection(
         _items(claim_key="c"), agent_id="a|b", rule_id="r1", db_path=setup_db
     )

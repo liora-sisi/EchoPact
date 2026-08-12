@@ -16,6 +16,7 @@ import pytest
 
 import backend.utils.db as db_module
 import backend.memory.records_v1 as records_module
+from backend.memory.identity import register_agent, set_scope
 from backend.memory.projection import build_projection, get_claim
 from backend.memory.claim_conflicts import (
     register_conflict, record_decision, get_conflict, list_conflicts,
@@ -34,7 +35,15 @@ TOPIC = "lighthouse:identity"
 def setup_db(tmp_path, monkeypatch):
     db_path = tmp_path / "conflict.db"
     monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
-    import_record_package(str(FIXTURE), db_path=str(db_path))
+    # M5-04：投影构建有可见性闸门。fixture 证据归属 agent-a 并设为 shared，
+    # 保持"多 agent 共享证据、各自命名空间建 Claim"的原测试语义
+    register_agent("agent-a", "测试 Agent A", actor="test", db_path=str(db_path))
+    register_agent("agent-b", "测试 Agent B", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(FIXTURE), db_path=str(db_path), owner_agent_id="agent-a"
+    )
+    for record_id in (REC_MAIN_1, REC_MAIN_2, REC_ALT, REC_PATCH):
+        set_scope(record_id, "shared", actor="test", db_path=str(db_path))
     return str(db_path)
 
 
@@ -243,7 +252,13 @@ def test_decision_id_uses_stable_claim_identity(setup_db, tmp_path):
     )
 
     second_db = tmp_path / "shifted-rowids.db"
-    import_record_package(str(FIXTURE), db_path=str(second_db))
+    register_agent("agent-a", "测试 Agent A", actor="test", db_path=str(second_db))
+    register_agent("agent-b", "测试 Agent B", actor="test", db_path=str(second_db))
+    import_record_package(
+        str(FIXTURE), db_path=str(second_db), owner_agent_id="agent-a"
+    )
+    for record_id in (REC_MAIN_1, REC_MAIN_2, REC_ALT, REC_PATCH):
+        set_scope(record_id, "shared", actor="test", db_path=str(second_db))
     build_projection(
         [{"claim_key": "dummy", "claim_kind": "note", "content": "占位",
           "evidence_record_ids": [REC_PATCH]}],
@@ -399,7 +414,7 @@ def test_empty_agent_rejected_everywhere(setup_db, bad_agent):
 def test_migration_v4_forward_only_repeatable(setup_db):
     result = migrate_records_db(setup_db)
     assert result["applied"] == []
-    assert result["current_version"] == 4
+    assert result["current_version"] == 5
 
 
 def test_conflicts_never_touch_claims_or_evidence(setup_db):

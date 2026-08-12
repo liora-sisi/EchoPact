@@ -8,6 +8,7 @@ import pytest
 import backend.memory.recall_projection as join_module
 import backend.utils.db as db_module
 from backend.memory.claim_conflicts import record_decision, register_conflict
+from backend.memory.identity import register_agent, set_scope
 from backend.memory.projection import build_projection
 from backend.memory.recall_projection import recall_with_projection
 from backend.memory.records_v1 import import_record_package, recall_records
@@ -28,7 +29,15 @@ TABLES = (
 def setup_db(tmp_path, monkeypatch):
     db_path = tmp_path / "m503.db"
     monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
-    import_record_package(str(FIXTURE), db_path=str(db_path))
+    # M5-04：投影构建有可见性闸门。fixture 证据归属 agent-a 并设为 shared，
+    # 保持"多 agent 共享证据、各自命名空间建 Claim"的原测试语义
+    register_agent("agent-a", "测试 Agent A", actor="test", db_path=str(db_path))
+    register_agent("agent-b", "测试 Agent B", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(FIXTURE), db_path=str(db_path), owner_agent_id="agent-a"
+    )
+    for record_id in (REC_MAIN_1, REC_MAIN_2, REC_ALT, REC_PATCH):
+        set_scope(record_id, "shared", actor="test", db_path=str(db_path))
     return str(db_path)
 
 

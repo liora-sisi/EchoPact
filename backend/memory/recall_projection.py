@@ -10,6 +10,12 @@ from contextlib import closing
 from typing import Any, Dict, List, Optional
 
 from .claim_conflicts import _derive_status
+from .identity import (
+    EvidenceNotVisible,
+    _can_read_derived,
+    current_visibility,
+    require_all_claim_evidence_visible,
+)
 from .projection import _require_agent_id, _source_hash
 from .records_v1 import (
     _connect,
@@ -88,6 +94,26 @@ def _claim_freshness(conn, claim_rowid: int, stored_source_hash: str) -> Dict[st
     return {"freshness": "fresh", "stale_reason": None}
 
 
+def _group_members_visible(conn, agent_id: str, conflict_id: str) -> bool:
+    """冲突组内任一成员的证据不可见 → 整组脱敏。"""
+    members = conn.execute(
+        "SELECT claim_rowid FROM conflict_members WHERE conflict_id = ? "
+        "AND agent_id = ?",
+        (conflict_id, agent_id),
+    ).fetchall()
+    for member in members:
+        evidence = conn.execute(
+            "SELECT record_rowid FROM claim_evidence WHERE claim_rowid = ?",
+            (member["claim_rowid"],),
+        ).fetchall()
+        for row in evidence:
+            if not _can_read_derived(
+                agent_id, current_visibility(conn, row["record_rowid"])
+            ):
+                return False
+    return True
+
+
 def _conflict_annotations(
     conn, agent_id: str, claim_rowid: int
 ) -> List[Dict[str, Any]]:
@@ -102,6 +128,11 @@ def _conflict_annotations(
     annotations: List[Dict[str, Any]] = []
     for conflict in conflicts:
         conflict_id = conflict["conflict_id"]
+        if not _group_members_visible(conn, agent_id, conflict_id):
+            # 组成员存在不可见证据：topic/rationale/target/decided_by 全抑制
+            annotations.append({"conflict_id": conflict_id,
+                                "status": "restricted"})
+            continue
         status = _derive_status(conn, conflict_id)
         annotations.append(
             {
@@ -135,7 +166,11 @@ def recall_with_projection(
     # Preserve the existing forward-only migration contract before the
     # annotation connection is locked to query-only mode.
     migrate_records_db(db_path)
-    base = recall_records(query, limit=limit, as_of=as_of, db_path=db_path)
+    # M5-04：证据召回必须先过可见范围，不可见记录连 memories 列表都进不来；
+    # claim 级 evidence_not_visible 只负责跨页证据的脱敏占位。
+    base = recall_records(
+        query, limit=limit, as_of=as_of, db_path=db_path, agent_id=agent_id
+    )
 
     memories = base.get("memories", [])
     with closing(_connect(_resolve_db_path(db_path))) as conn:
@@ -155,6 +190,19 @@ def recall_with_projection(
             ).fetchall()
             claims: List[Dict[str, Any]] = []
             for row in claim_rows:
+                try:
+                    require_all_claim_evidence_visible(conn, agent_id, row["id"])
+                except EvidenceNotVisible:
+                    # 修 7：restricted 全面脱敏，绝不返回 freshness/stale_reason
+                    claims.append(
+                        {
+                            "claim_id": row["claim_id"],
+                            "claim_version": row["claim_version"],
+                            "restricted": True,
+                            "restricted_reason": "evidence_not_visible",
+                        }
+                    )
+                    continue
                 freshness = _claim_freshness(conn, row["id"], row["source_hash"])
                 claims.append(
                     {
@@ -170,7 +218,12 @@ def recall_with_projection(
                     }
                 )
             memory["claims"] = claims
-            memory["projection_status"] = "projected" if claims else "unprojected"
+            if claims and all(c.get("restricted") for c in claims):
+                memory["projection_status"] = "restricted"
+            else:
+                memory["projection_status"] = (
+                    "projected" if claims else "unprojected"
+                )
 
     base["schema_version"] = RECALL_PROJECTION_SCHEMA_VERSION
     base["evidence_schema_version"] = "echo-pact-recall-v1"

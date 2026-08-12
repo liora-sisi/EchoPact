@@ -65,20 +65,21 @@ uvicorn backend.trigger.main:app --host 0.0.0.0 --port 8000 &
 
 #### 4. 测试召回
 
-所有 `/api` 召回接口都需要 Bearer 访问码（fail-closed）：
-`ACCESS_CODE` 未配置、为空或仍是示例占位符时接口返回 503；
-缺少或错误的 Bearer 一律返回 401。
+所有 `/api` 召回接口都 fail-closed。M5-04 的 `cred_id.secret` Bearer
+凭证会直接解析出 agent 身份，V1 记录、Claim、冲突与 coverage 都只在该
+身份当前可见的证据集合内返回；请求体里的 `agent_id` 只是迁移期兼容断言，
+不能选择或冒充身份。停用 agent、吊销凭证或撤销记录授权会在下一次请求生效。
 
-当前 `ACCESS_CODE` 是整项服务共用的一道门锁，`agent_id` 只负责把旧记忆查询和
-主动召回限定在指定范围内，还不是经过认证的 agent 身份。持有同一访问码的调用者
-仍可自行选择 `agent_id`；在未来引入按 agent 授权的身份层之前，不应把当前接口暴露
-给彼此不信任的多租户。V1 records 记录池同样尚未具备 agent 级身份隔离。
+旧 `ACCESS_CODE` 仍可在兼容期映射到 `agt-legacy`。未配置任何可用门禁时
+接口返回 503；缺失或错误 Bearer 返回 401。可用
+`ECHO_DISABLE_LEGACY_CODE=1` 关闭旧码兼容。身份注册、凭证签发、记录归属和
+授权只能通过本机 `scripts/admin_cli.py` 管理，不提供网络管理写接口。
 
 ```bash
 curl -X POST http://localhost:8000/api/recall \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ACCESS_CODE" \
-  -d '{"query": "保长上次骂我啥", "agent_id": "default"}' | jq .
+  -d '{"query": "保长上次骂我啥"}' | jq .
 ```
 
 V1 离线记录召回走 `/api/v1/recall`，同样需要 Bearer：
@@ -86,25 +87,27 @@ V1 离线记录召回走 `/api/v1/recall`，同样需要 Bearer：
 ```bash
 curl -X POST http://localhost:8000/api/v1/recall \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_CODE" \
+  -H "Authorization: Bearer $ECHO_PACT_CREDENTIAL" \
   -d '{"query": "保长上次骂我啥"}' | jq .
 ```
 
 M5 投影接合召回走 `/api/v1/recall/projected`。它保留 V1 的证据、排序、
-置信度与知识覆盖语义，并为每条结果附上当前 `agent_id` 的 active Claim、
+置信度与知识覆盖语义，并为每条结果附上认证 agent 的 active Claim、
 冲突裁决呈现和投影新鲜度：
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/recall/projected \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_CODE" \
-  -d '{"query": "保长上次骂我啥", "agent_id": "default"}' | jq .
+  -H "Authorization: Bearer $ECHO_PACT_CREDENTIAL" \
+  -d '{"query": "保长上次骂我啥"}' | jq .
 ```
 
 冲突裁决只用于展示，不隐藏、不降权，也不会按 `verified`、`authority`
 或来源数量自动选边。`projection_status=unprojected` 表示记录尚未被 Claim
 认领；`freshness=stale` 表示投影证据链接与留痕不一致。召回读路径不会
 偷偷重建投影，调用方应停用该 Claim 的陈旧解释，并由明确的投影重建流程处理。
+若 Claim 或冲突组任一证据失权，响应只返回 `restricted` 脱敏占位，避免正文、
+来源和裁决细节侧漏。
 
 ### 📚 模块说明
 

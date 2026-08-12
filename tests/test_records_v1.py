@@ -19,6 +19,7 @@ from backend.memory.records_v1 import (
     recall_records,
     rebuild_records_index,
 )
+from backend.memory.identity import LEGACY_PRINCIPAL
 from backend.trigger.routes import V1RecallRequest, recall_v1_endpoint
 
 
@@ -40,6 +41,9 @@ def test_json_import_is_idempotent_and_preserves_branches(tmp_path):
     first = import_record_package(str(FIXTURE), db_path=str(db_path), batch_size=2)
     second = import_record_package(str(FIXTURE), db_path=str(db_path), batch_size=2)
 
+    # M5-04：summary 新增 batch_id / idempotent_replay 两个键
+    first_batch_id = first.pop("batch_id")
+    assert first_batch_id.startswith("imp-")
     assert first == {
         "schema_version": RECORD_SCHEMA_VERSION,
         "added": 4,
@@ -47,7 +51,11 @@ def test_json_import_is_idempotent_and_preserves_branches(tmp_path):
         "failed": 0,
         "knowledge_cutoff_at": "2026-08-01T00:00:00Z",
         "latest_record_at": "2026-08-05T09:30:00Z",
+        "idempotent_replay": False,
     }
+    # M5-04：已完成批次重放直接返回既有 summary（记录一行不动）
+    assert second["idempotent_replay"] is True
+    assert second["batch_id"] == first_batch_id
     assert second["added"] == 0
     assert second["skipped"] == 4
     assert second["failed"] == 0
@@ -109,6 +117,10 @@ def test_compact_package_stores_content_once_and_preserves_all_branch_membership
 
     assert first["added"] == 1
     assert first["branch_memberships_added"] == 2
+    # M5-04：已完成批次重放返回既有 summary（idempotent_replay=True），
+    # 不再重扫记录；记录与分支成员数保持不动由下文的计数断言保证
+    assert repeated["idempotent_replay"] is True
+    assert repeated["batch_id"] == first["batch_id"]
     assert repeated["added"] == 0
     assert repeated["skipped"] == 1
     assert repeated["branch_memberships_added"] == 0
@@ -400,11 +412,13 @@ def test_v1_api_route_uses_temporary_database_and_keeps_legacy_route(tmp_path, m
     monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
     import_record_package(str(FIXTURE), db_path=str(db_path))
 
+    # M5-04：端点身份由依赖注入；直连调用等价于 legacy 访问码上下文
     response = asyncio.run(
         recall_v1_endpoint(
             V1RecallRequest(
                 query="ORCHID-731", as_of="2026-08-01T00:00:00Z"
-            )
+            ),
+            principal=LEGACY_PRINCIPAL,
         )
     )
 
@@ -427,7 +441,7 @@ def test_migration_is_forward_only_repeatable_and_rolls_back_on_failure(
 
     first = migrate_records_db(str(db_path))
     second = migrate_records_db(str(db_path))
-    assert first["applied"] == [1, 2, 3, 4]
+    assert first["applied"] == [1, 2, 3, 4, 5]
     assert second["applied"] == []
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "keep-me"
