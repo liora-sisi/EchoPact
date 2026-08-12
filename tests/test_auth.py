@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.utils.db as db_module
+import backend.trigger.routes as routes_module
 
 VALID_CODE = "test-access-code-7f3a9c1e"  # 仅测试用合成串，非真实访问码
 PLACEHOLDERS = ["", "your_access_code_here", "changeme", "placeholder"]
@@ -37,7 +38,7 @@ def _recall_payloads():
 @pytest.mark.parametrize("code", PLACEHOLDERS)
 def test_unconfigured_or_placeholder_returns_503(client, monkeypatch, code):
     monkeypatch.setenv("ACCESS_CODE", code)
-    for path in ("/api/recall", "/api/v1/recall"):
+    for path in ("/api/recall", "/api/v1/recall", "/api/v1/recall/projected"):
         resp = client.post(path, json={"query": "保长", "limit": 3})
         assert resp.status_code == 503, f"{path} should be 503, got {resp.status_code}"
 
@@ -66,7 +67,7 @@ def test_root_health_200_when_configured(client, monkeypatch):
 
 def test_missing_bearer_returns_401_with_header(client, monkeypatch):
     monkeypatch.setenv("ACCESS_CODE", VALID_CODE)
-    for path in ("/api/recall", "/api/v1/recall"):
+    for path in ("/api/recall", "/api/v1/recall", "/api/v1/recall/projected"):
         resp = client.post(path, json={"query": "保长", "limit": 3})
         assert resp.status_code == 401
         assert resp.headers.get("WWW-Authenticate") == "Bearer"
@@ -104,6 +105,48 @@ def test_correct_bearer_v1_recall_ok(client, monkeypatch):
         headers={"Authorization": f"Bearer {VALID_CODE}"},
     )
     assert resp.status_code == 200
+
+
+def test_correct_bearer_projected_recall_ok(client, monkeypatch):
+    monkeypatch.setenv("ACCESS_CODE", VALID_CODE)
+    resp = client.post(
+        "/api/v1/recall/projected",
+        json={"query": "保长", "limit": 3, "agent_id": "default"},
+        headers={"Authorization": f"Bearer {VALID_CODE}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema_version"] == "echo-pact-recall-projection-v1"
+    assert body["agent_id"] == "default"
+    assert "memories" in body
+
+
+def test_projected_recall_internal_error_does_not_leak_details(client, monkeypatch):
+    monkeypatch.setenv("ACCESS_CODE", VALID_CODE)
+    private_detail = r"D:\private\memory.db synthetic failure"
+
+    def fail_join(*args, **kwargs):
+        raise RuntimeError(private_detail)
+
+    monkeypatch.setattr(routes_module, "recall_with_projection", fail_join)
+    resp = client.post(
+        "/api/v1/recall/projected",
+        json={"query": "保长", "agent_id": "default"},
+        headers={"Authorization": f"Bearer {VALID_CODE}"},
+    )
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "Projected recall failed"}
+    assert private_detail not in resp.text
+
+
+def test_projected_recall_rejects_empty_agent(client, monkeypatch):
+    monkeypatch.setenv("ACCESS_CODE", VALID_CODE)
+    resp = client.post(
+        "/api/v1/recall/projected",
+        json={"query": "保长", "agent_id": "   "},
+        headers={"Authorization": f"Bearer {VALID_CODE}"},
+    )
+    assert resp.status_code == 422
 
 
 # ---------- 访问码不泄露 ----------

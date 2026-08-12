@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from ..judge.recall import recall_memories
 from ..memory.records_v1 import recall_records
+from ..memory.recall_projection import recall_with_projection
 from .auth import require_access_code
 
 # router 级别挂载鉴权：/api/recall 与 /api/v1/recall 以及今后新增端点统一受护
@@ -42,3 +43,27 @@ async def recall_v1_endpoint(request: V1RecallRequest):
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+class ProjectedRecallRequest(BaseModel):
+    query: str
+    limit: int = 5
+    agent_id: str = "default"
+    as_of: Optional[str] = None
+
+
+@router.post("/v1/recall/projected", response_model=Dict[str, Any])
+async def recall_projected_endpoint(request: ProjectedRecallRequest):
+    """Evidence recall with Claim ownership and adjudication annotations."""
+    try:
+        return recall_with_projection(
+            request.query,
+            agent_id=request.agent_id,
+            limit=request.limit,
+            as_of=request.as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        # Internal paths/schema details must not become an API response.
+        raise HTTPException(status_code=500, detail="Projected recall failed")

@@ -165,6 +165,20 @@ the actual recall mode.
 
 The response repeats this rule and the evidence used for each result.
 
+### Projection-aware recall
+
+`POST /api/v1/recall/projected` keeps the V1 evidence recall unchanged and
+adds current-agent active Claims, conflict adjudication annotations, and an
+explicit projection freshness signal. It requires the same Bearer access code
+as every `/api` endpoint and accepts an explicit `agent_id`.
+
+Adjudication is presentation-only: it never hides, reorders, or reweights an
+evidence result and never automatically chooses a side from authority,
+verification, confidence, or source count. `unprojected` records remain in the
+result. A stale Claim is returned with a reason so callers can avoid trusting
+its derived interpretation; recall itself never rebuilds or writes projection
+state.
+
 ## Knowledge coverage
 
 `verified_knowledge_cutoff_at` is the latest cutoff declared by a verified,

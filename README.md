@@ -90,6 +90,22 @@ curl -X POST http://localhost:8000/api/v1/recall \
   -d '{"query": "保长上次骂我啥"}' | jq .
 ```
 
+M5 投影接合召回走 `/api/v1/recall/projected`。它保留 V1 的证据、排序、
+置信度与知识覆盖语义，并为每条结果附上当前 `agent_id` 的 active Claim、
+冲突裁决呈现和投影新鲜度：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/recall/projected \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_CODE" \
+  -d '{"query": "保长上次骂我啥", "agent_id": "default"}' | jq .
+```
+
+冲突裁决只用于展示，不隐藏、不降权，也不会按 `verified`、`authority`
+或来源数量自动选边。`projection_status=unprojected` 表示记录尚未被 Claim
+认领；`freshness=stale` 表示投影证据链接与留痕不一致。召回读路径不会
+偷偷重建投影，调用方应停用该 Claim 的陈旧解释，并由明确的投影重建流程处理。
+
 ### 📚 模块说明
 
 | 目录 | 职责 |
