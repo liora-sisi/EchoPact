@@ -480,7 +480,7 @@ def test_migration_is_forward_only_repeatable_and_rolls_back_on_failure(
 
     first = migrate_records_db(str(db_path))
     second = migrate_records_db(str(db_path))
-    assert first["applied"] == [1, 2, 3, 4, 5]
+    assert first["applied"] == [1, 2, 3, 4, 5, 6]
     assert second["applied"] == []
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "keep-me"

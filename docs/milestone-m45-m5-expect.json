@@ -1,0 +1,39 @@
+{
+  "schema": "echo-pact-milestone-expect-v1",
+  "base_sha": "63c3d75192416848382e5697c6366ed48d2df3e1",
+  "source_branch": "m45-hardening-2026-08-11",
+  "protected_ref": "refs/heads/v1-core-2026-08-08",
+  "ordered_commits": [
+    {"sha": "4ed89642fb8b61523f95cf51cf6843bbc806ebd7", "subject": "fix: isolate Chroma tests and preserve memory provenance"},
+    {"sha": "a28e76b9391e863918ccb6e7b52a3bbd9734c92d", "subject": "fix: enforce recall auth and agent isolation"},
+    {"sha": "71b6d7dbb9093ea2fda8b322c7987ca61ed805cf", "subject": "feat: add auditable projection claim foundation"},
+    {"sha": "1cf85015807d9bd31622d76a96303d27b7cb5d9f", "subject": "feat: add append-only claim conflict adjudication"},
+    {"sha": "7374ca3c5e47affc3a3746ca24876227515d34c1", "subject": "feat: join claim adjudication into V1 recall"},
+    {"sha": "637bf29e31f0b443b7545f977b84961ff004d827", "subject": "feat: add M5-04 identity and evidence visibility"},
+    {"sha": "85324a9f0af334e2fc3ed129a05f1720cc2ae3be", "subject": "chore: close M5-04 peer review findings"},
+    {"sha": "d16317b601b84086a9cb01f4ae9a6064b70cc49a", "subject": "feat: add read-only identity audit and rehearsal"},
+    {"sha": "6e13d05dfb0059e2f44cf1216d3eff814bceef11", "subject": "refactor: unify visibility predicate and audit docs"},
+    {"sha": null, "subject": "feat: seal M5 integrity and release gates"}
+  ],
+  "expected_added_routes": ["/api/v1/recall/projected"],
+  "migration_versions": [1, 2, 3, 4, 5, 6],
+  "required_tables": [
+    "agent_credentials", "agent_events", "agents", "claim_conflicts",
+    "claim_evidence", "config_kv", "conflict_decisions", "conflict_members",
+    "credential_events", "import_batches", "projection_claims",
+    "projection_runs", "record_visibility_events", "records_v1",
+    "records_v1_branch_memberships", "records_v1_index_state",
+    "schema_migrations"
+  ],
+  "required_triggers": [
+    "agent_credentials_immutable_delete", "agent_credentials_immutable_update",
+    "agent_events_immutable_delete", "agent_events_immutable_update",
+    "agents_immutable_delete", "agents_immutable_update",
+    "branch_memberships_immutable_delete", "branch_memberships_immutable_update",
+    "claim_evidence_immutable_delete", "claim_evidence_immutable_update",
+    "config_kv_immutable_delete", "config_kv_immutable_update",
+    "projection_claims_guard_update", "projection_claims_immutable_delete",
+    "projection_runs_immutable_delete", "projection_runs_immutable_update",
+    "records_v1_immutable_delete", "records_v1_immutable_update"
+  ]
+}

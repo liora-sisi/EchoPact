@@ -25,7 +25,7 @@ SUPPORTED_RECORD_SCHEMA_VERSIONS = {
     COMPACT_RECORD_SCHEMA_VERSION,
 }
 RECALL_SCHEMA_VERSION = "echo-pact-recall-v1"
-MIGRATION_VERSION = 5
+MIGRATION_VERSION = 6
 
 REQUIRED_FIELDS = (
     "record_id",
@@ -602,6 +602,144 @@ MIGRATION_5_STATEMENTS = (
     """,
 )
 
+
+# v6：投影留痕完整性。
+#
+# projection_claims 不是“完全不可变”：生成新版本时，旧 active 行必须发生
+# 唯一合法的 active -> superseded 状态转移。除此之外，正文、来源哈希、规则、
+# 版本身份等字段均不可原地改写，行也不可删除。projection_runs 与
+# claim_evidence 只追加不改删。
+MIGRATION_6_STATEMENTS = (
+    """
+    CREATE TRIGGER IF NOT EXISTS branch_memberships_immutable_update
+    BEFORE UPDATE ON records_v1_branch_memberships BEGIN
+        SELECT RAISE(ABORT, 'record branch membership is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS branch_memberships_immutable_delete
+    BEFORE DELETE ON records_v1_branch_memberships BEGIN
+        SELECT RAISE(ABORT, 'record branch membership is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS projection_runs_immutable_update
+    BEFORE UPDATE ON projection_runs BEGIN
+        SELECT RAISE(ABORT, 'projection_runs is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS projection_runs_immutable_delete
+    BEFORE DELETE ON projection_runs BEGIN
+        SELECT RAISE(ABORT, 'projection_runs is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS projection_claims_guard_update
+    BEFORE UPDATE ON projection_claims
+    WHEN NOT (
+        NEW.id IS OLD.id
+        AND NEW.claim_id IS OLD.claim_id
+        AND NEW.claim_version IS OLD.claim_version
+        AND NEW.agent_id IS OLD.agent_id
+        AND NEW.claim_kind IS OLD.claim_kind
+        AND NEW.content IS OLD.content
+        AND OLD.status = 'active'
+        AND NEW.status = 'superseded'
+        AND NEW.rule_id IS OLD.rule_id
+        AND NEW.rule_version IS OLD.rule_version
+        AND NEW.source_hash IS OLD.source_hash
+        AND NEW.projection_hash IS OLD.projection_hash
+        AND NEW.run_id IS OLD.run_id
+        AND NEW.created_at IS OLD.created_at
+        AND OLD.superseded_by_version IS NULL
+        AND NEW.superseded_by_version = OLD.claim_version + 1
+    ) BEGIN
+        SELECT RAISE(
+            ABORT,
+            'projection_claims permits only active-to-superseded transition'
+        );
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS projection_claims_immutable_delete
+    BEFORE DELETE ON projection_claims BEGIN
+        SELECT RAISE(ABORT, 'projection_claims history cannot be deleted');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS claim_evidence_immutable_update
+    BEFORE UPDATE ON claim_evidence BEGIN
+        SELECT RAISE(ABORT, 'claim_evidence is append-only');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS claim_evidence_immutable_delete
+    BEFORE DELETE ON claim_evidence BEGIN
+        SELECT RAISE(ABORT, 'claim_evidence is append-only');
+    END
+    """,
+)
+
+
+def _validate_projection_integrity_for_v6(conn: sqlite3.Connection) -> None:
+    """拒绝在已不自洽的投影历史上安装 v6 机制化保护。"""
+    invalid_status = conn.execute(
+        "SELECT 1 FROM projection_claims "
+        "WHERE (status = 'active' AND superseded_by_version IS NOT NULL) "
+        "OR (status = 'superseded' AND superseded_by_version IS NULL) "
+        "LIMIT 1"
+    ).fetchone()
+    if invalid_status is not None:
+        raise sqlite3.IntegrityError(
+            "projection history is inconsistent; v6 migration refused"
+        )
+
+    invalid_chain = conn.execute(
+        "SELECT 1 FROM projection_claims old "
+        "LEFT JOIN projection_claims newer "
+        "ON newer.claim_id = old.claim_id "
+        "AND newer.claim_version = old.superseded_by_version "
+        "WHERE old.status = 'superseded' "
+        "AND (old.superseded_by_version <> old.claim_version + 1 "
+        "OR newer.id IS NULL) LIMIT 1"
+    ).fetchone()
+    if invalid_chain is not None:
+        raise sqlite3.IntegrityError(
+            "projection version chain is inconsistent; v6 migration refused"
+        )
+
+    orphan_link = conn.execute(
+        "SELECT 1 FROM claim_evidence ce "
+        "LEFT JOIN projection_claims pc ON pc.id = ce.claim_rowid "
+        "LEFT JOIN records_v1 r ON r.id = ce.record_rowid "
+        "WHERE pc.id IS NULL OR r.id IS NULL LIMIT 1"
+    ).fetchone()
+    if orphan_link is not None:
+        raise sqlite3.IntegrityError(
+            "claim evidence contains orphan links; v6 migration refused"
+        )
+
+    orphan_projection = conn.execute(
+        "SELECT 1 FROM projection_claims pc "
+        "LEFT JOIN projection_runs pr ON pr.run_id = pc.run_id "
+        "WHERE pr.run_id IS NULL LIMIT 1"
+    ).fetchone()
+    if orphan_projection is not None:
+        raise sqlite3.IntegrityError(
+            "projection claims contain orphan runs; v6 migration refused"
+        )
+
+    orphan_membership = conn.execute(
+        "SELECT 1 FROM records_v1_branch_memberships bm "
+        "LEFT JOIN records_v1 r ON r.id = bm.record_rowid "
+        "WHERE r.id IS NULL LIMIT 1"
+    ).fetchone()
+    if orphan_membership is not None:
+        raise sqlite3.IntegrityError(
+            "branch memberships contain orphan records; v6 migration refused"
+        )
+
 def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
     """Apply all forward-only record migrations in one transaction."""
 
@@ -624,6 +762,7 @@ def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
             (3, "echo-pact-claims-projection-v1", MIGRATION_3_STATEMENTS),
             (4, "echo-pact-claim-conflicts-v1", MIGRATION_4_STATEMENTS),
             (5, "echo-pact-identity-visibility-v1", MIGRATION_5_STATEMENTS),
+            (6, "echo-pact-projection-integrity-v1", MIGRATION_6_STATEMENTS),
         )
         for version, name, statements in migrations:
             exists = conn.execute(
@@ -632,6 +771,8 @@ def migrate_records_db(db_path: Optional[str] = None) -> Dict[str, Any]:
             ).fetchone()
             if exists:
                 continue
+            if version == 6:
+                _validate_projection_integrity_for_v6(conn)
             for statement in statements:
                 conn.execute(statement)
             conn.execute(

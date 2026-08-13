@@ -86,7 +86,7 @@ def test_build_creates_claim_with_full_trace(setup_db):
 def test_migration_v3_forward_only_repeatable(setup_db):
     first = migrate_records_db(setup_db)
     assert first["applied"] == []  # fixture 导入时已迁移到 v3
-    assert first["current_version"] == 5
+    assert first["current_version"] == 6
 
 
 # ---------- 多对多来源关联 ----------
@@ -375,6 +375,196 @@ def test_evidence_table_rejects_direct_update_and_delete(setup_db):
         assert conn.execute(
             "SELECT COUNT(*) FROM records_v1 WHERE record_id = ?", (REC_MAIN_1,)
         ).fetchone()[0] == 1
+
+
+def test_projection_integrity_v6_allows_versioning_and_blocks_tamper(setup_db):
+    first = build_projection(
+        _items(), agent_id="agent-a", rule_id="r1", db_path=setup_db
+    )
+    first_claim = first["claims"][0]
+
+    # 合法路径仍可把旧 active 版本标记为 superseded 并追加新版本。
+    second = build_projection(
+        _items(content="第二版内容"),
+        agent_id="agent-a",
+        rule_id="r1",
+        db_path=setup_db,
+    )
+    assert second["created"] == 1
+    assert second["superseded"] == 1
+
+    with sqlite3.connect(setup_db) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        row = conn.execute(
+            "SELECT id, status, superseded_by_version FROM projection_claims "
+            "WHERE claim_id = ? AND claim_version = ?",
+            (first_claim["claim_id"], first_claim["claim_version"]),
+        ).fetchone()
+        assert row[1:] == ("superseded", 2)
+
+        # Claim 身份、正文、来源与历史行均不可原地篡改或删除。
+        for sql in (
+            "UPDATE projection_claims SET content = 'tampered' WHERE id = ?",
+            "UPDATE projection_claims SET source_hash = printf('%064d', 0) WHERE id = ?",
+            "UPDATE projection_claims SET status = 'sealed' WHERE id = ?",
+            "DELETE FROM projection_claims WHERE id = ?",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(sql, (row[0],))
+            conn.rollback()
+
+        evidence = conn.execute(
+            "SELECT claim_rowid, record_rowid, link_kind FROM claim_evidence "
+            "ORDER BY claim_rowid LIMIT 1"
+        ).fetchone()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "UPDATE claim_evidence SET link_kind = 'contradicts' "
+                "WHERE claim_rowid = ? AND record_rowid = ? AND link_kind = ?",
+                evidence,
+            )
+        conn.rollback()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "DELETE FROM claim_evidence WHERE claim_rowid = ? "
+                "AND record_rowid = ? AND link_kind = ?",
+                evidence,
+            )
+        conn.rollback()
+
+        run_id = conn.execute(
+            "SELECT run_id FROM projection_runs ORDER BY created_at LIMIT 1"
+        ).fetchone()[0]
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "UPDATE projection_runs SET claim_count = 99 WHERE run_id = ?",
+                (run_id,),
+            )
+        conn.rollback()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute("DELETE FROM projection_runs WHERE run_id = ?", (run_id,))
+        conn.rollback()
+
+        membership = conn.execute(
+            "SELECT record_rowid, branch_id, position "
+            "FROM records_v1_branch_memberships ORDER BY record_rowid LIMIT 1"
+        ).fetchone()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "UPDATE records_v1_branch_memberships SET position = 999 "
+                "WHERE record_rowid = ? AND branch_id = ?",
+                membership[:2],
+            )
+        conn.rollback()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "DELETE FROM records_v1_branch_memberships "
+                "WHERE record_rowid = ? AND branch_id = ?",
+                membership[:2],
+            )
+        conn.rollback()
+
+
+def test_migration_v6_failure_rolls_back_only_v6(tmp_path, monkeypatch):
+    db_path = tmp_path / "projection-v6-migration-failure.db"
+    migrations = (
+        records_module.MIGRATION_1_STATEMENTS,
+        records_module.MIGRATION_2_STATEMENTS,
+        records_module.MIGRATION_3_STATEMENTS,
+        records_module.MIGRATION_4_STATEMENTS,
+        records_module.MIGRATION_5_STATEMENTS,
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "CREATE TABLE schema_migrations ("
+            "version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        for statements in migrations:
+            for statement in statements:
+                conn.execute(statement)
+        conn.executemany(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            [(version, f"v{version}", "synthetic") for version in range(1, 6)],
+        )
+
+    monkeypatch.setattr(
+        records_module,
+        "MIGRATION_6_STATEMENTS",
+        records_module.MIGRATION_6_STATEMENTS + ("THIS IS NOT VALID SQL",),
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        migrate_records_db(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        versions = [
+            row[0] for row in conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            )
+        ]
+        v6_triggers = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+            "AND name IN ("
+            "'projection_runs_immutable_update', "
+            "'projection_runs_immutable_delete', "
+            "'projection_claims_guard_update', "
+            "'projection_claims_immutable_delete', "
+            "'claim_evidence_immutable_update', "
+            "'claim_evidence_immutable_delete')"
+        ).fetchone()[0]
+    assert versions == [1, 2, 3, 4, 5]
+    assert v6_triggers == 0
+
+
+def test_migration_v6_rejects_inconsistent_existing_projection(tmp_path):
+    db_path = tmp_path / "projection-v6-inconsistent.db"
+    migrations = (
+        records_module.MIGRATION_1_STATEMENTS,
+        records_module.MIGRATION_2_STATEMENTS,
+        records_module.MIGRATION_3_STATEMENTS,
+        records_module.MIGRATION_4_STATEMENTS,
+        records_module.MIGRATION_5_STATEMENTS,
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "CREATE TABLE schema_migrations ("
+            "version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        for statements in migrations:
+            for statement in statements:
+                conn.execute(statement)
+        conn.executemany(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+            [(version, f"v{version}", "synthetic") for version in range(1, 6)],
+        )
+        conn.execute(
+            "INSERT INTO projection_runs "
+            "(run_id, rule_id, rule_version, agent_id, source_hash, claim_count, "
+            "status, created_at) VALUES ('run-bad', 'rule', 1, 'agt-legacy', ?, 1, "
+            "'completed', 'synthetic')",
+            ("0" * 64,),
+        )
+        conn.execute(
+            "INSERT INTO projection_claims "
+            "(claim_id, claim_version, agent_id, claim_kind, content, status, "
+            "rule_id, rule_version, source_hash, projection_hash, run_id, created_at, "
+            "superseded_by_version) VALUES "
+            "('claim-bad', 1, 'agt-legacy', 'fact', 'synthetic', 'superseded', "
+            "'rule', 1, ?, ?, 'run-bad', 'synthetic', NULL)",
+            ("0" * 64, "1" * 64),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="inconsistent"):
+        migrate_records_db(str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 6"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
+            "AND name LIKE 'projection_%immutable%'"
+        ).fetchone()[0] == 0
 
 
 def test_migration_v3_failure_rolls_back_only_v3(tmp_path, monkeypatch):

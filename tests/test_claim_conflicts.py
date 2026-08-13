@@ -414,7 +414,7 @@ def test_empty_agent_rejected_everywhere(setup_db, bad_agent):
 def test_migration_v4_forward_only_repeatable(setup_db):
     result = migrate_records_db(setup_db)
     assert result["applied"] == []
-    assert result["current_version"] == 5
+    assert result["current_version"] == 6
 
 
 def test_conflicts_never_touch_claims_or_evidence(setup_db):

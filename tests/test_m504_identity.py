@@ -890,7 +890,7 @@ def test_static_scan_invariants(setup_db):
         assert re.search(rf"BEFORE DELETE ON {table}\b", migration_sql)
     assert "legacy_principal" in migration_sql
     assert LEGACY_PRINCIPAL in migration_sql
-    assert records_module.MIGRATION_VERSION == 5
+    assert records_module.MIGRATION_VERSION == 6
 
     # 召回可见性谓词：两处 SQL 都先于 ORDER BY / LIMIT（fail-closed 空集也在）
     recall_src = inspect.getsource(records_module.recall_records)
