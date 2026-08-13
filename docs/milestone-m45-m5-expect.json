@@ -13,7 +13,8 @@
     {"sha": "85324a9f0af334e2fc3ed129a05f1720cc2ae3be", "subject": "chore: close M5-04 peer review findings"},
     {"sha": "d16317b601b84086a9cb01f4ae9a6064b70cc49a", "subject": "feat: add read-only identity audit and rehearsal"},
     {"sha": "6e13d05dfb0059e2f44cf1216d3eff814bceef11", "subject": "refactor: unify visibility predicate and audit docs"},
-    {"sha": null, "subject": "feat: seal M5 integrity and release gates"}
+    {"sha": "6128a96c78af9dac892c0c358c675ab960b38b3a", "subject": "feat: seal M5 integrity and release gates"},
+    {"sha": null, "subject": "fix: keep M5 release validation paths portable"}
   ],
   "expected_added_routes": ["/api/v1/recall/projected"],
   "migration_versions": [1, 2, 3, 4, 5, 6],

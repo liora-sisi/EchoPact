@@ -347,8 +347,13 @@ def _run_validation(repo: Path) -> dict[str, Any]:
     env["HTTP_PROXY"] = "http://127.0.0.1:9"
     env["HTTPS_PROXY"] = "http://127.0.0.1:9"
     env["NO_PROXY"] = "127.0.0.1,localhost"
-    with _tempdir("echopact-milestone-validation-") as tmp:
-        pytest_tmp = str(Path(tmp) / "pytest")
+    # Keep this root deliberately short on Windows.  Pytest's per-test names,
+    # followed by recovery-package staging and Git object paths, can otherwise
+    # exceed Win32's legacy path limit when nested below the caller's evidence
+    # directory.  Do not inherit ECHO_PACT_TEMP_ROOT into this subprocess.
+    with tempfile.TemporaryDirectory(prefix="epv-", dir=tempfile.gettempdir()) as tmp:
+        env["ECHO_PACT_TEMP_ROOT"] = tmp
+        pytest_tmp = str(Path(tmp) / "p")
         tests = _run(
             [sys.executable, "-m", "pytest", "tests", "-q", "-p",
              "no:cacheprovider", "-p", "no:randomly", f"--basetemp={pytest_tmp}"],
@@ -358,7 +363,7 @@ def _run_validation(repo: Path) -> dict[str, Any]:
         passed_match = re.search(r"(\d+) passed", combined)
         if tests.returncode or not passed_match:
             raise ReleaseGateError(f"full test suite failed:\n{combined[-4000:]}")
-        rehearsal_path = Path(tmp) / "identity-rehearsal.json"
+        rehearsal_path = Path(tmp) / "r.json"
         rehearsal = _run(
             [sys.executable, "scripts/rehearsal_identity.py", "--out",
              str(rehearsal_path)], cwd=repo, env=env, check=False,

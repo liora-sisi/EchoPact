@@ -187,3 +187,34 @@ def test_milestone_audit_checks_linear_ledger_routes_and_v6(tmp_path):
     assert evidence["verdict"] == "PASS"
     assert evidence["routes"]["added"] == ["/api/v1/recall/projected"]
     assert evidence["database"]["versions"] == [1, 2, 3, 4, 5, 6]
+
+
+def test_validation_uses_short_non_nested_temp_root(tmp_path, monkeypatch):
+    from backend import release_gate
+
+    very_long = tmp_path.joinpath(*(["nested-directory"] * 8))
+    monkeypatch.setenv("ECHO_PACT_TEMP_ROOT", str(very_long))
+    seen = []
+
+    class Result:
+        returncode = 0
+        stdout = "268 passed, 4 warnings"
+        stderr = ""
+
+    def fake_run(args, **kwargs):
+        env = kwargs["env"]
+        seen.append((args, Path(env["ECHO_PACT_TEMP_ROOT"])))
+        if any(str(arg).endswith("rehearsal_identity.py") for arg in args):
+            out = Path(args[args.index("--out") + 1])
+            out.write_text(json.dumps({
+                "summary": {"total": 10, "passed": 10, "failed": 0},
+                "steps": [],
+            }), encoding="utf-8")
+        return Result()
+
+    monkeypatch.setattr(release_gate, "_run", fake_run)
+    result = release_gate._run_validation(tmp_path)
+    assert result["full_tests"]["passed"] == 268
+    assert result["identity_rehearsal"]["passed_steps"] == 10
+    assert seen and all(very_long not in root.parents and root != very_long
+                        for _args, root in seen)
