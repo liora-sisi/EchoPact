@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from .identity import (
     _agent_state,
     _credential_state,
+    _read_channel,
     can_read_record,
     current_visibility,
     IdentityError,
@@ -161,14 +162,9 @@ def who_can_read(
             except IdentityError:
                 # 未注册或已停用 agent 必须与正式读取路径一样失败关闭。
                 can = False
-            if agent_id == visibility["owner"]:
-                via = "owner"
-            elif visibility["scope"] == "shared":
-                via = "scope_shared"
-            elif agent_id in visibility["grants"]:
-                via = "grant"
-            else:
-                via = "none"
+            # via 只回答"命中哪条通道"，与 can_read（含 agent 状态门）解耦：
+            # 停用 owner 会得到 via="owner" 且 can_read=False。
+            via = _read_channel(agent_id, visibility) or "none"
             result["agent_check"] = {
                 "agent_id": agent_id,
                 "agent_state": state if state is not None else "not_registered",

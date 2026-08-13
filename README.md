@@ -140,6 +140,22 @@ python scripts/rehearsal_identity.py --out ./m505-rehearsal-report.json
 不作为密码学唯一性、保密性或完整性证明。`cred_id` 是不含 secret 的定位符，
 会完整显示以便追踪轮换链；完整 Bearer 凭证不会进入输出。
 
+`who-can-read --agent` 输出里的 `via` 与 `can_read` 是两个维度：`via` 只回答
+"命中哪条可见性通道"（`owner` / `scope_shared` / `grant` / `none`），
+`can_read` 才是最终结论（还叠加 agent 状态门）。因此停用中的 owner 会得到
+`via="owner"` 且 `can_read=false`——通道命中如实报告，读取权限失败关闭。
+
+两个脚本的退出码约定不同，脚本化调用时请注意：
+
+| 退出码 | `audit_cli.py` | `rehearsal_identity.py` |
+| --- | --- | --- |
+| 0 | 查询成功 | 彩排十步全部通过 |
+| 1 | —（不使用） | 彩排存在失败步骤（报告照常落盘），或报告因环境错误无法写入 |
+| 2 | 用法或输入错误（含记录 / agent 不存在） | 用法或输出目标错误（含报告文件已存在、目录不存在） |
+| 3 | 环境错误（库文件不存在 / 不可读 / 非 records_v1 库 / 未迁移到 v5） | —（不使用） |
+
+上述预期错误一律走 stderr 单行输出，不打印 traceback。
+
 ### 📚 模块说明
 
 | 目录 | 职责 |

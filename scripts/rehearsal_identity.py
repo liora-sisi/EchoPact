@@ -10,8 +10,8 @@
 - 报告脱敏：不出现任何记录正文与凭证材料，证据只以 record_id +
   content_sha256 前 12 位指纹表示。
 
-退出码：0 全部通过；1 任一步骤失败（报告照常输出，含失败细节）；
-2 用法错误。
+退出码：0 全部通过；1 任一步骤失败（报告照常输出，含失败细节）或
+报告发生环境写入错误；2 用法或输出目标错误。
 
 用法：
     python3 scripts/rehearsal_identity.py --out /path/to/report.json
@@ -21,9 +21,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 # 允许从仓库根目录直接运行
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -312,7 +312,7 @@ def run_rehearsal(out_path: str) -> dict:
         raise ValueError("out 不能为空")
     if Path(out_path).exists():
         raise FileExistsError(f"输出文件已存在，拒绝覆盖: {out_path}")
-    with tempfile.TemporaryDirectory(prefix="m505-rehearsal-") as tmp_dir:
+    with TemporaryDirectory(prefix="m505-rehearsal-") as tmp_dir:
         report = _build_rehearsal(tmp_dir)
     _write_report_exclusive(out_path, report)
     return report

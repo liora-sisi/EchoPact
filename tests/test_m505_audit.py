@@ -318,9 +318,22 @@ def test_rehearsal_runs_without_network(setup_db, tmp_path, monkeypatch):
 
 
 def test_rehearsal_cleans_temporary_database(setup_db, tmp_path, monkeypatch):
+    """临时目录自清理且不修改进程级 tempfile 状态。
+
+    只替换彩排模块自己的 TemporaryDirectory 绑定，把本轮目录圈进该测试
+    的独立沙盒；不会影响其他线程/测试，也不会扫描并发进程的系统临时目录。
+    """
     temp_root = tmp_path / "rehearsal-temp-root"
     temp_root.mkdir()
-    monkeypatch.setattr(rehearsal_identity.tempfile, "tempdir", str(temp_root))
+    real_temporary_directory = rehearsal_identity.TemporaryDirectory
+
+    def isolated_temporary_directory(*args, **kwargs):
+        kwargs["dir"] = str(temp_root)
+        return real_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(
+        rehearsal_identity, "TemporaryDirectory", isolated_temporary_directory
+    )
     out = tmp_path / "cleanup-report.json"
     assert rehearsal_identity.main(["--out", str(out)]) == 0
     assert list(temp_root.iterdir()) == []

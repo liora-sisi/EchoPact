@@ -451,14 +451,26 @@ def current_visibility(conn, record_rowid: int) -> Dict[str, Any]:
     }
 
 
+def _read_channel(agent_id: str, visibility: Dict[str, Any]) -> Optional[str]:
+    """可见性通道的唯一判定源：返回命中通道，未命中返回 None。
+
+    优先级固定为 owner → scope_shared → grant（与事件派生语义一致）。
+    布尔判定（能不能读）与通道分类（从哪条通道读）都必须从这里派生，
+    禁止在别处另写 owner/scope/grants 判定副本。
+    """
+    if agent_id == visibility["owner"]:
+        return "owner"
+    if visibility["scope"] == "shared":
+        return "scope_shared"
+    if agent_id in visibility["grants"]:
+        return "grant"
+    return None
+
+
 def can_read_record(conn, agent_id: str, record_rowid: int) -> bool:
     _require_agent_active(conn, agent_id)
     visibility = current_visibility(conn, record_rowid)
-    return (
-        agent_id == visibility["owner"]
-        or visibility["scope"] == "shared"
-        or agent_id in visibility["grants"]
-    )
+    return _read_channel(agent_id, visibility) is not None
 
 
 def filter_visible_records(
@@ -473,11 +485,7 @@ def filter_visible_records(
 
 
 def _can_read_derived(agent_id: str, visibility: Dict[str, Any]) -> bool:
-    return (
-        agent_id == visibility["owner"]
-        or visibility["scope"] == "shared"
-        or agent_id in visibility["grants"]
-    )
+    return _read_channel(agent_id, visibility) is not None
 
 
 def all_visible_rowids(conn, agent_id: str) -> Set[int]:
