@@ -900,7 +900,7 @@ def test_static_scan_invariants(setup_db):
     assert vis_marks[1] < recall_src.index("ORDER BY r.created_at DESC")
     assert "AND 0" in recall_src
 
-    # 路由面：无网络投影构建写入口、无网络管理写入口；legacy 门禁保留
+    # 路由面：无网络投影构建写入口、无网络管理写入口；所有召回共用身份解析
     assert "build_projection" not in routes_src
     assert "/v1/projection" not in routes_src
     for admin_verb in (
@@ -908,7 +908,8 @@ def test_static_scan_invariants(setup_db):
         "revoke_credential", "set_owner", "grant_access",
     ):
         assert admin_verb not in routes_src
-    assert "require_access_code" in routes_src
     assert "resolve_principal" in routes_src
+    assert "require_access_code" not in routes_src
+    assert "def require_access_code" not in auth_src
     assert "verify_credential" in auth_src
     assert "compare_digest" in auth_src

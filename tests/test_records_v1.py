@@ -141,6 +141,45 @@ def test_compact_package_stores_content_once_and_preserves_all_branch_membership
     ]
 
 
+def test_completed_replay_counts_deduplicated_branch_memberships_once(tmp_path):
+    """Package duplicates merge before replay reporting; memberships count once."""
+    db_path = tmp_path / "compact-duplicate-replay.db"
+    compact_path = tmp_path / "compact-duplicates.json"
+    base = dict(_fixture_payload()["records"][0])
+    base.pop("branch_id")
+    base["record_id"] = "compact-duplicate-replay"
+    base["schema_version"] = COMPACT_RECORD_SCHEMA_VERSION
+    first = dict(base)
+    first["branch_memberships"] = [{"branch_id": "main", "position": 0}]
+    duplicate = dict(base)
+    duplicate["branch_memberships"] = [
+        {"branch_id": "alternate", "position": 0},
+        {"branch_id": "main", "position": 0},
+    ]
+    compact_path.write_text(
+        json.dumps(
+            {
+                "schema_version": COMPACT_RECORD_SCHEMA_VERSION,
+                "records": [first, duplicate],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    initial = import_record_package(str(compact_path), db_path=str(db_path))
+    replay = import_record_package(str(compact_path), db_path=str(db_path))
+
+    assert initial["added"] == 1
+    assert initial["skipped"] == 1
+    assert initial["branch_memberships_added"] == 2
+    assert replay["idempotent_replay"] is True
+    assert replay["added"] == 0
+    assert replay["skipped"] == 2
+    assert replay["branch_memberships_added"] == 0
+    assert replay["branch_memberships_skipped"] == 2
+
+
 def test_compact_repeat_can_add_a_new_branch_without_copying_content(tmp_path):
     db_path = tmp_path / "growing-branches.db"
     first_path = tmp_path / "first.json"

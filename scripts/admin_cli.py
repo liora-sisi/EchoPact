@@ -73,7 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--actor", required=True,
                        help="审计归因（谁在本机执行了此操作）")
 
-    p = sub.add_parser("register-agent", help="注册新 agent")
+    p = sub.add_parser(
+        "register-agent",
+        help="注册新 agent（agent_id 与 display_name 均为不可变登记）",
+    )
     p.add_argument("--agent-id", required=True)
     p.add_argument("--display-name", required=True)
     add_actor(p)
@@ -98,7 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cred-id", required=True)
     add_actor(p)
 
-    p = sub.add_parser("set-owner", help="转移记录归属（开启新授权 epoch）")
+    p = sub.add_parser(
+        "set-owner",
+        help=(
+            "转移记录归属并开启新授权 epoch；即使 owner 相同也会作废旧 grant"
+        ),
+    )
     p.add_argument("--record-id", required=True)
     p.add_argument("--new-owner", required=True)
     add_actor(p)

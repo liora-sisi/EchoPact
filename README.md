@@ -109,6 +109,16 @@ curl -X POST http://localhost:8000/api/v1/recall/projected \
 若 Claim 或冲突组任一证据失权，响应只返回 `restricted` 脱敏占位，避免正文、
 来源和裁决细节侧漏。
 
+直接读取 Claim、来源或冲突时，不可见对象会返回不存在/从列表剔除，以免泄露
+对象是否存在；投影召回中的 `restricted` 占位只出现在调用方已经召回到当前可见
+证据之后，用来说明派生解释因其他不可见证据而被遮蔽。这两种返回不同，是有意的
+存在性保护，不是权限语义不一致。旧 `/api/recall` 若曾在请求体中选择非
+`default` 的其他 agent 命名空间，升级后会被拒绝；身份必须来自 Bearer 凭证。
+
+本机管理入口中的 agent 登记是追加且不可变的：`agent_id` 和 `display_name` 登记后
+不能修改，写错需注册新的 agent。`set-owner` 每次都会开启新的授权 epoch，即使
+再次指定同一 owner，也会让已有 grant 失效；执行前应先核对记录当前归属。
+
 ### 📚 模块说明
 
 | 目录 | 职责 |

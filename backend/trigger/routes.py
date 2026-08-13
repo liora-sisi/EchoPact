@@ -6,14 +6,13 @@ from ..memory.records_v1 import recall_records
 from ..memory.recall_projection import recall_with_projection
 from .auth import (
     assert_agent_id_compat,
-    require_access_code,
     resolve_principal,
 )
 
 # M5-04：不再 router 级统一鉴权。
-# - /api/recall          → legacy 冻结门禁 require_access_code（行为不变）；
-# - /api/v1/recall 系列  → resolve_principal 派生身份上下文，body 里的
-#                          agent_id 只做兼容断言，不产生身份。
+# /api/recall 与 /api/v1/recall 系列都由 resolve_principal 派生身份上下文；
+# body 里的 agent_id 只做兼容断言，不产生身份。旧 ACCESS_CODE 仍在
+# resolve_principal 内映射到 agt-legacy，保留存量部署兼容性。
 router = APIRouter()
 
 class RecallRequest(BaseModel):

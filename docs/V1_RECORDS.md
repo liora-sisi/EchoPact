@@ -184,6 +184,20 @@ is calculated from the same visible set. If any Claim or conflict-member
 evidence becomes invisible, derived content and adjudication details are
 replaced with a restricted placeholder.
 
+Direct Claim, provenance, and conflict reads deliberately hide an inaccessible
+object as absent (or omit it from lists) so callers cannot probe its existence.
+Projection-aware recall uses a `restricted` placeholder only after the caller
+has already recalled visible evidence; it signals that a derived interpretation
+also depends on evidence the caller cannot read. The asymmetric shape is an
+intentional existence-protection boundary, not a difference in authorization.
+
+The local admin registry is append-only: both `agent_id` and `display_name` are
+immutable after registration, so a naming mistake requires a new agent. Every
+`set-owner` event opens a new authorization epoch, including a repeated event
+for the same owner, and therefore invalidates grants from the earlier epoch.
+Legacy `/api/recall` clients that used a non-`default` body `agent_id` must move
+to a Bearer-derived identity; the request body can no longer select a namespace.
+
 ## Knowledge coverage
 
 `verified_knowledge_cutoff_at` is the latest cutoff declared by a verified,

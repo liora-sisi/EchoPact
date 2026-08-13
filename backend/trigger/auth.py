@@ -32,30 +32,7 @@ def get_access_code() -> Optional[str]:
     return code
 
 
-def require_access_code(request: Request) -> None:
-    """FastAPI 依赖：legacy /api/recall 专用门禁（行为冻结，不动）。"""
-    code = get_access_code()
-    if code is None:
-        # 不透露任何关于访问码配置的细节，也不记录访问码本身
-        raise HTTPException(
-            status_code=503,
-            detail="Service unavailable: access control is not configured.",
-        )
-    authorization = request.headers.get("Authorization", "")
-    token = ""
-    if authorization.startswith("Bearer "):
-        token = authorization[len("Bearer "):].strip()
-    if not token or not hmac.compare_digest(
-        token.encode("utf-8"), code.encode("utf-8")
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-# ---------- M5-04：身份上下文解析（v1 端点唯一身份来源） ----------
+# ---------- M5-04：身份上下文解析（所有召回端点的唯一身份来源） ----------
 #
 # 规则（v3 终审定案）：
 # - 网络身份只来自 Bearer 认证上下文，body/query 里的 agent_id 一律只是
