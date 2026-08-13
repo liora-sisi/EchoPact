@@ -119,6 +119,27 @@ curl -X POST http://localhost:8000/api/v1/recall/projected \
 不能修改，写错需注册新的 agent。`set-owner` 每次都会开启新的授权 epoch，即使
 再次指定同一 owner，也会让已有 grant 失效；执行前应先核对记录当前归属。
 
+本机只读审计不会迁移或改写数据库，也不会输出记录正文和凭证材料。它可回答
+记录当前归属、共享/授权状态、指定 agent 是否能读、可见性事件流，以及 agent
+生命周期与凭证状态：
+
+```bash
+python scripts/audit_cli.py --db-path ./memory.db who-can-read RECORD_ID --agent AGENT_ID
+python scripts/audit_cli.py --db-path ./memory.db list-events RECORD_ID
+python scripts/audit_cli.py --db-path ./memory.db agent-status AGENT_ID
+```
+
+身份全流程彩排不接受数据库路径，只在自动清理的临时目录使用合成数据；报告仅能
+新建，已有同名文件会拒绝覆盖：
+
+```bash
+python scripts/rehearsal_identity.py --out ./m505-rehearsal-report.json
+```
+
+审计中的 `content_fingerprint` 是内容 SHA-256 的前 12 位，只用于人工定位，
+不作为密码学唯一性、保密性或完整性证明。`cred_id` 是不含 secret 的定位符，
+会完整显示以便追踪轮换链；完整 Bearer 凭证不会进入输出。
+
 ### 📚 模块说明
 
 | 目录 | 职责 |

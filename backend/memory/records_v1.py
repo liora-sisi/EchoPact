@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1111,7 +1112,9 @@ def import_record_package(
 
     if owner_agent_id is not None:
         from .identity import _require_agent_active
-        with _connect(db_path) as check_conn:
+        # sqlite3.Connection 的 context manager 只提交/回滚，不负责 close；
+        # 彩排使用临时数据库，句柄必须显式关闭才能在 Windows 上安全清理。
+        with closing(_connect(db_path)) as check_conn:
             check_conn.execute("PRAGMA query_only = ON")
             _require_agent_active(check_conn, owner_agent_id)
 
@@ -1565,7 +1568,7 @@ def recall_records(
     if agent_id is not None:
         from .identity import all_visible_rowids
 
-        with _connect(db_path) as vis_conn:
+        with closing(_connect(db_path)) as vis_conn:
             vis_conn.execute("PRAGMA query_only = ON")
             visible_rowids = all_visible_rowids(vis_conn, agent_id)
 
