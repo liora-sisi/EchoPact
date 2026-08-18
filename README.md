@@ -221,6 +221,10 @@ dry-run 校验格式、版本、schema、`SHA-256(JSON.stringify(data))`、分�
 详细协议证据、分支派生规则和安全拒绝条件见
 [`docs/ROOM_FERRY_V1_ADAPTER.md`](docs/ROOM_FERRY_V1_ADAPTER.md)。
 
+真实私人档案进入转换与导入前，可先运行只读、脱敏、拒绝覆盖的 A1 验收巡检；
+它只生成汇总证据，不生成正式记录包，也不写数据库。详见
+[`docs/REAL_DATA_ACCEPTANCE.md`](docs/REAL_DATA_ACCEPTANCE.md)。
+
 ### 📄 开源协议
 
 MIT —— 代码随便用，但保长的毒舌是宝气专属，你拿去也学不会。
