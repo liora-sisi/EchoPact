@@ -39,7 +39,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = _parser().parse_args(argv)
     try:
         report = run_room_ferry_preflight(args.input, args.report)
-    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+    except FileNotFoundError as exc:
+        if exc.filename is not None:
+            print(
+                "error: a required file became unavailable during acceptance preflight",
+                file=sys.stderr,
+            )
+        else:
+            print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except (FileExistsError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except OSError:

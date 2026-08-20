@@ -79,11 +79,16 @@ def _sha256_file(path: Path) -> str:
 def _snapshot(path: Path) -> Optional[_SourceSnapshot]:
     """Return a stable source snapshot, or ``None`` when no regular file exists."""
 
-    if not path.is_file():
+    try:
+        if not path.is_file():
+            return None
+        before = path.stat()
+        sha256 = _sha256_file(path)
+        after = path.stat()
+    except OSError:
+        # Native file errors may contain a private absolute path.  Collapse
+        # races and access failures into the redacted source-state result.
         return None
-    before = path.stat()
-    sha256 = _sha256_file(path)
-    after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         return None
     return _SourceSnapshot(
@@ -135,25 +140,29 @@ def _build_redacted_report(
     after: Optional[_SourceSnapshot],
 ) -> Dict[str, Any]:
     adapter_sha = adapter_report.get("input_sha256")
-    input_unchanged = (
-        before is not None
-        and after is not None
-        and before == after
-        and adapter_sha == before.sha256
-    )
-
+    adapter_can_convert = adapter_report.get("can_convert") is True
     warnings = _issue_counts(adapter_report.get("warnings"))
     fatal = _issue_counts(adapter_report.get("fatal"))
-    if not input_unchanged:
-        source_issue = (
-            "source-unavailable-for-fingerprint"
-            if before is None and after is None
-            else "source-changed-during-preflight"
-        )
-        if not any(issue["code"] == source_issue for issue in fatal):
-            fatal.append({"code": source_issue, "count": 1})
 
-    adapter_can_convert = adapter_report.get("can_convert") is True
+    snapshots_match = before is not None and after is not None and before == after
+    input_unchanged = snapshots_match
+    source_issue = None
+    if before is None and after is None:
+        if adapter_can_convert or not fatal:
+            source_issue = "source-unavailable-for-fingerprint"
+    elif not snapshots_match:
+        source_issue = "source-changed-during-preflight"
+    elif adapter_sha is None:
+        if adapter_can_convert:
+            input_unchanged = False
+            source_issue = "adapter-fingerprint-unavailable"
+    elif adapter_sha != before.sha256:
+        input_unchanged = False
+        source_issue = "adapter-fingerprint-mismatch"
+
+    if source_issue and not any(issue["code"] == source_issue for issue in fatal):
+        fatal.append({"code": source_issue, "count": 1})
+
     can_proceed = adapter_can_convert and input_unchanged and not fatal
     checksum = adapter_report.get("checksum")
     if not isinstance(checksum, Mapping):

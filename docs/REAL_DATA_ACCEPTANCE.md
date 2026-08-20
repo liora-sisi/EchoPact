@@ -42,3 +42,13 @@ A1 does not implement the later A2 acceptance flow.  It does not:
 Those steps must use new outputs outside the repository, preserve the original
 archive, and produce only redacted evidence.  They remain a separate milestone
 because they require explicit authorization to read the real private archive.
+
+## Current resource boundary
+
+The preflight fingerprints files in 1 MB chunks, but the underlying Ferry v1
+adapter currently buffers the complete JSON document while validating and
+parsing it.  The 500 MB input ceiling is a protocol safety limit, not a promise
+of constant or 500 MB memory use.  Before a large private archive is inspected,
+verify that the machine has comfortable free memory and stop other memory-heavy
+work.  Streaming JSON validation is a separate future improvement and is not
+silently claimed by A1.
