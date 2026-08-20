@@ -75,7 +75,9 @@ Inputs: `query`, optional `limit` (1-10), optional `as_of`, and optional
 `include_projection`.  The response preserves Echo Pact's evidence and coverage
 contract.  `confidence` remains a deterministic evidence score, not a
 probability.  Unverified archive records do not become confirmed facts merely
-because they were recalled.
+because they were recalled. The underlying SQLite recall is precision-first:
+exact phrases precede deterministic natural-language relaxation, and the
+returned `recall_mode` identifies the tier that actually supplied the result.
 
 ### `memory_coverage`
 

@@ -155,6 +155,16 @@ role, verification and authority, conflict group, source cutoff, confidence,
 the compatibility `branch_id`, complete `branch_ids`/ordered memberships, and
 the actual recall mode.
 
+Lexical recall is precision-first and deterministic. It tries the normalized
+exact phrase before any relaxation, recognizes a spaced all-ASCII name through
+its compact alias, removes a small fixed set of Chinese question scaffolding,
+relaxes long Chinese text into overlapping trigrams only when focused terms do
+not find a result, and finally scores one- or two-character terms with escaped
+parameterized `LIKE`. The exact tier remains `sqlite_fts5_trigram`; focused,
+relaxed and fallback modes are explicitly labelled with `_focused`, `_relaxed`
+or `_fallback`. This query planning is offline lexical matching, not semantic
+embedding, and it never changes source records or the FTS index.
+
 `confidence` is a deterministic evidence score, not a probability:
 
 - local lexical match: +0.50;

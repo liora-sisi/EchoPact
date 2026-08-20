@@ -198,6 +198,8 @@ python scripts/import_history.py --db ./demo-v1.db --check-index
 branch、完整分支成员关系、message、核验状态、冲突组、知识截止时间和实际召回模式。请求可传
 `as_of`；超过已核验截止线时，响应会明确标记覆盖缺口。未核验的
 `recent_patch` 可以被召回，但不会推进已核验知识截止线。
+查询按“精确短语优先、自然语言逐级放宽”的确定性规则执行，兼容中文
+长问句、两字词组合和带空格的英文名称；每次响应会说明实际使用的召回层级。
 
 协议、置信度规则、迁移检查和恢复方法见
 [`docs/V1_RECORDS.md`](docs/V1_RECORDS.md)。

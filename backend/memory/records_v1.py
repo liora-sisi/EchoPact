@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1662,14 +1663,196 @@ def rebuild_records_index(db_path: Optional[str] = None) -> Dict[str, Any]:
     return check_records_index_consistency(db_path)
 
 
+@dataclass(frozen=True)
+class RecallQueryPlan:
+    """Deterministic, dependency-free tiers for SQLite lexical recall."""
+
+    normalized_query: str
+    exact_expressions: Sequence[str]
+    focused_expression: Optional[str]
+    focused_like_terms: Sequence[str]
+    relaxed_expression: Optional[str]
+    like_terms: Sequence[str]
+
+
+MAX_RELAXED_TERMS_PER_GROUP = 24
+MAX_LIKE_TERMS = 16
+_CJK_QUESTION_SHELLS = (
+    "叫什么名字",
+    "请告诉我",
+    "我想知道",
+    "记不记得",
+    "有没有",
+    "能不能",
+    "会不会",
+    "怎么样",
+    "为什么",
+    "是什么",
+    "叫什么",
+    "哪一个",
+    "告诉我",
+    "请问",
+    "怎么",
+    "哪里",
+    "哪个",
+    "多少",
+    "是谁",
+    "以后",
+)
+
+
+def _unique_text(values: Iterable[str]) -> List[str]:
+    seen = set()
+    unique = []
+    for value in values:
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            unique.append(value)
+    return unique
+
+
+def _bounded_text(values: Sequence[str], limit: int) -> List[str]:
+    """Keep deterministic coverage across a long query without SQL explosion."""
+
+    if len(values) <= limit:
+        return list(values)
+    if limit == 1:
+        return [values[0]]
+    indexes = [
+        round(index * (len(values) - 1) / (limit - 1))
+        for index in range(limit)
+    ]
+    return [values[index] for index in indexes]
+
+
+def _quote_fts(value: str) -> str:
+    return f'"{value.replace(chr(34), chr(34) * 2)}"'
+
+
 def _fts_expression(query: str) -> Optional[str]:
-    terms = re.findall(r"[0-9A-Za-z_-]{3,}|[\u3400-\u9fff]{3,}", query)
-    if not terms and len(query.strip()) >= 3:
-        terms = [query.strip()]
-    unique_terms = list(dict.fromkeys(term for term in terms if len(term) >= 3))
-    if not unique_terms:
-        return None
-    return " OR ".join(f'"{term.replace(chr(34), chr(34) * 2)}"' for term in unique_terms)
+    """Return the precision-first exact phrase used by the legacy fast path."""
+
+    normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", query)).strip()
+    return _quote_fts(normalized) if len(normalized) >= 3 else None
+
+
+def _focused_query_segments(normalized: str) -> List[str]:
+    """Remove common question scaffolding without pretending to understand it."""
+
+    if not re.search(r"[\u3400-\u9fff]", normalized):
+        return []
+    focused = normalized
+    for shell in _CJK_QUESTION_SHELLS:
+        focused = focused.replace(shell, " ")
+    focused = re.sub(r"^(?:我|你|我们|你们|他|她|它)\s*", "", focused)
+    focused = focused.replace("的", " ").replace("很", " ")
+    return re.findall(
+        r"[0-9A-Za-z]+(?:[-_][0-9A-Za-z]+)*|[\u3400-\u9fff]+",
+        focused,
+    )
+
+
+def _recall_query_plan(query: str) -> RecallQueryPlan:
+    """Build precision-first exact, relaxed FTS and short-term LIKE tiers.
+
+    FTS5's trigram tokenizer is excellent for exact substrings of at least three
+    characters, but a whole natural-language Chinese question is too strict and
+    two-character names cannot enter the trigram index.  The planner therefore
+    keeps the old exact phrase first, adds a compact alias for all-ASCII names,
+    then relaxes long Chinese runs into overlapping trigrams.  One- and
+    two-character segments are reserved for the final parameterized LIKE tier.
+    """
+
+    normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", query)).strip()
+    exact_values = [normalized] if len(normalized) >= 3 else []
+
+    ascii_words = re.findall(r"[0-9A-Za-z]+", normalized)
+    if (
+        len(ascii_words) >= 2
+        and re.fullmatch(r"[0-9A-Za-z]+(?:\s+[0-9A-Za-z]+)+", normalized)
+    ):
+        exact_values.append("".join(ascii_words))
+
+    focused_fts_terms: List[str] = []
+    focused_like_terms: List[str] = []
+    for segment in _focused_query_segments(normalized):
+        if len(segment) >= 3:
+            focused_fts_terms.append(segment)
+        else:
+            focused_like_terms.append(segment)
+    focused_fts_terms = _bounded_text(
+        _unique_text(focused_fts_terms), MAX_RELAXED_TERMS_PER_GROUP
+    )
+    focused_like_terms = _bounded_text(
+        _unique_text(focused_like_terms), MAX_LIKE_TERMS
+    )
+    focused_expression = (
+        " AND ".join(_quote_fts(term) for term in focused_fts_terms)
+        or None
+    )
+
+    like_terms: List[str] = []
+    cjk_terms: List[str] = []
+    ascii_terms: List[str] = []
+    segments = re.findall(
+        r"[0-9A-Za-z]+(?:[-_][0-9A-Za-z]+)*|[\u3400-\u9fff]+",
+        normalized,
+    )
+    for segment in segments:
+        if re.fullmatch(r"[\u3400-\u9fff]+", segment):
+            if len(segment) <= 2:
+                like_terms.append(segment)
+            elif len(segment) <= 4:
+                cjk_terms.append(segment)
+            else:
+                cjk_terms.extend(
+                    segment[index : index + 3]
+                    for index in range(len(segment) - 2)
+                )
+        elif len(segment) >= 3:
+            ascii_terms.append(segment)
+        else:
+            like_terms.append(segment)
+
+    cjk_terms = _bounded_text(
+        _unique_text(cjk_terms), MAX_RELAXED_TERMS_PER_GROUP
+    )
+    ascii_terms = _bounded_text(
+        _unique_text(ascii_terms), MAX_RELAXED_TERMS_PER_GROUP
+    )
+
+    relaxed_expression = None
+    if ascii_terms or cjk_terms:
+        ascii_expression = " AND ".join(_quote_fts(term) for term in ascii_terms)
+        cjk_expression = " OR ".join(_quote_fts(term) for term in cjk_terms)
+        if ascii_expression and cjk_expression:
+            relaxed_expression = f"({ascii_expression}) AND ({cjk_expression})"
+        elif ascii_expression:
+            relaxed_expression = ascii_expression
+        else:
+            relaxed_expression = cjk_expression
+
+    return RecallQueryPlan(
+        normalized_query=normalized,
+        exact_expressions=[
+            expression
+            for value in _unique_text(exact_values)
+            if (expression := _fts_expression(value)) is not None
+        ],
+        focused_expression=focused_expression,
+        focused_like_terms=focused_like_terms,
+        relaxed_expression=relaxed_expression,
+        like_terms=_bounded_text(_unique_text(like_terms), MAX_LIKE_TERMS),
+    )
+
+
+def _escaped_like_pattern(value: str) -> str:
+    return (
+        "%"
+        + value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        + "%"
+    )
 
 
 def _confidence(record: Mapping[str, Any], query: str) -> tuple[float, List[str]]:
@@ -1761,46 +1944,89 @@ def recall_records(
                 f"AND r.id IN ({visible_rowids_query})"
             )
         conn.execute("PRAGMA query_only = ON")
-        expression = _fts_expression(query)
-        rows: List[sqlite3.Row] = []
-        recall_mode = "sqlite_fts5_trigram"
-        if expression:
-            try:
-                rows = conn.execute(
-                    f"""
-                    SELECT r.*, bm25(records_v1_fts) AS lexical_rank
-                    FROM records_v1_fts
-                    JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
-                    WHERE records_v1_fts MATCH ?
-                    {vis_where}
-                    ORDER BY lexical_rank ASC, r.created_at DESC
-                    LIMIT ?
-                    """,
-                    [expression] + vis_params + [limit],
-                ).fetchall()
-            except sqlite3.OperationalError:
-                # FTS query syntax/tokenizer edge cases must fail safely into
-                # the escaped LIKE path, not become a 500 response.
-                rows = []
-        if not rows:
-            recall_mode = "sqlite_like_fallback"
-            rows = conn.execute(
+        query_plan = _recall_query_plan(query)
+
+        def fetch_fts(expression: str) -> List[sqlite3.Row]:
+            return conn.execute(
                 f"""
-                SELECT r.*, 0 AS lexical_rank
-                FROM records_v1 AS r
-                WHERE r.content LIKE ? ESCAPE '\\'
+                SELECT r.*, bm25(records_v1_fts) AS lexical_rank
+                FROM records_v1_fts
+                JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
+                WHERE records_v1_fts MATCH ?
                 {vis_where}
-                ORDER BY r.created_at DESC
+                ORDER BY lexical_rank ASC, r.created_at DESC
                 LIMIT ?
                 """,
-                [
-                    "%"
-                    + query.replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_")
-                    + "%"
-                ] + vis_params + [limit],
+                [expression] + vis_params + [limit],
             ).fetchall()
+
+        def fetch_like(patterns: Sequence[str]) -> List[sqlite3.Row]:
+            score_sql = " + ".join(
+                "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
+                for _ in patterns
+            )
+            where_sql = " OR ".join(
+                "r.content LIKE ? ESCAPE '\\'" for _ in patterns
+            )
+            return conn.execute(
+                f"""
+                SELECT r.*, ({score_sql}) AS lexical_rank
+                FROM records_v1 AS r
+                WHERE ({where_sql})
+                {vis_where}
+                ORDER BY lexical_rank DESC, r.created_at DESC
+                LIMIT ?
+                """,
+                list(patterns) + list(patterns) + vis_params + [limit],
+            ).fetchall()
+
+        rows: List[sqlite3.Row] = []
+        recall_mode = "sqlite_fts5_trigram"
+        for expression in query_plan.exact_expressions:
+            try:
+                rows = fetch_fts(expression)
+            except sqlite3.OperationalError:
+                # Query syntax/tokenizer edge cases fail safely into the next
+                # parameterized tier, never into string-built SQL.
+                rows = []
+            if rows:
+                break
+
+        if not rows and query_plan.focused_expression:
+            recall_mode = "sqlite_fts5_trigram_focused"
+            try:
+                rows = fetch_fts(query_plan.focused_expression)
+            except sqlite3.OperationalError:
+                rows = []
+
+        if not rows and query_plan.focused_like_terms:
+            recall_mode = "sqlite_like_terms_focused"
+            rows = fetch_like(
+                [
+                    _escaped_like_pattern(term)
+                    for term in query_plan.focused_like_terms
+                ]
+            )
+
+        if not rows and query_plan.relaxed_expression:
+            recall_mode = "sqlite_fts5_trigram_relaxed"
+            try:
+                rows = fetch_fts(query_plan.relaxed_expression)
+            except sqlite3.OperationalError:
+                rows = []
+
+        if not rows and query_plan.like_terms:
+            recall_mode = "sqlite_like_terms_fallback"
+            like_patterns = [
+                _escaped_like_pattern(term) for term in query_plan.like_terms
+            ]
+            rows = fetch_like(like_patterns)
+
+        if not rows:
+            recall_mode = "sqlite_like_fallback"
+            rows = fetch_like(
+                [_escaped_like_pattern(query_plan.normalized_query)]
+            )
 
         if agent_id is None:
             coverage = _coverage_from_connection(conn)

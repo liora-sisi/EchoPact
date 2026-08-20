@@ -897,7 +897,7 @@ def test_static_scan_invariants(setup_db):
     vis_marks = [m.start() for m in re.finditer(r"\{vis_where\}", recall_src)]
     assert len(vis_marks) == 2
     assert vis_marks[0] < recall_src.index("ORDER BY lexical_rank")
-    assert vis_marks[1] < recall_src.index("ORDER BY r.created_at DESC")
+    assert vis_marks[1] < recall_src.index("ORDER BY lexical_rank DESC")
     # Empty visibility now fails closed through the bounded SQL subquery rather
     # than a materialised rowid set.  Coverage's zero count remains the public
     # no-visible-records signal.
