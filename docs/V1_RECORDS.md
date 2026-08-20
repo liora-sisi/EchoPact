@@ -153,17 +153,28 @@ an API key, or a network request. Every result includes record content and
 timestamp, source kind/reference, conversation/branch/message identifiers,
 role, verification and authority, conflict group, source cutoff, confidence,
 the compatibility `branch_id`, complete `branch_ids`/ordered memberships, and
-the actual recall mode.
+the actual recall mode. When the matched record has ordered branch positions,
+the result also includes a bounded `conversation_context` window (one record
+before and up to two after) from one deterministic valid branch. Each context
+record carries its own source, role, timestamp and branch position; it is
+evidence context, not a generated answer.
 
 Lexical recall is precision-first and deterministic. It tries the normalized
 exact phrase before any relaxation, recognizes a spaced all-ASCII name through
 its compact alias, removes a small fixed set of Chinese question scaffolding,
+preserves first-person scope, repairs only documented narrow speech-to-text
+aliases, and gives first/earliest questions a literal topic-and-time tier,
 relaxes long Chinese text into overlapping trigrams only when focused terms do
 not find a result, and finally scores one- or two-character terms with escaped
 parameterized `LIKE`. The exact tier remains `sqlite_fts5_trigram`; focused,
 relaxed and fallback modes are explicitly labelled with `_focused`, `_relaxed`
 or `_fallback`. This query planning is offline lexical matching, not semantic
 embedding, and it never changes source records or the FTS index.
+
+Earliest-event ordering is still retrieval, not adjudication. Quoted stories,
+hypotheticals and later recollections may all contain the same literal words;
+Echo Pact returns traceable candidates and nearby turns instead of silently
+declaring one interpretation to be historical fact.
 
 `confidence` is a deterministic evidence score, not a probability:
 

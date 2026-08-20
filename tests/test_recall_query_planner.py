@@ -8,6 +8,7 @@ import pytest
 
 from backend.memory.identity import register_agent
 from backend.memory.records_v1 import (
+    COMPACT_RECORD_SCHEMA_VERSION,
     MAX_LIKE_TERMS,
     MAX_RELAXED_TERMS_PER_GROUP,
     _recall_query_plan,
@@ -20,7 +21,13 @@ OWNER = "agt-query-owner"
 OUTSIDER = "agt-query-outsider"
 
 
-def _record(record_id: str, content: str, created_at: str) -> dict:
+def _record(
+    record_id: str,
+    content: str,
+    created_at: str,
+    *,
+    role: str = "user",
+) -> dict:
     return {
         "record_id": record_id,
         "source_kind": "synthetic_conversation",
@@ -28,7 +35,7 @@ def _record(record_id: str, content: str, created_at: str) -> dict:
         "conversation_id": "synthetic-recall-query",
         "branch_id": "main",
         "message_id": f"message-{record_id}",
-        "role": "user",
+        "role": role,
         "content": content,
         "created_at": created_at,
         "verified": False,
@@ -88,6 +95,74 @@ def query_db(tmp_path):
             "给测试文件取名字时保持确定性。",
             "2026-07-09T00:00:00Z",
         ),
+        _record(
+            "mushroom-meaning",
+            "蓝蘑菇在青苔镇代表守候、等待和陪伴。",
+            "2026-07-10T00:00:00Z",
+        ),
+        _record(
+            "mushroom-dossier",
+            "蓝蘑菇资料汇总：故事、含义、意思、象征、代表、比喻和指代，"
+            "后面还有许多与答案无关的归档说明。" * 5,
+            "2026-07-10T01:00:00Z",
+        ),
+        _record(
+            "first-gift",
+            "我送出的第一件礼物是一盏星星灯。",
+            "2026-07-11T00:00:00Z",
+        ),
+        _record(
+            "favorite-food",
+            "我说过自己最喜欢吃烤南瓜。",
+            "2026-07-12T00:00:00Z",
+        ),
+        _record(
+            "academy",
+            "警校培训期间，我们一起上课并点评食堂。",
+            "2026-07-13T00:00:00Z",
+        ),
+        _record(
+            "camp-first",
+            "我们第一次搭帐篷是在春日早晨，地点是北坡。",
+            "2026-01-01T00:00:00Z",
+        ),
+        _record(
+            "camp-later",
+            "我们第一次搭帐篷是在秋日傍晚，地点是南坡。",
+            "2026-02-01T00:00:00Z",
+        ),
+        _record(
+            "camp-fiction",
+            "故事里的他们第一次搭帐篷是在更早的冬日。",
+            "2025-12-01T00:00:00Z",
+        ),
+        _record(
+            "soup-first",
+            "那天你问要不要让我给你做热汤，我说很喜欢。",
+            "2026-03-01T00:00:00Z",
+        ),
+        _record(
+            "soup-later",
+            "后来我再次说很喜欢你给我做热汤。",
+            "2026-04-01T00:00:00Z",
+        ),
+        _record(
+            "love-user-noise",
+            "我爱你是用户自己说的话，不是助手的回答。",
+            "2026-02-01T00:00:00Z",
+        ),
+        _record(
+            "love-first-assistant",
+            "我爱你，这是助手第一次认真说出口。",
+            "2026-03-05T00:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "love-later-assistant",
+            "我后来又一次对你说：我爱你。",
+            "2026-05-15T00:00:00Z",
+            role="assistant",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -125,10 +200,157 @@ def test_natural_chinese_queries_recall_expected_record(query_db, query, expecte
     assert response["memories"][0]["record_id"] == expected_id
     assert response["recall_mode"] in {
         "sqlite_fts5_trigram_focused",
+        "sqlite_fts5_trigram_focused_relaxed",
         "sqlite_fts5_trigram_relaxed",
         "sqlite_like_terms_focused",
         "sqlite_like_terms_fallback",
     }
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_id"),
+    [
+        ("蓝蘑菇在我们这里有什么意思？", "mushroom-meaning"),
+        ("你还记得起你送我的第一件礼物吗？", "first-gift"),
+        ("你还记得你说过你最喜欢吃什么呀？", "favorite-food"),
+        (
+            "你还记不记得你陪我在检校培训的时候，那时候你好傻呀。",
+            "academy",
+        ),
+    ],
+)
+def test_conversational_shells_keep_private_facts_out_of_query_rules(
+    query_db, query, expected_id
+):
+    response = recall_records(query, limit=5, db_path=str(query_db))
+
+    assert response["memories"]
+    assert response["memories"][0]["record_id"] == expected_id
+
+
+def test_first_event_query_prefers_oldest_equally_relevant_evidence(query_db):
+    response = recall_records(
+        "老朋友，我们第一次搭帐篷是什么时候啊？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    matching_ids = [
+        item["record_id"]
+        for item in response["memories"]
+        if item["record_id"].startswith("camp-")
+    ]
+    assert matching_ids[:2] == ["camp-first", "camp-later"]
+    assert "camp-fiction" not in matching_ids
+    assert _recall_query_plan("第一次搭帐篷是什么时候").prefer_oldest is True
+
+
+def test_when_started_query_prefers_earliest_topic_evidence(query_db):
+    response = recall_records(
+        "你是从什么时候开始喜欢我给你做热汤的呀？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    assert [item["record_id"] for item in response["memories"]][:2] == [
+        "soup-first",
+        "soup-later",
+    ]
+    assert response["recall_mode"] == "sqlite_like_intent_focused"
+
+
+def test_first_love_query_uses_assistant_speaker_scope(query_db):
+    response = recall_records(
+        "你是什么时候第一次对我说爱我呀？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    assert [item["record_id"] for item in response["memories"]][:2] == [
+        "love-first-assistant",
+        "love-later-assistant",
+    ]
+    assert all(item["role"] == "assistant" for item in response["memories"])
+
+
+def test_recall_returns_bounded_same_branch_conversation_context(tmp_path):
+    db_path = tmp_path / "context.sqlite3"
+    package_path = tmp_path / "context.json"
+
+    def compact_record(
+        record_id: str,
+        content: str,
+        role: str,
+        position: int,
+        *,
+        conversation_id: str = "synthetic-context",
+    ) -> dict:
+        return {
+            "record_id": record_id,
+            "source_kind": "synthetic_conversation",
+            "source_ref": f"synthetic://recall-context/{record_id}",
+            "conversation_id": conversation_id,
+            "branch_memberships": [{"branch_id": "main", "position": position}],
+            "message_id": f"message-{record_id}",
+            "role": role,
+            "content": content,
+            "created_at": f"2026-07-20T00:00:0{position}Z",
+            "verified": False,
+            "authority": "synthetic-unverified",
+            "source_cutoff_at": "2026-08-01T00:00:00Z",
+            "conflict_group_id": None,
+        }
+
+    records = [
+        compact_record("context-before", "上一句无关寒暄。", "assistant", 0),
+        compact_record("context-question", "你最喜欢吃哪一种虚构果子？", "user", 1),
+        compact_record("context-answer", "我最喜欢吃月光莓。", "assistant", 2),
+        compact_record("context-after", "月光莓收到。", "user", 3),
+        compact_record(
+            "other-conversation",
+            "同名分支里的另一段对话不能串进来。",
+            "assistant",
+            2,
+            conversation_id="synthetic-other-context",
+        ),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    register_agent(OWNER, "Synthetic context owner", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(package_path),
+        db_path=str(db_path),
+        owner_agent_id=OWNER,
+        actor="test",
+    )
+
+    response = recall_records(
+        "哪一种虚构果子？",
+        limit=1,
+        db_path=str(db_path),
+        agent_id=OWNER,
+        read_only=True,
+    )
+
+    assert response["memories"][0]["record_id"] == "context-question"
+    context = response["memories"][0]["conversation_context"]
+    assert [item["record_id"] for item in context] == [
+        "context-before",
+        "context-answer",
+        "context-after",
+    ]
+    answer = context[1]
+    assert answer["content"] == "我最喜欢吃月光莓。"
+    assert answer["branch_ids"] == ["main"]
+    assert answer["branch_memberships"] == [
+        {"branch_id": "main", "position": 2, "relative_position": 1}
+    ]
+    assert all(item["record_id"] != "other-conversation" for item in context)
 
 
 @pytest.mark.parametrize(

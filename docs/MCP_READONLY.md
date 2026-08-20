@@ -78,6 +78,9 @@ probability.  Unverified archive records do not become confirmed facts merely
 because they were recalled. The underlying SQLite recall is precision-first:
 exact phrases precede deterministic natural-language relaxation, and the
 returned `recall_mode` identifies the tier that actually supplied the result.
+Where ordered branch positions exist, each match may include a bounded
+`conversation_context` window with full provenance. MCP truncation limits are
+applied to both the match and its context records.
 
 ### `memory_coverage`
 

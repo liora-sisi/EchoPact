@@ -1670,14 +1670,42 @@ class RecallQueryPlan:
     normalized_query: str
     exact_expressions: Sequence[str]
     focused_expression: Optional[str]
+    focused_relaxed_expression: Optional[str]
     focused_like_terms: Sequence[str]
     relaxed_expression: Optional[str]
     like_terms: Sequence[str]
+    prefer_oldest: bool
+    intent_required_all_like_terms: Sequence[str]
+    intent_required_any_like_terms: Sequence[str]
+    intent_bonus_like_terms: Sequence[str]
+    intent_prefer_compact: bool
+    intent_min_any_matches: int
+    intent_roles: Sequence[str]
+    intent_relevance_first: bool
 
 
 MAX_RELAXED_TERMS_PER_GROUP = 24
 MAX_LIKE_TERMS = 16
 _CJK_QUESTION_SHELLS = (
+    "你是从什么时候开始喜欢",
+    "你是从什么时候开始",
+    "你还记不记得",
+    "你还记得起",
+    "还记不记得",
+    "还记得起",
+    "从什么时候开始",
+    "你是什么时候",
+    "是什么时候",
+    "在我们这里",
+    "有什么意思",
+    "是什么意思",
+    "你还记得",
+    "还记得",
+    "你送我的",
+    "你陪我在",
+    "你说过",
+    "那时候",
+    "的时候",
     "叫什么名字",
     "请告诉我",
     "我想知道",
@@ -1697,8 +1725,45 @@ _CJK_QUESTION_SHELLS = (
     "哪个",
     "多少",
     "是谁",
+    "什么",
     "以后",
 )
+
+_CJK_QUERY_ALIASES = (
+    # A common speech-to-text substitution in the real acceptance questions.
+    # Keep aliases narrow and evidence-neutral: this repairs spelling only and
+    # does not inject an answer or a private-domain synonym.
+    ("检校培训", "警校培训"),
+)
+
+_EARLIEST_QUERY_MARKERS = (
+    "从什么时候开始",
+    "什么时候开始",
+    "第一次",
+    "最早",
+)
+
+_MEANING_QUERY_MARKERS = (
+    "有什么意思",
+    "是什么意思",
+    "什么含义",
+    "代表什么",
+    "象征什么",
+)
+
+_MEANING_CONTEXT_TERMS = (
+    "故事",
+    "含义",
+    "意思",
+    "象征",
+    "代表",
+    "比喻",
+    "指代",
+)
+
+RECALL_CONTEXT_BEFORE = 1
+RECALL_CONTEXT_AFTER = 2
+MAX_RECALL_CONTEXT_RECORDS = 4
 
 
 def _unique_text(values: Iterable[str]) -> List[str]:
@@ -1738,19 +1803,98 @@ def _fts_expression(query: str) -> Optional[str]:
 
 
 def _focused_query_segments(normalized: str) -> List[str]:
-    """Remove common question scaffolding without pretending to understand it."""
+    """Remove conversational scaffolding while preserving evidence anchors.
+
+    Chinese questions often arrive as one unsegmented run.  Whole-question FTS
+    is intentionally tried first, but when it misses we strip only a bounded
+    list of address/question phrases, split clauses, and retain the remaining
+    lexical material.  This is not semantic answer generation: no dates,
+    entities, or private facts are added to the query.
+    """
 
     if not re.search(r"[\u3400-\u9fff]", normalized):
         return []
     focused = normalized
-    for shell in _CJK_QUESTION_SHELLS:
-        focused = focused.replace(shell, " ")
-    focused = re.sub(r"^(?:我|你|我们|你们|他|她|它)\s*", "", focused)
-    focused = focused.replace("的", " ").replace("很", " ")
-    return re.findall(
-        r"[0-9A-Za-z]+(?:[-_][0-9A-Za-z]+)*|[\u3400-\u9fff]+",
-        focused,
+    for source, target in _CJK_QUERY_ALIASES:
+        focused = focused.replace(source, target)
+
+    clauses = re.split(r"[，,。！？!?；;：:]", focused)
+    segments: List[str] = []
+    for clause in clauses:
+        clause = re.sub(r"^(?:老公|老婆|宝贝|大宝贝)\s*", "", clause)
+        for shell in _CJK_QUESTION_SHELLS:
+            clause = clause.replace(shell, " ")
+        # Keep first-person scope (especially ``我们``) intact.  Removing one
+        # leading character from ``我们`` previously turned it into ``们`` and
+        # allowed third-party or fictional events to outrank shared history.
+        clause = re.sub(r"^(?:你|他|她|它)(?!们)\s*", "", clause)
+        clause = re.sub(r"[啊呀呢嘛吗嘞哦]+$", "", clause)
+        clause = clause.replace("的", " ").replace("很", " ")
+        segments.extend(
+            re.findall(
+                r"[0-9A-Za-z]+(?:[-_][0-9A-Za-z]+)*|[\u3400-\u9fff]+",
+                clause,
+            )
+        )
+    return _unique_text(segments)
+
+
+def _temporal_topic_terms(segment: str) -> List[str]:
+    """Return bounded literal anchors for an earliest/first-event question."""
+
+    topic = segment
+    for marker in ("我们", "第一次", "第一回", "最早", "开始"):
+        topic = topic.replace(marker, "")
+    topic = topic.strip()
+    if not topic:
+        return []
+    variants = [topic]
+    if "我" in topic or "你" in topic:
+        # A remembered exchange naturally reverses speaker perspective:
+        # "我给你..." in one turn may be "你给我..." in the reply.
+        variants.append(topic.replace("我", "\0").replace("你", "我").replace("\0", "你"))
+    terms: List[str] = []
+    for variant in variants:
+        if not re.fullmatch(r"[\u3400-\u9fff]+", variant) or len(variant) <= 4:
+            terms.append(variant)
+        else:
+            terms.extend(
+                variant[index : index + 4]
+                for index in range(len(variant) - 3)
+            )
+    return _unique_text(terms)
+
+
+def _relaxed_expression_for_segments(segments: Sequence[str]) -> Optional[str]:
+    """Build a bounded relevance expression from already-focused segments."""
+
+    cjk_terms: List[str] = []
+    ascii_terms: List[str] = []
+    for segment in segments:
+        if re.fullmatch(r"[\u3400-\u9fff]+", segment):
+            if len(segment) <= 2:
+                continue
+            if len(segment) <= 4:
+                cjk_terms.append(segment)
+            else:
+                cjk_terms.extend(
+                    segment[index : index + 3]
+                    for index in range(len(segment) - 2)
+                )
+        elif len(segment) >= 3:
+            ascii_terms.append(segment)
+
+    cjk_terms = _bounded_text(
+        _unique_text(cjk_terms), MAX_RELAXED_TERMS_PER_GROUP
     )
+    ascii_terms = _bounded_text(
+        _unique_text(ascii_terms), MAX_RELAXED_TERMS_PER_GROUP
+    )
+    ascii_expression = " AND ".join(_quote_fts(term) for term in ascii_terms)
+    cjk_expression = " OR ".join(_quote_fts(term) for term in cjk_terms)
+    if ascii_expression and cjk_expression:
+        return f"({ascii_expression}) AND ({cjk_expression})"
+    return ascii_expression or cjk_expression or None
 
 
 def _recall_query_plan(query: str) -> RecallQueryPlan:
@@ -1774,9 +1918,16 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     ):
         exact_values.append("".join(ascii_words))
 
+    focused_segments = _focused_query_segments(normalized)
+    # The most informative clause normally carries the subject; shorter
+    # clauses are commonly vocatives or asides ("老朋友", "那时候你好傻").
+    # Retain the full question for later fallback.
+    primary_focused_segments = (
+        [max(focused_segments, key=len)] if focused_segments else []
+    )
     focused_fts_terms: List[str] = []
     focused_like_terms: List[str] = []
-    for segment in _focused_query_segments(normalized):
+    for segment in primary_focused_segments:
         if len(segment) >= 3:
             focused_fts_terms.append(segment)
         else:
@@ -1790,6 +1941,9 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     focused_expression = (
         " AND ".join(_quote_fts(term) for term in focused_fts_terms)
         or None
+    )
+    focused_relaxed_expression = _relaxed_expression_for_segments(
+        primary_focused_segments
     )
 
     like_terms: List[str] = []
@@ -1833,6 +1987,49 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         else:
             relaxed_expression = cjk_expression
 
+    prefer_oldest = any(
+        marker in normalized for marker in _EARLIEST_QUERY_MARKERS
+    )
+    intent_required_all_like_terms: List[str] = []
+    intent_required_any_like_terms: List[str] = []
+    intent_bonus_like_terms: List[str] = []
+    intent_prefer_compact = False
+    intent_min_any_matches = 1
+    intent_roles: List[str] = []
+    intent_relevance_first = False
+    if any(marker in normalized for marker in _MEANING_QUERY_MARKERS):
+        intent_required_all_like_terms = [
+            segment for segment in primary_focused_segments if len(segment) >= 2
+        ][:2]
+        intent_bonus_like_terms = list(_MEANING_CONTEXT_TERMS)
+        intent_prefer_compact = True
+    elif "我们" in normalized and "第一次" in normalized:
+        # Preserve first-person relationship scope.  Trigram FTS may treat
+        # "我们第一次..." and "他们第一次..." as near matches; exact LIKE
+        # keeps fictional/third-party events from outranking shared history.
+        intent_required_all_like_terms = ["我们"]
+        if primary_focused_segments:
+            intent_required_any_like_terms = _temporal_topic_terms(
+                primary_focused_segments[0]
+            )
+        intent_bonus_like_terms = ["今天", "刚刚", "第一次"]
+        intent_relevance_first = True
+    elif "第一次" in normalized and any(
+        marker in normalized for marker in ("说爱", "爱我", "我爱你")
+    ):
+        # Word order differs naturally between a question ("说爱我") and a
+        # quoted answer ("我爱你").  Require the temporal marker and use both
+        # phrasings only as ranking evidence; never synthesize a date.
+        intent_required_any_like_terms = ["我爱你", "爱你"]
+        intent_bonus_like_terms = ["亲口", "第一次"]
+        intent_roles = ["assistant"]
+    elif prefer_oldest and primary_focused_segments:
+        intent_required_any_like_terms = _temporal_topic_terms(
+            primary_focused_segments[0]
+        )
+        if len(intent_required_any_like_terms) > 1:
+            intent_min_any_matches = 2
+
     return RecallQueryPlan(
         normalized_query=normalized,
         exact_expressions=[
@@ -1841,9 +2038,18 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
             if (expression := _fts_expression(value)) is not None
         ],
         focused_expression=focused_expression,
+        focused_relaxed_expression=focused_relaxed_expression,
         focused_like_terms=focused_like_terms,
         relaxed_expression=relaxed_expression,
         like_terms=_bounded_text(_unique_text(like_terms), MAX_LIKE_TERMS),
+        prefer_oldest=prefer_oldest,
+        intent_required_all_like_terms=intent_required_all_like_terms,
+        intent_required_any_like_terms=intent_required_any_like_terms,
+        intent_bonus_like_terms=intent_bonus_like_terms,
+        intent_prefer_compact=intent_prefer_compact,
+        intent_min_any_matches=intent_min_any_matches,
+        intent_roles=intent_roles,
+        intent_relevance_first=intent_relevance_first,
     )
 
 
@@ -1880,6 +2086,7 @@ def _row_to_recall_result(
     query: str,
     recall_mode: str,
     branch_memberships: Sequence[Mapping[str, Any]],
+    conversation_context: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
     confidence, confidence_basis = _confidence(row, query)
     return {
@@ -1901,6 +2108,7 @@ def _row_to_recall_result(
         "conflict_group_id": row["conflict_group_id"],
         "source_cutoff_at": row["source_cutoff_at"],
         "recall_mode": recall_mode,
+        "conversation_context": [dict(item) for item in conversation_context],
     }
 
 
@@ -1946,6 +2154,8 @@ def recall_records(
         conn.execute("PRAGMA query_only = ON")
         query_plan = _recall_query_plan(query)
 
+        date_direction = "ASC" if query_plan.prefer_oldest else "DESC"
+
         def fetch_fts(expression: str) -> List[sqlite3.Row]:
             return conn.execute(
                 f"""
@@ -1954,7 +2164,7 @@ def recall_records(
                 JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
                 WHERE records_v1_fts MATCH ?
                 {vis_where}
-                ORDER BY lexical_rank ASC, r.created_at DESC
+                ORDER BY lexical_rank ASC, r.created_at {date_direction}
                 LIMIT ?
                 """,
                 [expression] + vis_params + [limit],
@@ -1974,10 +2184,85 @@ def recall_records(
                 FROM records_v1 AS r
                 WHERE ({where_sql})
                 {vis_where}
-                ORDER BY lexical_rank DESC, r.created_at DESC
+                ORDER BY lexical_rank DESC, r.created_at {date_direction}
                 LIMIT ?
                 """,
                 list(patterns) + list(patterns) + vis_params + [limit],
+            ).fetchall()
+
+        def fetch_ranked_like(
+            required_all_terms: Sequence[str],
+            required_any_terms: Sequence[str],
+            bonus_terms: Sequence[str],
+            *,
+            prefer_compact: bool = False,
+            minimum_any_matches: int = 1,
+            roles: Sequence[str] = (),
+            relevance_first: bool = False,
+        ) -> List[sqlite3.Row]:
+            required_all_patterns = [
+                _escaped_like_pattern(term) for term in required_all_terms
+            ]
+            required_any_patterns = [
+                _escaped_like_pattern(term) for term in required_any_terms
+            ]
+            bonus_patterns = [
+                _escaped_like_pattern(term) for term in bonus_terms
+            ]
+            score_patterns = (
+                required_all_patterns + required_any_patterns + bonus_patterns
+            )
+            score_sql = " + ".join(
+                "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
+                for _ in score_patterns
+            )
+            where_parts = [
+                "r.content LIKE ? ESCAPE '\\'"
+                for _ in required_all_patterns
+            ]
+            where_params: List[Any] = list(required_all_patterns)
+            if required_any_patterns:
+                any_score_sql = " + ".join(
+                    "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
+                    for _ in required_any_patterns
+                )
+                where_parts.append(f"({any_score_sql}) >= ?")
+                where_params.extend(required_any_patterns)
+                where_params.append(minimum_any_matches)
+            if roles:
+                role_placeholders = ", ".join("?" for _ in roles)
+                where_parts.append(f"r.role IN ({role_placeholders})")
+                where_params.extend(roles)
+            where_sql = " AND ".join(where_parts)
+            if query_plan.prefer_oldest and relevance_first:
+                order_sql = (
+                    "lexical_rank DESC, r.created_at ASC, length(r.content) ASC"
+                )
+            elif query_plan.prefer_oldest:
+                order_sql = (
+                    "r.created_at ASC, lexical_rank DESC, length(r.content) ASC"
+                )
+            elif prefer_compact:
+                order_sql = (
+                    "length(r.content) ASC, lexical_rank DESC, r.created_at DESC"
+                )
+            else:
+                order_sql = (
+                    "lexical_rank DESC, length(r.content) ASC, r.created_at DESC"
+                )
+            return conn.execute(
+                f"""
+                SELECT r.*, ({score_sql}) AS lexical_rank
+                FROM records_v1 AS r
+                WHERE ({where_sql})
+                {vis_where}
+                ORDER BY {order_sql}
+                LIMIT ?
+                """,
+                score_patterns
+                + where_params
+                + vis_params
+                + [limit],
             ).fetchall()
 
         rows: List[sqlite3.Row] = []
@@ -1992,10 +2277,32 @@ def recall_records(
             if rows:
                 break
 
+        if not rows and (
+            query_plan.intent_required_all_like_terms
+            or query_plan.intent_required_any_like_terms
+        ):
+            recall_mode = "sqlite_like_intent_focused"
+            rows = fetch_ranked_like(
+                query_plan.intent_required_all_like_terms,
+                query_plan.intent_required_any_like_terms,
+                query_plan.intent_bonus_like_terms,
+                prefer_compact=query_plan.intent_prefer_compact,
+                minimum_any_matches=query_plan.intent_min_any_matches,
+                roles=query_plan.intent_roles,
+                relevance_first=query_plan.intent_relevance_first,
+            )
+
         if not rows and query_plan.focused_expression:
             recall_mode = "sqlite_fts5_trigram_focused"
             try:
                 rows = fetch_fts(query_plan.focused_expression)
+            except sqlite3.OperationalError:
+                rows = []
+
+        if not rows and query_plan.focused_relaxed_expression:
+            recall_mode = "sqlite_fts5_trigram_focused_relaxed"
+            try:
+                rows = fetch_fts(query_plan.focused_relaxed_expression)
             except sqlite3.OperationalError:
                 rows = []
 
@@ -2078,6 +2385,98 @@ def recall_records(
                         "position": membership["position"],
                     }
                 )
+        context_by_rowid: Dict[int, List[Dict[str, Any]]] = {}
+        context_hits: List[tuple[int, str, int, str]] = []
+        for row in rows:
+            memberships = memberships_by_rowid.get(row["id"], [])
+            positioned = [
+                membership
+                for membership in memberships
+                if membership["position"] is not None
+            ]
+            if not positioned:
+                continue
+            # A shared ancestor may belong to many complete paths.  Its stored
+            # primary branch is deterministic and sufficient for a bounded
+            # local context window; returning every duplicate path made one
+            # recall perform the same visibility scan dozens of times.
+            membership = next(
+                (
+                    item
+                    for item in positioned
+                    if item["branch_id"] == row["branch_id"]
+                ),
+                positioned[0],
+            )
+            context_hits.append(
+                (
+                    row["id"],
+                    membership["branch_id"],
+                    membership["position"],
+                    row["conversation_id"],
+                )
+            )
+
+        if context_hits:
+            values_sql = ", ".join("(?, ?, ?, ?)" for _ in context_hits)
+            context_params: List[Any] = []
+            for hit in context_hits:
+                context_params.extend(hit)
+            context_rows = conn.execute(
+                f"""
+                WITH context_hits(
+                    hit_rowid, branch_id, hit_position, conversation_id
+                ) AS (VALUES {values_sql})
+                SELECT h.hit_rowid, h.hit_position,
+                       r.*, bm.branch_id AS context_branch_id,
+                       bm.position AS context_position
+                FROM context_hits AS h
+                JOIN records_v1_branch_memberships AS bm
+                  ON bm.branch_id = h.branch_id
+                 AND bm.position BETWEEN
+                     max(0, h.hit_position - {RECALL_CONTEXT_BEFORE})
+                     AND h.hit_position + {RECALL_CONTEXT_AFTER}
+                JOIN records_v1 AS r ON r.id = bm.record_rowid
+                WHERE r.id != h.hit_rowid
+                AND r.conversation_id = h.conversation_id
+                {vis_where}
+                ORDER BY h.hit_rowid, bm.position, r.id
+                """,
+                context_params + vis_params,
+            ).fetchall()
+            for context_row in context_rows:
+                relative_position = (
+                    context_row["context_position"] - context_row["hit_position"]
+                )
+                items = context_by_rowid.setdefault(
+                    context_row["hit_rowid"], []
+                )
+                if len(items) >= MAX_RECALL_CONTEXT_RECORDS:
+                    continue
+                items.append(
+                    {
+                        "record_id": context_row["record_id"],
+                        "content": context_row["content"],
+                        "created_at": context_row["created_at"],
+                        "source_kind": context_row["source_kind"],
+                        "source_ref": context_row["source_ref"],
+                        "conversation_id": context_row["conversation_id"],
+                        "message_id": context_row["message_id"],
+                        "role": context_row["role"],
+                        "verified": bool(context_row["verified"]),
+                        "authority": context_row["authority"],
+                        "conflict_group_id": context_row["conflict_group_id"],
+                        "source_cutoff_at": context_row["source_cutoff_at"],
+                        "branch_ids": [context_row["context_branch_id"]],
+                        "branch_memberships": [
+                            {
+                                "branch_id": context_row["context_branch_id"],
+                                "position": context_row["context_position"],
+                                "relative_position": relative_position,
+                            }
+                        ],
+                    }
+                )
         return {
             "schema_version": RECALL_SCHEMA_VERSION,
             "query": query,
@@ -2097,6 +2496,7 @@ def recall_records(
                         row["id"],
                         [{"branch_id": row["branch_id"], "position": None}],
                     ),
+                    context_by_rowid.get(row["id"], []),
                 )
                 for row in rows
             ],

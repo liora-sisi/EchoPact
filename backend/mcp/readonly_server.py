@@ -141,6 +141,14 @@ def _bounded_result(result: Mapping[str, Any]) -> Dict[str, Any]:
         for claim in memory.get("claims", []):
             if "content" in claim:
                 claim["content"] = _truncate_text(claim["content"])
+        for context_record in memory.get("conversation_context", []):
+            original = context_record.get("content")
+            if isinstance(original, str):
+                context_record["content_chars"] = len(original)
+                context_record["content_truncated"] = (
+                    len(original) > MAX_CONTENT_CHARS
+                )
+                context_record["content"] = _truncate_text(original)
     return bounded
 
 

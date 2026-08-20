@@ -892,12 +892,14 @@ def test_static_scan_invariants(setup_db):
     assert LEGACY_PRINCIPAL in migration_sql
     assert records_module.MIGRATION_VERSION == 6
 
-    # 召回可见性谓词：两处 SQL 都先于 ORDER BY / LIMIT（fail-closed 空集也在）
+    # 召回可见性谓词：FTS、普通 LIKE、意图 LIKE 与相邻上下文四条读取
+    # 路径都在 ORDER BY / LIMIT 前完成身份过滤（fail-closed 空集也在）。
     recall_src = inspect.getsource(records_module.recall_records)
     vis_marks = [m.start() for m in re.finditer(r"\{vis_where\}", recall_src)]
-    assert len(vis_marks) == 2
-    assert vis_marks[0] < recall_src.index("ORDER BY lexical_rank")
-    assert vis_marks[1] < recall_src.index("ORDER BY lexical_rank DESC")
+    assert len(vis_marks) == 4
+    for mark in vis_marks:
+        sql_tail = recall_src[mark : mark + 800]
+        assert "ORDER BY" in sql_tail
     # Empty visibility now fails closed through the bounded SQL subquery rather
     # than a materialised rowid set.  Coverage's zero count remains the public
     # no-visible-records signal.
