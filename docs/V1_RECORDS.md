@@ -184,6 +184,12 @@ is calculated from the same visible set. If any Claim or conflict-member
 evidence becomes invisible, derived content and adjudication details are
 replaced with a restricted placeholder.
 
+Identity-filtered recall keeps that visible set inside SQLite as a
+bounded-parameter subquery. It must not expand one bound variable per visible
+record: a principal may own more records than SQLite's per-statement variable
+limit, and both recall ranking and coverage must continue to use the same SQL
+visibility predicate at that scale.
+
 Direct Claim, provenance, and conflict reads deliberately hide an inaccessible
 object as absent (or omit it from lists) so callers cannot probe its existence.
 Projection-aware recall uses a `restricted` placeholder only after the caller

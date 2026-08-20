@@ -898,7 +898,11 @@ def test_static_scan_invariants(setup_db):
     assert len(vis_marks) == 2
     assert vis_marks[0] < recall_src.index("ORDER BY lexical_rank")
     assert vis_marks[1] < recall_src.index("ORDER BY r.created_at DESC")
-    assert "AND 0" in recall_src
+    # Empty visibility now fails closed through the bounded SQL subquery rather
+    # than a materialised rowid set.  Coverage's zero count remains the public
+    # no-visible-records signal.
+    assert "visible_record_rowids_query" in recall_src
+    assert "visible_record_count == 0" in recall_src
 
     # 路由面：无网络投影构建写入口、无网络管理写入口；所有召回共用身份解析
     assert "build_projection" not in routes_src

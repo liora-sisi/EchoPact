@@ -393,6 +393,70 @@ def set_agent_enabled(
 # ---------- 可见性派生（唯一实现） ----------
 
 
+_VISIBLE_RECORD_ROWIDS_SQL = """
+SELECT visible_record.id
+FROM records_v1 AS visible_record
+CROSS JOIN (
+    SELECT ? AS agent_id, ? AS legacy_owner
+) AS visibility_principal
+WHERE COALESCE(
+        (
+            SELECT event.target_agent
+            FROM record_visibility_events AS event
+            WHERE event.record_rowid = visible_record.id
+              AND event.event_kind = 'set_owner'
+            ORDER BY event.event_seq DESC
+            LIMIT 1
+        ),
+        (SELECT value FROM config_kv WHERE key = 'legacy_principal'),
+        visibility_principal.legacy_owner
+      ) = visibility_principal.agent_id
+   OR COALESCE(
+        (
+            SELECT event.event_kind
+            FROM record_visibility_events AS event
+            WHERE event.record_rowid = visible_record.id
+              AND event.event_kind IN ('scope_private', 'scope_shared')
+            ORDER BY event.event_seq DESC
+            LIMIT 1
+        ),
+        'scope_private'
+      ) = 'scope_shared'
+   OR EXISTS (
+        SELECT 1
+        FROM record_visibility_events AS grant_event
+        WHERE grant_event.record_rowid = visible_record.id
+          AND grant_event.event_kind = 'grant'
+          AND grant_event.target_agent = visibility_principal.agent_id
+          AND grant_event.event_seq > COALESCE(
+              (
+                  SELECT MAX(owner_event.event_seq)
+                  FROM record_visibility_events AS owner_event
+                  WHERE owner_event.record_rowid = visible_record.id
+                    AND owner_event.event_kind = 'set_owner'
+              ),
+              0
+          )
+          AND grant_event.event_seq > COALESCE(
+              (
+                  SELECT MAX(private_event.event_seq)
+                  FROM record_visibility_events AS private_event
+                  WHERE private_event.record_rowid = visible_record.id
+                    AND private_event.event_kind = 'scope_private'
+              ),
+              0
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM record_visibility_events AS revoke_event
+              WHERE revoke_event.record_rowid = visible_record.id
+                AND revoke_event.event_kind = 'revoke'
+                AND revoke_event.target_event_seq = grant_event.event_seq
+          )
+      )
+"""
+
+
 def _legacy_principal(conn) -> str:
     row = conn.execute(
         "SELECT value FROM config_kv WHERE key = 'legacy_principal'"
@@ -488,14 +552,25 @@ def _can_read_derived(agent_id: str, visibility: Dict[str, Any]) -> bool:
     return _read_channel(agent_id, visibility) is not None
 
 
-def all_visible_rowids(conn, agent_id: str) -> Set[int]:
-    """召回主路径用：先圈定可见全集，再交给 FTS/LIKE 排名与 LIMIT。"""
+def visible_record_rowids_query(conn, agent_id: str) -> tuple[str, List[Any]]:
+    """Return the bounded-parameter SQL translation of evidence visibility.
+
+    The query derives owner, latest scope, owner/private epochs and effective
+    grants directly from the append-only event stream.  It intentionally uses
+    a constant two parameters instead of materialising one bound variable per
+    visible record.  M5-06's truth-table tests lock this SQL path to the same
+    outcomes as ``current_visibility`` / ``_read_channel``.
+    """
+
     _require_agent_active(conn, agent_id)
-    visible: Set[int] = set()
-    for row in conn.execute("SELECT id FROM records_v1").fetchall():
-        if _can_read_derived(agent_id, current_visibility(conn, row["id"])):
-            visible.add(row["id"])
-    return visible
+    return _VISIBLE_RECORD_ROWIDS_SQL, [agent_id, LEGACY_PRINCIPAL]
+
+
+def all_visible_rowids(conn, agent_id: str) -> Set[int]:
+    """Compatibility/audit API backed by the scalable SQL visibility path."""
+
+    query, params = visible_record_rowids_query(conn, agent_id)
+    return {row["id"] for row in conn.execute(query, params).fetchall()}
 
 
 def require_all_claim_evidence_visible(
@@ -517,7 +592,12 @@ def visible_coverage(conn, agent_id: str) -> Dict[str, Any]:
     """Return coverage for exactly the evidence visible to ``agent_id``."""
     from .records_v1 import _coverage_from_connection
 
-    return _coverage_from_connection(conn, all_visible_rowids(conn, agent_id))
+    query, params = visible_record_rowids_query(conn, agent_id)
+    return _coverage_from_connection(
+        conn,
+        visible_rowids_query=query,
+        visibility_params=params,
+    )
 
 
 # ---------- 可见性事件写入（本地管理入口） ----------

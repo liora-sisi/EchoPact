@@ -1041,25 +1041,18 @@ def load_record_package(path: str) -> LoadedRecordPackage:
 
 def _coverage_from_connection(
     conn: sqlite3.Connection,
-    visible_rowids: Optional[Set[int]] = None,
+    *,
+    visible_rowids_query: Optional[str] = None,
+    visibility_params: Optional[Sequence[Any]] = None,
 ) -> Dict[str, Any]:
-    """coverage 必须与正文同口径：传入可见集时只反映可见集合。"""
-    if visible_rowids is not None and not visible_rowids:
-        return {
-            "verified_knowledge_cutoff_at": None,
-            "latest_imported_record_at": None,
-            "contains_post_cutoff_unverified_recent_patch": False,
-        }
-    if visible_rowids is None:
+    """Calculate coverage with the exact SQL visibility scope used by recall."""
+
+    if visible_rowids_query is None:
         where = ""
         params: List[Any] = []
     else:
-        where = (
-            "WHERE id IN ("
-            + ",".join("?" for _ in visible_rowids)
-            + ")"
-        )
-        params = list(visible_rowids)
+        where = f"WHERE id IN ({visible_rowids_query})"
+        params = list(visibility_params or [])
     row = conn.execute(
         f"""
         SELECT
@@ -1067,7 +1060,8 @@ def _coverage_from_connection(
                 WHEN verified = 1 AND source_kind <> 'recent_patch'
                 THEN source_cutoff_at
             END) AS verified_cutoff,
-            MAX(created_at) AS latest_record_at
+            MAX(created_at) AS latest_record_at,
+            COUNT(*) AS visible_record_count
         FROM records_v1
         {where}
         """,
@@ -1075,14 +1069,14 @@ def _coverage_from_connection(
     ).fetchone()
     verified_cutoff = row["verified_cutoff"] if row else None
     latest_record_at = row["latest_record_at"] if row else None
-    if visible_rowids is None:
+    if visible_rowids_query is None:
         recent_where = ""
         recent_params: List[Any] = [verified_cutoff, verified_cutoff]
     else:
-        recent_where = (
-            "AND id IN (" + ",".join("?" for _ in visible_rowids) + ")"
+        recent_where = f"AND id IN ({visible_rowids_query})"
+        recent_params = [verified_cutoff, verified_cutoff] + list(
+            visibility_params or []
         )
-        recent_params = [verified_cutoff, verified_cutoff] + list(visible_rowids)
     recent_row = conn.execute(
         f"""
         SELECT 1 FROM records_v1
@@ -1094,11 +1088,16 @@ def _coverage_from_connection(
         """,
         recent_params,
     ).fetchone()
-    return {
+    result = {
         "verified_knowledge_cutoff_at": verified_cutoff,
         "latest_imported_record_at": latest_record_at,
         "contains_post_cutoff_unverified_recent_patch": bool(recent_row),
     }
+    if visible_rowids_query is not None:
+        result["_visible_record_count"] = (
+            row["visible_record_count"] if row else 0
+        )
+    return result
 
 
 def _package_sha256(path: str) -> str:
@@ -1705,27 +1704,20 @@ def recall_records(
     normalized_as_of = _normalize_timestamp(as_of, "as_of") if as_of else None
     migrate_records_db(db_path)
 
-    visible_rowids: Optional[Set[int]] = None
-    if agent_id is not None:
-        from .identity import all_visible_rowids
-
-        with closing(_connect(db_path)) as vis_conn:
-            vis_conn.execute("PRAGMA query_only = ON")
-            visible_rowids = all_visible_rowids(vis_conn, agent_id)
-
     conn = _connect(db_path)
     try:
-        if visible_rowids is None:
+        visible_rowids_query: Optional[str] = None
+        if agent_id is None:
             vis_where = ""
             vis_params: List[Any] = []
-        elif not visible_rowids:
-            vis_where = "AND 0"
-            vis_params = []
         else:
+            from .identity import visible_record_rowids_query as visibility_query
+
+            visible_rowids_query, vis_params = visibility_query(conn, agent_id)
             vis_where = (
-                "AND r.id IN (" + ",".join("?" for _ in visible_rowids) + ")"
+                f"AND r.id IN ({visible_rowids_query})"
             )
-            vis_params = list(visible_rowids)
+        conn.execute("PRAGMA query_only = ON")
         expression = _fts_expression(query)
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
@@ -1769,12 +1761,14 @@ def recall_records(
 
         if agent_id is None:
             coverage = _coverage_from_connection(conn)
+            visible_record_count = None
         else:
             from .identity import visible_coverage
 
             coverage = visible_coverage(conn, agent_id)
+            visible_record_count = coverage.pop("_visible_record_count")
         verified_cutoff = coverage["verified_knowledge_cutoff_at"]
-        if visible_rowids is not None and not visible_rowids:
+        if visible_record_count == 0:
             coverage_status = "no_visible_records"
             coverage_gap = True
         elif verified_cutoff is None:
