@@ -202,6 +202,23 @@ branch、完整分支成员关系、message、核验状态、冲突组、知识�
 协议、置信度规则、迁移检查和恢复方法见
 [`docs/V1_RECORDS.md`](docs/V1_RECORDS.md)。
 
+### 本地只读 MCP 召回
+
+M6-01 将现有身份过滤、来源保真和 coverage 语义封装为本地 STDIO MCP，
+供 Codex 直接调用。它只提供 `recall_context` 与 `memory_coverage`，身份在
+进程启动时固定，工具参数不能切换 `agent_id`；SQLite 使用 `mode=ro`，不会
+迁移、写入或删除数据库，也不监听网络端口。数据库 schema 不匹配时关闭失败。
+
+```powershell
+$env:ECHO_PACT_MCP_DB_PATH = "D:\\private\\records.sqlite3"
+$env:ECHO_PACT_MCP_AGENT_ID = "agt-local-reader"
+.\.venv\Scripts\python.exe -m backend.mcp.readonly_server
+```
+
+Codex 的本地 STDIO 配置、输出边界与验证方法见
+[`docs/MCP_READONLY.md`](docs/MCP_READONLY.md)。真实私有数据库路径不得写进
+仓库；ChatGPT 云端使用独立的远程 MCP/plugin 接入，不读取本地 Codex 配置。
+
 ### Room Ferry 完整备份适配器
 
 渡房船是第一个正式来源适配器，但 Echo Pact 核心仍保持来源无关。适配器

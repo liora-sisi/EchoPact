@@ -100,6 +100,46 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     return conn
 
 
+def _connect_readonly(db_path: Optional[str] = None) -> sqlite3.Connection:
+    """Open a fully read-only records database without running migrations.
+
+    This path is used by external recall adapters such as the MCP gateway.  It
+    deliberately refuses an older or newer schema instead of silently changing
+    the database.  ``Path.as_uri`` keeps Windows paths containing spaces, ``#``
+    or ``%`` from being parsed as URI syntax.
+    """
+
+    resolved = Path(_resolve_db_path(db_path)).expanduser()
+    if not resolved.is_file():
+        raise FileNotFoundError("Echo Pact records database does not exist")
+    try:
+        uri = resolved.resolve(strict=True).as_uri() + "?mode=ro"
+        conn = sqlite3.connect(
+            uri, uri=True, timeout=30, isolation_level=None
+        )
+    except (OSError, sqlite3.Error) as exc:
+        raise RuntimeError("Echo Pact records database is not readable") from exc
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA query_only = ON")
+        versions = [
+            row["version"]
+            for row in conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+        expected = list(range(1, MIGRATION_VERSION + 1))
+        if versions != expected:
+            raise RuntimeError(
+                "Echo Pact records database schema is not the supported version"
+            )
+        return conn
+    except Exception:
+        conn.close()
+        raise
+
+
 MIGRATION_1_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS records_v1 (
@@ -1688,6 +1728,7 @@ def recall_records(
     as_of: Optional[str] = None,
     db_path: Optional[str] = None,
     agent_id: Optional[str] = None,
+    read_only: bool = False,
 ) -> Dict[str, Any]:
     """Recall V1 records using only local SQLite FTS5 data.
 
@@ -1702,9 +1743,11 @@ def recall_records(
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
     normalized_as_of = _normalize_timestamp(as_of, "as_of") if as_of else None
-    migrate_records_db(db_path)
-
-    conn = _connect(db_path)
+    if read_only:
+        conn = _connect_readonly(db_path)
+    else:
+        migrate_records_db(db_path)
+        conn = _connect(db_path)
     try:
         visible_rowids_query: Optional[str] = None
         if agent_id is None:

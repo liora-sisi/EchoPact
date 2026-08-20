@@ -19,6 +19,7 @@ from .identity import (
 from .projection import _require_agent_id, _source_hash
 from .records_v1 import (
     _connect,
+    _connect_readonly,
     _resolve_db_path,
     migrate_records_db,
     recall_records,
@@ -160,20 +161,29 @@ def recall_with_projection(
     limit: int = 5,
     as_of: Optional[str] = None,
     db_path: Optional[str] = None,
+    read_only: bool = False,
 ) -> Dict[str, Any]:
     """Attach current-agent projection and adjudication views to V1 recall."""
     agent_id = _require_agent_id(agent_id)
-    # Preserve the existing forward-only migration contract before the
-    # annotation connection is locked to query-only mode.
-    migrate_records_db(db_path)
+    # Network/API callers preserve the existing forward-only migration
+    # contract.  External read-only adapters instead fail closed on schema
+    # drift and never acquire a write-capable connection.
+    if not read_only:
+        migrate_records_db(db_path)
     # M5-04：证据召回必须先过可见范围，不可见记录连 memories 列表都进不来；
     # claim 级 evidence_not_visible 只负责跨页证据的脱敏占位。
     base = recall_records(
-        query, limit=limit, as_of=as_of, db_path=db_path, agent_id=agent_id
+        query,
+        limit=limit,
+        as_of=as_of,
+        db_path=db_path,
+        agent_id=agent_id,
+        read_only=read_only,
     )
 
     memories = base.get("memories", [])
-    with closing(_connect(_resolve_db_path(db_path))) as conn:
+    connect = _connect_readonly if read_only else _connect
+    with closing(connect(_resolve_db_path(db_path))) as conn:
         # Enforce the join layer's read-only promise at the SQLite connection.
         conn.execute("PRAGMA query_only = ON")
         for memory in memories:
