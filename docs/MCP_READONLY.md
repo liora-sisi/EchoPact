@@ -36,6 +36,10 @@ Start the server from the repository root with the project's existing Python:
 .\.venv\Scripts\python.exe -m backend.mcp.readonly_server
 ```
 
+For Codex configuration, prefer the location-independent launcher
+`scripts/echo_pact_mcp.py`; it works even when the client starts it from a
+different working directory.
+
 The process waits for MCP JSON-RPC on stdin.  It must not print ordinary logs to
 stdout because stdout is reserved for the protocol.
 
@@ -47,8 +51,7 @@ user configuration; keep private database locations out of committed files.
 ```toml
 [mcp_servers.echo_pact]
 command = "D:\\path\\to\\EchoPact\\.venv\\Scripts\\python.exe"
-args = ["-m", "backend.mcp.readonly_server"]
-cwd = "D:\\path\\to\\EchoPact"
+args = ["D:\\path\\to\\EchoPact\\scripts\\echo_pact_mcp.py"]
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 required = false

@@ -174,9 +174,12 @@ def test_stdio_mcp_handshake_and_calls_are_compatible(mcp_db):
         }
     )
     repo = Path(__file__).resolve().parents[1]
+    launcher = repo / "scripts" / "echo_pact_mcp.py"
     process = subprocess.Popen(
-        [sys.executable, "-m", "backend.mcp.readonly_server"],
-        cwd=repo,
+        [sys.executable, str(launcher)],
+        # Codex may start the configured server outside the repository.  The
+        # launcher must therefore establish its own import root.
+        cwd=mcp_db.parent,
         env=env,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
