@@ -176,6 +176,15 @@ hypotheticals and later recollections may all contain the same literal words;
 Echo Pact returns traceable candidates and nearby turns instead of silently
 declaring one interpretation to be historical fact.
 
+When a query explicitly requests original wording, original messages or
+verbatim evidence, Echo Pact can make one bounded source-tracing pass after the
+normal precision-first lookup. It extracts literal snippets only from the
+first-pass records, follows them with escaped parameterized `LIKE`, and keeps
+the same visibility predicate inside SQL. The pass neither invents topic
+synonyms nor treats the oldest match as adjudicated truth. A successful trace
+is labelled `sqlite_original_wording_trace`; if no distinct source is found,
+the ordinary recall result and mode are retained.
+
 `confidence` is a deterministic evidence score, not a probability:
 
 - local lexical match: +0.50;

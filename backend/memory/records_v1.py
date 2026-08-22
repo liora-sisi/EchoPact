@@ -1761,6 +1761,48 @@ _MEANING_CONTEXT_TERMS = (
     "指代",
 )
 
+_ORIGINAL_EVIDENCE_QUERY_MARKERS = (
+    "只根据原始消息",
+    "只看原始消息",
+    "原始消息",
+    "原始记录",
+    "原话",
+    "原文",
+    "逐字",
+    "当时说了什么",
+    "当时说的什么",
+    "说了什么话",
+    "说的是什么话",
+    "亲口说",
+    "怎么说的",
+)
+
+_RETELLING_QUERY_MARKERS = (
+    "后来怎么复盘",
+    "后来怎样复盘",
+    "后来怎么回忆",
+    "后来怎样回忆",
+    "后来怎么整理",
+    "后来怎样整理",
+)
+
+_ORIGINAL_TRACE_META_MARKERS = (
+    "后来我专门复盘",
+    "后来复盘",
+    "后来回忆",
+    "后来整理",
+    "资料汇总",
+    "经过整理",
+    "用于归档",
+    "总结",
+    "关键词",
+    "原话是",
+    "原文是",
+)
+
+MAX_ORIGINAL_TRACE_ANCHORS = 8
+MAX_ORIGINAL_TRACE_ANCHOR_CHARS = 120
+
 RECALL_CONTEXT_BEFORE = 1
 RECALL_CONTEXT_AFTER = 2
 MAX_RECALL_CONTEXT_RECORDS = 4
@@ -1789,6 +1831,68 @@ def _bounded_text(values: Sequence[str], limit: int) -> List[str]:
         for index in range(limit)
     ]
     return [values[index] for index in indexes]
+
+
+def _wants_original_evidence(normalized_query: str) -> bool:
+    """Return whether one bounded source-tracing pass is justified.
+
+    The decision is based only on evidence-type wording in the user's query,
+    never on a private topic such as a proposal, gift or relationship event.
+    A question explicitly asking for a later recap keeps the recap relevant.
+    """
+
+    if any(marker in normalized_query for marker in _RETELLING_QUERY_MARKERS):
+        return False
+    return any(
+        marker in normalized_query for marker in _ORIGINAL_EVIDENCE_QUERY_MARKERS
+    )
+
+
+def _original_trace_anchors(rows: Sequence[sqlite3.Row]) -> List[str]:
+    """Extract bounded verbatim anchors from first-pass evidence.
+
+    Later retellings often preserve one or two distinctive sentences from the
+    original event even when the original does not repeat the question's topic
+    words. We extract only literal text already present in returned evidence;
+    no model, network call, entity guess or answer-specific synonym is used.
+    """
+
+    ranked: List[tuple[int, int, str]] = []
+    for row in rows:
+        content = str(row["content"] or "")
+        quoted = [
+            match.group(1) or match.group(2)
+            for match in re.finditer(
+                r"[“「『]([^”」』]{8,120})[”」』]|\"([^\"\r\n]{8,120})\"",
+                content,
+            )
+        ]
+        fragments = quoted + content.splitlines()
+        quoted_values = set(quoted)
+        for raw_fragment in fragments:
+            fragment = re.sub(
+                r"^\s*(?:[-*•>]+|\d+[.)、])\s*", "", raw_fragment
+            ).strip(" \t'\"“”「」『』")
+            fragment = re.sub(r"\s+", " ", fragment).strip()
+            if not 8 <= len(fragment) <= MAX_ORIGINAL_TRACE_ANCHOR_CHARS:
+                continue
+            if fragment.endswith(("：", ":")):
+                continue
+            if any(marker in fragment for marker in _ORIGINAL_TRACE_META_MARKERS):
+                continue
+            lexical_chars = re.findall(r"[0-9A-Za-z\u3400-\u9fff]", fragment)
+            if len(lexical_chars) < 8:
+                continue
+            # Quoted text is the strongest signal. Otherwise prefer longer
+            # distinctive lines while keeping the number of SQL terms bounded.
+            ranked.append(
+                (1 if fragment in quoted_values else 0, len(fragment), fragment)
+            )
+
+    ordered = sorted(ranked, key=lambda item: (-item[0], -item[1], item[2]))
+    return _bounded_text(
+        _unique_text(item[2] for item in ordered), MAX_ORIGINAL_TRACE_ANCHORS
+    )
 
 
 def _quote_fts(value: str) -> str:
@@ -2265,6 +2369,51 @@ def recall_records(
                 + [limit],
             ).fetchall()
 
+        def fetch_original_trace(anchors: Sequence[str]) -> List[sqlite3.Row]:
+            """Follow literal first-pass anchors once, inside visibility SQL."""
+
+            patterns: List[str] = []
+            for anchor in anchors:
+                pattern = _escaped_like_pattern(anchor)
+                occurrence_count = conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM records_v1 AS r
+                    WHERE r.content LIKE ? ESCAPE '\\'
+                    {vis_where}
+                    """,
+                    [pattern] + vis_params,
+                ).fetchone()[0]
+                # A literal that exists only in the first-pass retelling cannot
+                # lead to a distinct source. Removing such singleton prose also
+                # prevents recap-only detail from inflating the recap's score.
+                if occurrence_count >= 2:
+                    patterns.append(pattern)
+            if not patterns:
+                return []
+
+            minimum_matches = 2 if len(patterns) >= 2 else 1
+            score_sql = " + ".join(
+                "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
+                for _ in patterns
+            )
+            return conn.execute(
+                f"""
+                SELECT r.*, ({score_sql}) AS lexical_rank
+                FROM records_v1 AS r
+                WHERE ({score_sql}) >= ?
+                {vis_where}
+                ORDER BY r.created_at ASC, lexical_rank DESC,
+                         length(r.content) ASC, r.id ASC
+                LIMIT ?
+                """,
+                patterns
+                + patterns
+                + [minimum_matches]
+                + vis_params
+                + [max(limit * 2, limit)],
+            ).fetchall()
+
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
         for expression in query_plan.exact_expressions:
@@ -2334,6 +2483,24 @@ def recall_records(
             rows = fetch_like(
                 [_escaped_like_pattern(query_plan.normalized_query)]
             )
+
+        if rows and _wants_original_evidence(query_plan.normalized_query):
+            anchors = _original_trace_anchors(rows)
+            if anchors:
+                traced_rows = fetch_original_trace(anchors)
+                initial_ids = {row["id"] for row in rows}
+                if any(row["id"] not in initial_ids for row in traced_rows):
+                    merged_rows: List[sqlite3.Row] = []
+                    seen_rowids = set()
+                    for row in list(traced_rows) + list(rows):
+                        if row["id"] in seen_rowids:
+                            continue
+                        seen_rowids.add(row["id"])
+                        merged_rows.append(row)
+                        if len(merged_rows) >= limit:
+                            break
+                    rows = merged_rows
+                    recall_mode = "sqlite_original_wording_trace"
 
         if agent_id is None:
             coverage = _coverage_from_connection(conn)

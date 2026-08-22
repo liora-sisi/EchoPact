@@ -892,12 +892,16 @@ def test_static_scan_invariants(setup_db):
     assert LEGACY_PRINCIPAL in migration_sql
     assert records_module.MIGRATION_VERSION == 6
 
-    # 召回可见性谓词：FTS、普通 LIKE、意图 LIKE 与相邻上下文四条读取
-    # 路径都在 ORDER BY / LIMIT 前完成身份过滤（fail-closed 空集也在）。
+    # 召回可见性谓词：FTS、普通 LIKE、意图 LIKE、原文锚点计数、原文
+    # 追查与相邻上下文六条读取。返回记录的路径都在 ORDER BY / LIMIT 前
+    # 完成身份过滤；锚点计数也必须在同一可见范围内（fail-closed 空集也在）。
     recall_src = inspect.getsource(records_module.recall_records)
     vis_marks = [m.start() for m in re.finditer(r"\{vis_where\}", recall_src)]
-    assert len(vis_marks) == 4
+    assert len(vis_marks) == 6
     for mark in vis_marks:
+        sql_head = recall_src[max(0, mark - 500) : mark]
+        if "SELECT COUNT(*)" in sql_head:
+            continue
         sql_tail = recall_src[mark : mark + 800]
         assert "ORDER BY" in sql_tail
     # Empty visibility now fails closed through the bounded SQL subquery rather

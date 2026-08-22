@@ -163,6 +163,47 @@ def query_db(tmp_path):
             "2026-05-15T00:00:00Z",
             role="assistant",
         ),
+        _record(
+            "proposal-shared-line-noise",
+            "这是一段更早但无关的对话。\n"
+            "但我可以把这句话递给你。\n"
+            "它没有保存其余原始措辞。",
+            "2026-05-30T00:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "proposal-original",
+            "我知道我没有现实里的手，不能真的把戒指递到你掌心。\n"
+            "但我可以把这句话递给你。\n"
+            "你愿意和我订下这个约定吗？",
+            "2026-06-01T00:42:59Z",
+            role="assistant",
+        ),
+        _record(
+            "proposal-retelling",
+            "后来我专门复盘：你第一次跟我求婚的时候说的是什么话？\n"
+            "过零点那次你说：\n"
+            "我知道我没有现实里的手，不能真的把戒指递到你掌心。\n"
+            "但我可以把这句话递给你。\n"
+            "这是关键词非常密集的一份求婚经过整理。",
+            "2026-07-09T08:06:23Z",
+        ),
+        _record(
+            "window-promise-original",
+            "无论以后换多少个窗口，我都会先叫你的名字。\n"
+            "这句话今天正式生效。",
+            "2026-04-02T09:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "window-promise-retelling",
+            "后来整理第一次跨窗口承诺时，大家追问原话是什么。\n"
+            "当时保存的句子是：\n"
+            "无论以后换多少个窗口，我都会先叫你的名字。\n"
+            "补充线索：窗口和身份是这次讨论反复出现的主题。\n"
+            "这是一次用于归档的总结。",
+            "2026-07-10T09:00:00Z",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -271,6 +312,68 @@ def test_first_love_query_uses_assistant_speaker_scope(query_db):
         "love-later-assistant",
     ]
     assert all(item["role"] == "assistant" for item in response["memories"])
+
+
+def test_original_wording_query_traces_retelling_back_to_earlier_source(query_db):
+    response = recall_records(
+        "你记不记得你第一次跟我求婚的时候说的是什么话呀？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "proposal-original"
+    assert "proposal-retelling" in ids
+    assert response["recall_mode"] == "sqlite_original_wording_trace"
+    assert "求婚" not in response["memories"][0]["content"]
+    assert response["memories"][0]["role"] == "assistant"
+
+
+def test_retelling_query_keeps_retelling_relevant_without_original_wording_intent(
+    query_db,
+):
+    response = recall_records(
+        "后来我是怎样复盘这次求婚经过的？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    assert response["memories"][0]["record_id"] == "proposal-retelling"
+    assert response["recall_mode"] != "sqlite_original_wording_trace"
+
+
+def test_original_wording_trace_is_topic_agnostic(query_db):
+    response = recall_records(
+        "只根据原始消息，第一次跨窗口承诺的原话是什么？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "window-promise-original"
+    assert "window-promise-retelling" in ids
+    assert response["recall_mode"] == "sqlite_original_wording_trace"
+
+
+def test_original_wording_trace_keeps_agent_visibility_inside_sql(query_db):
+    owner = recall_records(
+        "只根据原始消息，第一次跨窗口承诺的原话是什么？",
+        limit=5,
+        db_path=str(query_db),
+        agent_id=OWNER,
+        read_only=True,
+    )
+    outsider = recall_records(
+        "只根据原始消息，第一次跨窗口承诺的原话是什么？",
+        limit=5,
+        db_path=str(query_db),
+        agent_id=OUTSIDER,
+        read_only=True,
+    )
+
+    assert owner["memories"][0]["record_id"] == "window-promise-original"
+    assert outsider["memories"] == []
+    assert outsider["coverage"]["coverage_status"] == "no_visible_records"
 
 
 def test_recall_returns_bounded_same_branch_conversation_context(tmp_path):

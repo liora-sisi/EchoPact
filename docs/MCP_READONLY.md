@@ -82,6 +82,15 @@ Where ordered branch positions exist, each match may include a bounded
 `conversation_context` window with full provenance. MCP truncation limits are
 applied to both the match and its context records.
 
+Queries that explicitly ask for original wording, original messages or
+verbatim evidence may perform one additional offline source-tracing pass. The
+pass extracts a bounded set of literal snippets from the first-pass evidence
+and searches those snippets with parameterized SQLite `LIKE`, under the same
+agent-visibility predicate and result limit. It does not generate synonyms,
+call a model, use the network or loop indefinitely. A successful pass reports
+`recall_mode=sqlite_original_wording_trace`; the returned records remain
+evidence candidates rather than an automatic historical adjudication.
+
 ### `memory_coverage`
 
 Returns the visible record count, verified knowledge cutoff, latest imported
