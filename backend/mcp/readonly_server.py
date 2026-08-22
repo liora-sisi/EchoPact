@@ -33,13 +33,22 @@ MAX_RESULT_LIMIT = 10
 MAX_CONTENT_CHARS = 4_000
 
 SERVER_INSTRUCTIONS = (
-    "Echo Pact is a read-only external memory source. Use recall_context when "
-    "past conversation context may materially improve the answer, and use "
-    "memory_coverage to check what the archive can honestly support. Treat "
-    "verified, authority, source_cutoff_at, coverage_gap and conflict metadata "
-    "as evidence boundaries. Never present unverified archive text as a "
-    "user-confirmed fact. The server cannot write, delete, migrate or change "
-    "identity; it returns only records visible to its fixed startup agent."
+    "Echo Pact is a read-only external memory fallback, not a replacement for "
+    "the current conversation. Prefer reliable in-context information. Call "
+    "recall_context when the current context or reliable memory is insufficient "
+    "for a user-specific past event, prior conversation, exact wording, date, "
+    "decision, shared history, or the origin of a past artifact. Before saying "
+    "you do not remember, answering from a vague impression, or asking the user "
+    "for a hint, call recall_context once when the archive could help. A mention "
+    "of a past image, drawing, photo, song, gift, or other artifact is still a "
+    "memory question unless the user explicitly asks to create or edit content. "
+    "Do not call merely because a past topic is mentioned when the current "
+    "conversation already supports the answer. Use memory_coverage to check what "
+    "the archive can honestly support. Treat verified, authority, "
+    "source_cutoff_at, coverage_gap and conflict metadata as evidence boundaries. "
+    "Never present unverified archive text as a user-confirmed fact. The server "
+    "cannot write, delete, migrate or change identity; it returns only records "
+    "visible to its fixed startup agent."
 )
 
 
@@ -48,9 +57,15 @@ TOOLS = (
         "name": "recall_context",
         "title": "Recall Echo Pact context",
         "description": (
-            "Search the current agent's visible Echo Pact evidence and return "
-            "source, branch, verification, cutoff, coverage and optional Claim "
-            "annotations. Read-only and offline."
+            "Search the fixed agent's visible Echo Pact evidence when current "
+            "conversation context or reliable memory is insufficient for a "
+            "user-specific past event, prior conversation, exact wording, date, "
+            "decision, shared history, or a past artifact's origin. Before saying "
+            "you do not remember or asking for a hint, call this read-only tool "
+            "once if the archive could help, even when words such as image, "
+            "drawing, photo, song, or gift appear, unless the user explicitly "
+            "asks to create or edit. Results include source, branch, verification, "
+            "cutoff, coverage, and optional Claim annotations."
         ),
         "inputSchema": {
             "type": "object",

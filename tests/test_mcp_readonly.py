@@ -13,6 +13,7 @@ import pytest
 from backend.mcp.readonly_server import (
     MAX_CONTENT_CHARS,
     ReadonlyGateway,
+    SERVER_INSTRUCTIONS,
     StdioMcpServer,
     tool_definitions,
 )
@@ -104,6 +105,24 @@ def test_tool_contract_is_read_only_and_has_no_identity_argument():
             "openWorldHint": False,
         }
         assert "agent_id" not in tool["inputSchema"].get("properties", {})
+
+
+def test_recall_contract_routes_context_gaps_without_overcalling():
+    recall = next(
+        tool for tool in tool_definitions() if tool["name"] == "recall_context"
+    )
+    description = recall["description"].lower()
+    instructions = SERVER_INSTRUCTIONS.lower()
+
+    assert (
+        "current conversation context or reliable memory is insufficient"
+        in description
+    )
+    assert "before saying you do not remember or asking for a hint" in description
+    assert "image" in description and "explicitly asks to create or edit" in description
+    assert "not a replacement for the current conversation" in instructions
+    assert "answering from a vague impression" in instructions
+    assert "do not call merely because a past topic is mentioned" in instructions
 
 
 def test_gateway_recalls_owner_only_without_changing_database(mcp_db):
@@ -205,6 +224,7 @@ def test_stdio_mcp_handshake_and_calls_are_compatible(mcp_db):
         assert initialized["result"]["capabilities"] == {
             "tools": {"listChanged": False}
         }
+        assert initialized["result"]["instructions"] == SERVER_INSTRUCTIONS
 
         # Initialized is a notification and therefore deliberately has no reply.
         process.stdin.write(

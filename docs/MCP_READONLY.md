@@ -69,6 +69,17 @@ remote MCP/plugin and does not read this local Codex configuration.
 
 ## Tool semantics
 
+The host should treat Echo Pact as a fallback for missing context, not as a
+mandatory preamble to every conversation about the past. It should prefer the
+current conversation when that context is already sufficient. It should call
+`recall_context` when user-specific history, an exact quotation/date, or the
+origin of a past artifact matters and current context or reliable memory is
+insufficient. Before answering from a vague impression, saying it does not
+remember, or asking the user for a hint, the host should try one bounded recall
+when the archive could help. Words such as image, drawing, photo, song, or gift
+do not turn a past-memory question into a creation request unless the user
+explicitly asks to create or edit content.
+
 ### `recall_context`
 
 Inputs: `query`, optional `limit` (1-10), optional `as_of`, and optional
