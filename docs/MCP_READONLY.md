@@ -93,6 +93,15 @@ Where ordered branch positions exist, each match may include a bounded
 `conversation_context` window with full provenance. MCP truncation limits are
 applied to the match, its context records and any `event_evidence` records.
 
+One public call may contain a bounded adaptive plan. Exact anchors keep the
+single-pass fast path. Evidence-sensitive questions can add deterministic
+original-source tracing and a small source-neutral vocabulary expansion, up to
+`MAX_ADAPTIVE_QUERY_PASSES`. The response reports this under
+`adaptive_recall`; no private-fact dictionary, network model, database write,
+or unbounded retry loop is involved. Shared-event scans are not expanded a
+second time, so an unsupported negative control remains empty instead of
+drifting into unrelated shared history.
+
 An earliest question that explicitly asks about a shared two-person event may
 use `recall_mode=sqlite_shared_event_window`. This mode runs one bounded,
 identity-filtered, same-conversation and same-branch rescue pass. It requires

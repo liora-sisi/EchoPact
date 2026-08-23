@@ -3338,8 +3338,7 @@ def recall_records(
             anchors = _original_trace_anchors(rows)
             if anchors:
                 traced_rows = fetch_original_trace(anchors)
-                initial_ids = {row["id"] for row in rows}
-                if any(row["id"] not in initial_ids for row in traced_rows):
+                if traced_rows:
                     merged_rows: List[sqlite3.Row] = []
                     seen_rowids = set()
                     for row in list(traced_rows) + list(rows):

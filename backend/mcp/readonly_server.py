@@ -14,9 +14,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
+from backend.memory.adaptive_recall import adaptive_recall
 from backend.memory.identity import visible_coverage
-from backend.memory.recall_projection import recall_with_projection
-from backend.memory.records_v1 import _connect_readonly, recall_records
+from backend.memory.records_v1 import _connect_readonly
 
 
 LATEST_PROTOCOL_VERSION = "2025-11-25"
@@ -218,24 +218,15 @@ class ReadonlyGateway:
         if not isinstance(include_projection, bool):
             raise ValueError("include_projection must be a boolean")
 
-        if include_projection:
-            result = recall_with_projection(
-                query,
-                agent_id=self.agent_id,
-                limit=limit,
-                as_of=as_of,
-                db_path=self.db_path,
-                read_only=True,
-            )
-        else:
-            result = recall_records(
-                query,
-                agent_id=self.agent_id,
-                limit=limit,
-                as_of=as_of,
-                db_path=self.db_path,
-                read_only=True,
-            )
+        result = adaptive_recall(
+            query,
+            agent_id=self.agent_id,
+            limit=limit,
+            as_of=as_of,
+            db_path=self.db_path,
+            read_only=True,
+            include_projection=include_projection,
+        )
         return _bounded_result(result)
 
 
