@@ -109,6 +109,9 @@ with multiple literal subjects requires all those subjects in the evidence and
 orders qualifying rows newest first. Both remain a single read-only SQLite pass
 when they succeed; neither uses a private-fact dictionary or supplies an
 expected answer.
+For this latest composite-event tier, a conversational "what did you say then"
+suffix does not override the event constraints with a global wording trace;
+the bounded same-branch context supplies the historical reply instead.
 
 An earliest question that explicitly asks about a shared two-person event may
 use `recall_mode=sqlite_shared_event_window`. This mode runs one bounded,

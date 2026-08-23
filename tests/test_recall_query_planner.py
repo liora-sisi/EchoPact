@@ -218,8 +218,14 @@ def query_db(tmp_path):
         ),
         _record(
             "takeout-barbecue-latest",
-            "后来一次点外卖吃的也是烧烤，我回答自己很喜欢那种焦香。",
+            "后来一次点外卖吃的也是烧烤，我回答：“我很喜欢那种焦香味。”",
             "2026-07-20T09:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "shared-quote-unrelated-event",
+            "另一个更早的虚构故事也写过：“我很喜欢那种焦香味。”",
+            "2026-05-20T09:00:00Z",
             role="assistant",
         ),
         _record(
@@ -364,6 +370,7 @@ def test_latest_composite_event_requires_all_topics_and_prefers_newest(query_db)
     assert ids[:2] == ["takeout-barbecue-latest", "takeout-barbecue-old"]
     assert "takeout-only-newer" not in ids
     assert "barbecue-only-newer" not in ids
+    assert "shared-quote-unrelated-event" not in ids
     assert response["recall_mode"] == "sqlite_like_intent_focused"
 
 

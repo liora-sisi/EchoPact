@@ -3606,7 +3606,21 @@ def recall_records(
                 [_escaped_like_pattern(query_plan.normalized_query)]
             )
 
-        if rows and _wants_original_evidence(query_plan.normalized_query):
+        # A latest composite-event question already pins every literal event
+        # subject and returns bounded same-branch context.  A global wording
+        # trace from a generic phrase such as "当时怎么说的" can otherwise
+        # jump to an older, unrelated event that happens to quote the same
+        # sentence.  Explicit latest-event identity therefore wins; callers
+        # still receive the nearby historical answer as evidence context.
+        suppress_original_trace_for_latest_composite = (
+            query_plan.prefer_latest
+            and len(query_plan.intent_required_all_like_terms) >= 2
+        )
+        if (
+            rows
+            and _wants_original_evidence(query_plan.normalized_query)
+            and not suppress_original_trace_for_latest_composite
+        ):
             anchors = _original_trace_anchors(rows)
             if anchors:
                 traced_rows = fetch_original_trace(anchors)
