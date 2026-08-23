@@ -238,7 +238,8 @@ Codex 的本地 STDIO 配置、输出边界与验证方法见
 ### Room Ferry 完整备份适配器
 
 渡房船是第一个正式来源适配器，但 Echo Pact 核心仍保持来源无关。适配器
-只接受单个 UTF-8 `liora-elion-room-ferry-backup` format v1 JSON：
+只接受单个 UTF-8 `liora-elion-room-ferry-backup` format v1 JSON；当前已审查并
+支持渡房船数据库 schema 1 和 schema 2，未知未来 schema 默认安全拒绝：
 
 ```bash
 python scripts/adapt_room_ferry.py ROOM_FERRY_BACKUP.json --dry-run
@@ -250,6 +251,10 @@ dry-run 校验格式、版本、schema、`SHA-256(JSON.stringify(data))`、分�
 时原子创建紧凑的 `echo-pact-records-v2`，正文只保存和索引一次，分支路径作为
 有序成员关系保存；随后可交给现有导入器。渡房船导入批次、
 交接草稿和 appMeta 不会被当作聊天正文。
+
+连续完整备份可能因为补入更早的分支或祖先而改变既有分支位置。证据记录与
+分支成员关系保持不可变；发现这类拓扑漂移时，应从新版完整快照建立独立的
+新数据库代，并保留旧库作为回退点，不向正在使用的旧库强行覆盖。
 
 详细协议证据、分支派生规则和安全拒绝条件见
 [`docs/ROOM_FERRY_V1_ADAPTER.md`](docs/ROOM_FERRY_V1_ADAPTER.md)。

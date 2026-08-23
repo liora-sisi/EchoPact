@@ -1,4 +1,4 @@
-"""Room Ferry full-backup v1 adapter for Echo Pact.
+"""Room Ferry full-backup format v1 adapter for Echo Pact.
 
 This module is deliberately source-specific.  It validates a single UTF-8
 ``liora-elion-room-ferry-backup`` JSON file, performs a non-writing dry-run,
@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 FERRY_FORMAT = "liora-elion-room-ferry-backup"
 FERRY_FORMAT_VERSION = 1
-FERRY_SCHEMA_VERSION = 1
+SUPPORTED_FERRY_SCHEMA_VERSIONS = frozenset({1, 2})
 ADAPTER_ID = "room-ferry-backup-v1"
 RECORD_SCHEMA_VERSION = "echo-pact-records-v2"
 MAX_INPUT_BYTES = 500 * 1024 * 1024
@@ -638,7 +638,7 @@ def inspect_ferry_backup(path: str) -> FerryInspection:
         issues.fail("unsupported-format", "backup format is not Room Ferry full backup")
     if payload.get("formatVersion") != FERRY_FORMAT_VERSION:
         issues.fail("unsupported-format-version", "backup formatVersion is not supported")
-    if payload.get("schemaVersion") != FERRY_SCHEMA_VERSION:
+    if payload.get("schemaVersion") not in SUPPORTED_FERRY_SCHEMA_VERSIONS:
         issues.fail("unsupported-schema-version", "backup schemaVersion is not supported")
     if not isinstance(payload.get("appVersion"), str) or not payload["appVersion"]:
         issues.fail("invalid-app-version", "backup appVersion must be non-empty text")

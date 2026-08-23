@@ -1,4 +1,4 @@
-# Room Ferry full-backup v1 adapter
+# Room Ferry full-backup format v1 adapter
 
 ## Scope and architecture
 
@@ -8,7 +8,8 @@ in `backend/adapters/room_ferry_v1.py`. The source-neutral M1 records, importer,
 SQLite schema, FTS5 recall, and `/api/v1/recall` do not import or depend on Ferry
 types.
 
-The adapter accepts exactly one strict UTF-8 JSON file. It does not read
+The adapter accepts exactly one strict UTF-8 JSON file using backup format v1
+and a reviewed database schema version of either 1 or 2. It does not read
 IndexedDB, scan directories, parse TXT/Markdown as a machine format, open ZIP
 backups, use the network, or call an embedding API.
 
@@ -65,8 +66,10 @@ order and array order therefore participate in the checksum. The outer backup
 file itself is pretty-printed with two spaces, but its whitespace does not enter
 the checksum.
 
-The adapter additionally requires the declared algorithm to be `SHA-256` and
-schema version to be exactly 1, because other schemas have not been mapped.
+The adapter additionally requires the declared algorithm to be `SHA-256`.
+Room Ferry database schemas 1 and 2 have been mapped. An unknown future schema
+(including schema 3) fails closed until its identity, topology, time, and
+content semantics have been reviewed.
 
 ## Time semantics
 
@@ -82,9 +85,11 @@ knowledge cutoff.
 
 ## Identity and provenance
 
-Room Ferry `Message.id` is a stable Ferry database identity. Optional
-`sourceMessageId` is kept separate and is not relabeled as an official ChatGPT
-ID. Every `source_ref` contains:
+Room Ferry `Message.id` is a stable Ferry database identity. In schema 2,
+official source-message identity is scoped by conversation; the Ferry internal
+message ID remains distinct for each stored message. Optional `sourceMessageId`
+is kept separate and is not relabeled as an official ChatGPT ID. Every
+`source_ref` contains:
 
 - the exact input file SHA-256;
 - the Ferry conversation ID;
@@ -95,6 +100,9 @@ Ferry message ID. Branch membership is stored separately, so adding a branch
 does not change the message identity. `contentFingerprint` is not used as an
 identity: Room Ferry computes it from normalized text, role, and part types for
 change/merge detection, so it is content-derived and may change.
+
+Schema 2's `selectedForHandoff` is Room Ferry UI state. It is deliberately not
+copied into evidence content or the source-neutral records protocol.
 
 ## Branch preservation
 
@@ -122,9 +130,22 @@ Room Ferry has no explicit `branchId`. It preserves `sourceMessageId`,
 
 Ambiguous or cyclic multi-branch mapping is fatal and produces no formal output.
 
+### Successive full snapshots
+
+Records and branch memberships are immutable evidence once imported. A newer
+full backup can legitimately add an earlier branch or previously absent
+ancestor, which shifts later membership positions without changing their
+relative order. Echo Pact does not rewrite the older evidence graph in place.
+
+Before a newer private snapshot is accepted, run the adapter dry-run and a
+shadow comparison. If existing membership positions differ, build a new,
+separate database generation from the newer complete snapshot and keep the old
+database as the rollback point. Do not force the snapshot into the active
+database and do not weaken the importer's conflict checks.
+
 ## Content parts and non-message data
 
-Recognized Ferry v1 parts are:
+Recognized Ferry format v1 schema 1/2 parts are:
 
 - `text`;
 - `image-placeholder`;
@@ -164,7 +185,7 @@ own temporary output and leaves no half package.
 ## Safe refusal conditions
 
 Formal conversion is refused for malformed/non-UTF-8 JSON, files over 500 MB,
-wrong format/version/schema/checksum algorithm, checksum mismatch, invalid or
+wrong format/version, an unreviewed schema, wrong checksum algorithm, checksum mismatch, invalid or
 duplicate Ferry IDs, orphan messages, message-count mismatch, missing original
 time, unsupported role, ambiguous single-branch order, ambiguous/cyclic branch
 mapping, multiple unconnected missing-parent anchors, schema metadata conflict,

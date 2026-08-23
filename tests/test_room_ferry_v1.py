@@ -291,7 +291,7 @@ def test_tampered_checksum_is_rejected(tmp_path):
     [
         ("format", "some-other-backup", "unsupported-format"),
         ("formatVersion", 2, "unsupported-format-version"),
-        ("schemaVersion", 2, "unsupported-schema-version"),
+        ("schemaVersion", 3, "unsupported-schema-version"),
     ],
 )
 def test_wrong_protocol_identity_is_rejected(tmp_path, field, value, code):
@@ -574,6 +574,55 @@ def test_same_source_message_id_in_different_conversations_stays_separate(tmp_pa
     assert len({record["record_id"] for record in package["records"]}) == 2
     assert len({record["conversation_id"] for record in package["records"]}) == 2
     assert len({record["message_id"] for record in package["records"]}) == 2
+
+
+def test_schema_two_scopes_source_identity_by_conversation(tmp_path):
+    first = _message(
+        "ferry-schema-two-one",
+        "ferry-schema-two-room-one",
+        "reused-source-message-id",
+        None,
+        "user",
+        1_700_210_000_000,
+        "第一间完全虚构的 schema 2 房间",
+        "00000000:0001700210000000:first",
+    )
+    second = _message(
+        "ferry-schema-two-two",
+        "ferry-schema-two-room-two",
+        "reused-source-message-id",
+        None,
+        "user",
+        1_700_210_001_000,
+        "第二间完全虚构的 schema 2 房间",
+        "00000000:0001700210001000:second",
+    )
+    first["selectedForHandoff"] = True
+    second["selectedForHandoff"] = False
+    data = {
+        "conversations": [
+            _conversation("ferry-schema-two-room-one", 1),
+            _conversation("ferry-schema-two-room-two", 1),
+        ],
+        "messages": [first, second],
+        "importBatches": [],
+        "handoffDrafts": [],
+        "appMeta": [{"key": "schemaVersion", "value": 2}],
+    }
+    input_path = _write_backup(
+        tmp_path / "schema-two.json",
+        _backup(data, appVersion="0.1.10", schemaVersion=2),
+    )
+
+    package, report = convert_ferry_backup(str(input_path))
+
+    assert report["can_convert"] is True
+    assert report["schema_version"] == 2
+    assert len(package["records"]) == 2
+    assert len({record["record_id"] for record in package["records"]}) == 2
+    assert len({record["conversation_id"] for record in package["records"]}) == 2
+    assert len({record["message_id"] for record in package["records"]}) == 2
+    assert b"selectedForHandoff" not in serialize_record_package(package)
 
 
 def test_unicode_multiple_parts_and_source_unknown_are_preserved_with_warning(tmp_path):
