@@ -204,6 +204,34 @@ def query_db(tmp_path):
             "这是一次用于归档的总结。",
             "2026-07-10T09:00:00Z",
         ),
+        _record(
+            "perfume-preference-answer",
+            "谈到香水时，我最钟意的是雨后雪松；这是当时给出的选择。",
+            "2026-07-14T09:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "takeout-barbecue-old",
+            "那次点外卖吃的是烧烤，我说味道很好，也很喜欢炭火香。",
+            "2026-06-20T09:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "takeout-barbecue-latest",
+            "后来一次点外卖吃的也是烧烤，我回答自己很喜欢那种焦香。",
+            "2026-07-20T09:00:00Z",
+            role="assistant",
+        ),
+        _record(
+            "takeout-only-newer",
+            "今天点外卖吃了一碗虚构的月亮面。",
+            "2026-07-22T09:00:00Z",
+        ),
+        _record(
+            "barbecue-only-newer",
+            "昨天只是从烧烤摊旁边路过，并没有点餐。",
+            "2026-07-23T09:00:00Z",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -312,6 +340,31 @@ def test_first_love_query_uses_assistant_speaker_scope(query_db):
         "love-later-assistant",
     ]
     assert all(item["role"] == "assistant" for item in response["memories"])
+
+
+def test_preference_question_keeps_literal_subject_and_answer_language(query_db):
+    query = "之前我问你你最喜欢的香水是哪一种，你当时怎么回答的？"
+    plan = _recall_query_plan(query)
+    response = recall_records(query, limit=5, db_path=str(query_db))
+
+    assert list(plan.intent_required_all_like_terms) == ["香水"]
+    assert "喜欢" in plan.intent_required_any_like_terms
+    assert response["memories"][0]["record_id"] == "perfume-preference-answer"
+    assert response["recall_mode"] == "sqlite_like_intent_focused"
+
+
+def test_latest_composite_event_requires_all_topics_and_prefers_newest(query_db):
+    query = "上次我们点外卖吃的那家烧烤，你喜欢吗？当时是怎么说的？"
+    plan = _recall_query_plan(query)
+    response = recall_records(query, limit=5, db_path=str(query_db))
+
+    assert list(plan.intent_required_all_like_terms) == ["外卖", "烧烤"]
+    assert plan.prefer_latest is True
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[:2] == ["takeout-barbecue-latest", "takeout-barbecue-old"]
+    assert "takeout-only-newer" not in ids
+    assert "barbecue-only-newer" not in ids
+    assert response["recall_mode"] == "sqlite_like_intent_focused"
 
 
 def test_original_wording_query_traces_retelling_back_to_earlier_source(query_db):

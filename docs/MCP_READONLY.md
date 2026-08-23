@@ -103,6 +103,13 @@ or unbounded retry loop is involved. Shared-event scans are not expanded a
 second time, so an unsupported negative control remains empty instead of
 drifting into unrelated shared history.
 
+An explicit preference subject is kept together with generic
+preference/choice/answer language. A query marked as "last" or "most recent"
+with multiple literal subjects requires all those subjects in the evidence and
+orders qualifying rows newest first. Both remain a single read-only SQLite pass
+when they succeed; neither uses a private-fact dictionary or supplies an
+expected answer.
+
 An earliest question that explicitly asks about a shared two-person event may
 use `recall_mode=sqlite_shared_event_window`. This mode runs one bounded,
 identity-filtered, same-conversation and same-branch rescue pass. It requires

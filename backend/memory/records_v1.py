@@ -1675,6 +1675,7 @@ class RecallQueryPlan:
     relaxed_expression: Optional[str]
     like_terms: Sequence[str]
     prefer_oldest: bool
+    prefer_latest: bool
     intent_required_all_like_terms: Sequence[str]
     intent_required_any_like_terms: Sequence[str]
     intent_bonus_like_terms: Sequence[str]
@@ -1811,6 +1812,119 @@ _GIFT_EARLIEST_BONUS_TERMS = (
     "第一次",
     "最早",
     "最初",
+)
+
+_PREFERENCE_QUERY_MARKERS = ("最喜欢", "最爱", "偏爱", "更喜欢")
+_PREFERENCE_CONTEXT_TERMS = (
+    "最喜欢",
+    "最爱",
+    "偏爱",
+    "更喜欢",
+    "喜欢",
+    "钟意",
+    "中意",
+    "会选",
+    "选择",
+)
+_PREFERENCE_BONUS_TERMS = (
+    "我最喜欢",
+    "我最爱",
+    "我偏爱",
+    "我更喜欢",
+    "我会选",
+    "我的选择",
+    "回答",
+)
+
+_LATEST_QUERY_MARKERS = (
+    "最近一次",
+    "最近那次",
+    "前几天那次",
+    "上一次",
+    "上一回",
+    "上次",
+    "前一次",
+)
+_LATEST_EVENT_PREFIX_MARKERS = (
+    "前几天那次",
+    "最近一次",
+    "最近那次",
+    "上一次",
+    "上一回",
+    "前一次",
+    "上次",
+    "我跟你一起",
+    "我和你一起",
+    "你跟我一起",
+    "你和我一起",
+    "我们一起",
+    "咱们一起",
+    "我们",
+    "咱们",
+    "那一家",
+    "这一家",
+    "那一次",
+    "这一次",
+    "那家",
+    "这家",
+    "那次",
+    "这次",
+    "那个",
+    "这个",
+    "点了",
+    "叫了",
+    "订了",
+    "买了",
+    "去了",
+    "点",
+    "叫",
+    "订",
+    "买",
+    "去",
+)
+_LATEST_EVENT_SUFFIX_MARKERS = (
+    "的时候",
+    "那一次",
+    "那一回",
+    "那次",
+    "当时",
+    "吃过",
+    "喝过",
+    "吃了",
+    "喝了",
+    "吃",
+    "喝",
+)
+_LATEST_EVENT_NON_TOPIC_TERMS = {
+    "",
+    "之前",
+    "后来",
+    "当时",
+    "当时是",
+    "当时说",
+    "喜欢",
+    "喜不喜欢",
+    "觉得",
+    "评价",
+    "回答",
+    "怎么说",
+    "说",
+    "怎样",
+    "怎么样",
+    "如何",
+    "好不好",
+    "好吃",
+}
+_LATEST_EVENT_BONUS_TERMS = (
+    "喜欢",
+    "好吃",
+    "味道",
+    "口味",
+    "评价",
+    "满意",
+    "觉得",
+    "回答",
+    "当时说",
 )
 
 _ORIGINAL_EVIDENCE_QUERY_MARKERS = (
@@ -2217,6 +2331,81 @@ def _temporal_topic_terms(segment: str) -> List[str]:
                 for index in range(len(variant) - 3)
             )
     return _unique_text(terms)
+
+
+def _preference_query_entity(normalized: str) -> Optional[str]:
+    """Extract the literal subject of a preference question, if explicit.
+
+    This deliberately returns only text already present next to a generic
+    preference marker.  It never supplies a domain synonym or an expected
+    answer, so the same rule works for perfume, food, music, tools, and future
+    source adapters.
+    """
+
+    if not any(marker in normalized for marker in _PREFERENCE_QUERY_MARKERS):
+        return None
+    compact = re.sub(r"\s+", "", normalized)
+    patterns = (
+        r"(?:最喜欢|最爱|偏爱|更喜欢)(?:的)?"
+        r"(?P<entity>[0-9A-Za-z\u3400-\u9fff_-]{2,16}?)"
+        r"(?:是(?:哪|什么)|哪(?:一种|一款|个|款|类)|什么|"
+        r"[，,。！？!?；;：:]|$)",
+        r"(?:最喜欢|最爱|偏爱|更喜欢)"
+        r"(?:哪一种|哪一款|哪一个|哪款|哪类|什么)"
+        r"(?P<entity>[0-9A-Za-z\u3400-\u9fff_-]{2,16}?)"
+        r"(?:[，,。！？!?；;：:]|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, compact)
+        if match:
+            entity = match.group("entity").strip("的")
+            if len(entity) >= 2:
+                return entity
+    return None
+
+
+def _latest_composite_topic_terms(normalized: str) -> List[str]:
+    """Keep multiple literal subjects from a latest-event question.
+
+    The legacy planner intentionally selected one longest clause.  That is a
+    good precision default, but it drops the second half of questions such as
+    "the takeaway barbecue last time".  Here we conservatively strip only
+    conversational/time/action glue and require at least two surviving literal
+    anchors before activating the composite-event tier.
+    """
+
+    if not any(marker in normalized for marker in _LATEST_QUERY_MARKERS):
+        return []
+
+    topics: List[str] = []
+    for raw_segment in _focused_query_segments(normalized):
+        topic = raw_segment.strip()
+        changed = True
+        while topic and changed:
+            changed = False
+            for marker in _LATEST_EVENT_PREFIX_MARKERS:
+                if topic.startswith(marker):
+                    topic = topic[len(marker) :].strip()
+                    changed = True
+                    break
+        changed = True
+        while topic and changed:
+            changed = False
+            for marker in _LATEST_EVENT_SUFFIX_MARKERS:
+                if topic.endswith(marker):
+                    topic = topic[: -len(marker)].strip()
+                    changed = True
+                    break
+        topic = topic.strip("的")
+        if (
+            topic in _LATEST_EVENT_NON_TOPIC_TERMS
+            or not 2 <= len(topic) <= 16
+            or not re.fullmatch(r"[0-9A-Za-z\u3400-\u9fff_-]+", topic)
+        ):
+            continue
+        topics.append(topic)
+
+    return _bounded_text(_unique_text(topics), 3)
 
 
 def _swap_first_second_person(value: str) -> str:
@@ -2643,6 +2832,9 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     prefer_oldest = any(
         marker in normalized for marker in _EARLIEST_QUERY_MARKERS
     )
+    prefer_latest = any(marker in normalized for marker in _LATEST_QUERY_MARKERS)
+    preference_entity = _preference_query_entity(normalized)
+    latest_composite_terms = _latest_composite_topic_terms(normalized)
     shared_event_intent = prefer_oldest and any(
         marker in normalized for marker in _SHARED_EVENT_QUERY_MARKERS
     )
@@ -2691,6 +2883,20 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
             intent_bonus_like_terms.extend(("你送我的", "送给我", "给我的"))
         intent_min_any_matches = 2
         intent_relevance_first = True
+    elif preference_entity is not None:
+        # Bind the literal subject to generic preference/answer language.  A
+        # matching question record may then carry the historical answer in its
+        # bounded same-branch context even when the answer omits the subject.
+        intent_required_all_like_terms = [preference_entity]
+        intent_required_any_like_terms = list(_PREFERENCE_CONTEXT_TERMS)
+        intent_bonus_like_terms = list(_PREFERENCE_BONUS_TERMS)
+        intent_prefer_compact = True
+    elif prefer_latest and len(latest_composite_terms) >= 2:
+        # Every literal subject must occur in the evidence row.  Once relevance
+        # is guaranteed, newest-first ordering implements "上次/最近一次"
+        # without guessing an answer or joining unrelated conversations.
+        intent_required_all_like_terms = latest_composite_terms
+        intent_bonus_like_terms = list(_LATEST_EVENT_BONUS_TERMS)
     elif "我们" in normalized and "第一次" in normalized:
         # Preserve first-person relationship scope.  Trigram FTS may treat
         # "我们第一次..." and "他们第一次..." as near matches; exact LIKE
@@ -2731,6 +2937,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         relaxed_expression=relaxed_expression,
         like_terms=_bounded_text(_unique_text(like_terms), MAX_LIKE_TERMS),
         prefer_oldest=prefer_oldest,
+        prefer_latest=prefer_latest,
         intent_required_all_like_terms=intent_required_all_like_terms,
         intent_required_any_like_terms=intent_required_any_like_terms,
         intent_bonus_like_terms=intent_bonus_like_terms,
@@ -2938,6 +3145,10 @@ def recall_records(
             elif query_plan.prefer_oldest:
                 order_sql = (
                     "r.created_at ASC, lexical_rank DESC, length(r.content) ASC"
+                )
+            elif query_plan.prefer_latest:
+                order_sql = (
+                    "r.created_at DESC, lexical_rank DESC, length(r.content) ASC"
                 )
             elif prefer_compact:
                 order_sql = (

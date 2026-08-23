@@ -171,6 +171,15 @@ relaxed and fallback modes are explicitly labelled with `_focused`, `_relaxed`
 or `_fallback`. This query planning is offline lexical matching, not semantic
 embedding, and it never changes source records or the FTS index.
 
+Preference questions with an explicit subject bind that literal subject to a
+fixed, source-neutral set of preference/choice/answer markers. Latest-event
+questions with at least two explicit subjects require every surviving literal
+subject in the same evidence row and then sort matching evidence newest first.
+This prevents the legacy longest-clause heuristic from dropping the object of a
+preference or one half of a composite event. Neither rule contains private
+answers or domain-specific synonyms; nearby turns remain provenance-bearing
+context rather than generated conclusions.
+
 Earliest-event ordering is still retrieval, not adjudication. Quoted stories,
 hypotheticals and later recollections may all contain the same literal words;
 Echo Pact returns traceable candidates and nearby turns instead of silently
