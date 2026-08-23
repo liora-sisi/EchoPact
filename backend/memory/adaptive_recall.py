@@ -65,7 +65,17 @@ _EXPANSION_FAMILIES = (
     _ExpansionFamily(
         "gift_language",
         ("礼物", "赠礼", "送给", "送我的", "送你的"),
-        ("礼物", "送给", "赠送", "收到", "挑选", "选择", "纪念物"),
+        (
+            "第一件",
+            "最早",
+            "礼物",
+            "送给",
+            "赠送",
+            "收到",
+            "挑选",
+            "选择",
+            "纪念物",
+        ),
     ),
     _ExpansionFamily(
         "training_language",
@@ -125,14 +135,13 @@ def _follow_up_passes(
 
     passes: List[tuple[str, str]] = []
     asks_for_retelling = _contains_any(normalized, _RETELLING_MARKERS)
-    evidence_sensitive = _contains_any(
+    source_trace_sensitive = _contains_any(
         normalized,
         _EARLIEST_MARKERS
-        + _MEANING_MARKERS
         + _ORIGIN_MARKERS
         + _ORIGINAL_MARKERS,
     )
-    if evidence_sensitive and not asks_for_retelling and not _contains_any(
+    if source_trace_sensitive and not asks_for_retelling and not _contains_any(
         normalized, _ORIGINAL_MARKERS
     ):
         passes.append(("original_evidence_trace", f"只根据原始记录，{normalized}"))
@@ -163,16 +172,15 @@ def _merge_results(
 ) -> Dict[str, Any]:
     first = copy.deepcopy(dict(pass_results[0][1]))
     normalized = _normalize(query)
-    evidence_sensitive = _contains_any(
+    source_trace_sensitive = _contains_any(
         normalized,
         _EARLIEST_MARKERS
-        + _MEANING_MARKERS
         + _ORIGIN_MARKERS
         + _ORIGINAL_MARKERS,
     ) and not _contains_any(normalized, _RETELLING_MARKERS)
 
     ordered_passes = list(pass_results)
-    if evidence_sensitive:
+    if source_trace_sensitive:
         ordered_passes.sort(
             key=lambda item: 0 if item[0] == "original_evidence_trace" else 1
         )

@@ -64,6 +64,16 @@ def _database(tmp_path: Path) -> Path:
             "2026-02-03T00:05:00Z",
         ),
         _record(
+            "meaning-explanation",
+            "银纽扣的故事含义是：在陌生城市里彼此照亮。",
+            "2026-02-10T00:00:00Z",
+        ),
+        _record(
+            "meaning-casual-mention",
+            "今天整理抽屉时又看见那枚银纽扣。",
+            "2026-02-11T00:00:00Z",
+        ),
+        _record(
             "unrelated-trip",
             "我们一起在河边散步，这是普通的共同经历。",
             "2026-03-01T00:00:00Z",
@@ -117,6 +127,17 @@ def test_typo_training_question_recovers_general_training_evidence(tmp_path):
         item["pass"] for item in response["adaptive_recall"]["passes"]
     }
     assert "training_language" in passes
+
+
+def test_meaning_question_excludes_short_unexplained_mentions(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {"query": "银纽扣在我们这里有什么意思？", "limit": 5}
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "meaning-explanation"
+    assert "meaning-casual-mention" not in ids
 
 
 def test_negative_shared_event_does_not_expand_into_unrelated_history(tmp_path):

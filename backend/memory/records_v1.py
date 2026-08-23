@@ -1760,7 +1760,12 @@ _EARLIEST_QUERY_MARKERS = (
     "从什么时候开始",
     "什么时候开始",
     "第一次",
+    "第一件",
+    "第一个",
+    "第一份",
+    "第一样",
     "最早",
+    "最初",
 )
 
 _MEANING_QUERY_MARKERS = (
@@ -1779,6 +1784,33 @@ _MEANING_CONTEXT_TERMS = (
     "代表",
     "比喻",
     "指代",
+)
+
+_GIFT_QUERY_MARKERS = ("礼物", "赠礼", "礼品")
+_GIFT_RELATION_TERMS = (
+    "礼物",
+    "赠礼",
+    "礼品",
+    "送给",
+    "送你",
+    "送出",
+    "送的",
+    "给你",
+    "收到",
+    "第一件",
+    "第一个",
+    "第一份",
+    "第一次",
+    "最早",
+    "最初",
+)
+_GIFT_EARLIEST_BONUS_TERMS = (
+    "第一件",
+    "第一个",
+    "第一份",
+    "第一次",
+    "最早",
+    "最初",
 )
 
 _ORIGINAL_EVIDENCE_QUERY_MARKERS = (
@@ -2154,7 +2186,18 @@ def _temporal_topic_terms(segment: str) -> List[str]:
     """Return bounded literal anchors for an earliest/first-event question."""
 
     topic = segment
-    for marker in ("我们", "第一次", "第一回", "最早", "开始"):
+    for marker in (
+        "我们",
+        "第一次",
+        "第一回",
+        "第一件",
+        "第一个",
+        "第一份",
+        "第一样",
+        "最早",
+        "最初",
+        "开始",
+    ):
         topic = topic.replace(marker, "")
     topic = topic.strip()
     if not topic:
@@ -2628,8 +2671,26 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         intent_required_all_like_terms = [
             segment for segment in primary_focused_segments if len(segment) >= 2
         ][:2]
-        intent_bonus_like_terms = list(_MEANING_CONTEXT_TERMS)
+        # A short literal mention of the entity is not an explanation.  Require
+        # at least one source-neutral meaning marker first, then prefer the
+        # compact explanatory record over a long keyword dossier.
+        intent_required_any_like_terms = list(_MEANING_CONTEXT_TERMS)
         intent_prefer_compact = True
+    elif prefer_oldest and any(
+        marker in normalized for marker in _GIFT_QUERY_MARKERS
+    ):
+        # Preserve relationship direction without naming any private gift.
+        # At least two generic gift/action terms must co-occur; among equally
+        # relevant rows the earliest evidence wins.  The adaptive layer can
+        # then trace a later confirmation back to quoted original wording.
+        intent_required_any_like_terms = list(_GIFT_RELATION_TERMS)
+        intent_bonus_like_terms = list(_GIFT_EARLIEST_BONUS_TERMS)
+        if "你送我的" in normalized or "你给我的" in normalized:
+            intent_bonus_like_terms.extend(("我送你的", "送给你", "给你的"))
+        elif "我送你的" in normalized or "我给你的" in normalized:
+            intent_bonus_like_terms.extend(("你送我的", "送给我", "给我的"))
+        intent_min_any_matches = 2
+        intent_relevance_first = True
     elif "我们" in normalized and "第一次" in normalized:
         # Preserve first-person relationship scope.  Trigram FTS may treat
         # "我们第一次..." and "他们第一次..." as near matches; exact LIKE

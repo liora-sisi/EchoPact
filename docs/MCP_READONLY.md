@@ -94,7 +94,8 @@ Where ordered branch positions exist, each match may include a bounded
 applied to the match, its context records and any `event_evidence` records.
 
 One public call may contain a bounded adaptive plan. Exact anchors keep the
-single-pass fast path. Evidence-sensitive questions can add deterministic
+single-pass fast path. Meaning questions require an entity and explanatory
+language in the same record. Source-sensitive questions can add deterministic
 original-source tracing and a small source-neutral vocabulary expansion, up to
 `MAX_ADAPTIVE_QUERY_PASSES`. The response reports this under
 `adaptive_recall`; no private-fact dictionary, network model, database write,
