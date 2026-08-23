@@ -1683,6 +1683,7 @@ class RecallQueryPlan:
     intent_min_any_matches: int
     intent_roles: Sequence[str]
     intent_relevance_first: bool
+    explicit_literal_anchors: Sequence[str]
     shared_event_intent: bool
     shared_event_fts_terms: Sequence[str]
     shared_event_like_terms: Sequence[str]
@@ -1972,6 +1973,9 @@ MAX_ORIGINAL_TRACE_ANCHOR_CHARS = 120
 RECALL_CONTEXT_BEFORE = 1
 RECALL_CONTEXT_AFTER = 2
 MAX_RECALL_CONTEXT_RECORDS = 4
+RECALL_LITERAL_CONTEXT_BEFORE = 2
+RECALL_LITERAL_CONTEXT_AFTER = 4
+MAX_RECALL_LITERAL_CONTEXT_RECORDS = 6
 
 MAX_SHARED_EVENT_CANDIDATES = 200
 MAX_SHARED_EVENT_RESULTS = 5
@@ -2294,6 +2298,68 @@ def _focused_query_segments(normalized: str) -> List[str]:
             )
         )
     return _unique_text(segments)
+
+
+def _explicit_query_anchors(normalized: str) -> List[str]:
+    """Return only literal anchors the caller explicitly supplied.
+
+    Quoted wording and artifact titles are deliberate evidence handles.  When
+    there is no quoted handle, a bounded ASCII name/code can serve the same
+    purpose (for example a product name).  Numeric room/archive labels are
+    retained alongside quoted text because they often disambiguate a later
+    explanation from the original message.  No synonym or private fact is
+    introduced here.
+    """
+
+    anchors: List[str] = []
+    for pattern in (
+        r"“([^”]{1,80})”",
+        r'"([^"\r\n]{1,80})"',
+        r"《([^》]{1,80})》",
+    ):
+        for match in re.finditer(pattern, normalized):
+            value = re.sub(r"\s+", " ", match.group(1)).strip()
+            if value:
+                anchors.append(value)
+
+    if not anchors:
+        anchors.extend(
+            re.findall(r"(?<![0-9A-Za-z_])[A-Za-z][0-9A-Za-z_-]{2,}", normalized)
+        )
+
+    anchors.extend(
+        re.findall(
+            r"\d{1,4}(?:号房|万多条记忆|万条记忆|条记忆)", normalized
+        )
+    )
+    return _bounded_text(_unique_text(anchors), 3)
+
+
+def _explicit_query_bonus_terms(
+    normalized: str, required_anchors: Sequence[str]
+) -> List[str]:
+    """Return bounded literal terms from an explicit enumeration.
+
+    A list such as ``glass house、cliff、blue key、song title`` describes one
+    scene even when no single message contains every term.  The strongest
+    quoted/title handle remains required; the remaining list items only rank
+    candidate rows and never become invented synonyms or hard filters.
+    """
+
+    if "、" not in normalized:
+        return []
+    required = {value.casefold() for value in required_anchors}
+    terms: List[str] = []
+    for raw in normalized.split("、"):
+        value = raw.strip().strip("，,。！？!?；;：:‘’'\"“”《》()（）[]【】")
+        if not value or value.casefold() in required:
+            continue
+        if not 2 <= len(value) <= 16:
+            continue
+        if not re.fullmatch(r"[0-9A-Za-z\u3400-\u9fff _-]+", value):
+            continue
+        terms.append(re.sub(r"\s+", " ", value).strip())
+    return _bounded_text(_unique_text(terms), MAX_LIKE_TERMS)
 
 
 def _temporal_topic_terms(segment: str) -> List[str]:
@@ -2761,6 +2827,10 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         exact_values.append("".join(ascii_words))
 
     focused_segments = _focused_query_segments(normalized)
+    explicit_literal_anchors = _explicit_query_anchors(normalized)
+    explicit_literal_bonus_terms = _explicit_query_bonus_terms(
+        normalized, explicit_literal_anchors
+    )
     # The most informative clause normally carries the subject; shorter
     # clauses are commonly vocatives or asides ("老朋友", "那时候你好傻").
     # Retain the full question for later fallback.
@@ -2883,6 +2953,23 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
             intent_bonus_like_terms.extend(("你送我的", "送给我", "给我的"))
         intent_min_any_matches = 2
         intent_relevance_first = True
+    elif "第一次" in normalized and any(
+        marker in normalized for marker in ("说爱", "爱我", "我爱你")
+    ):
+        # Word order differs naturally between a question ("说爱我") and a
+        # quoted answer ("我爱你").  Require the temporal marker and use both
+        # phrasings only as ranking evidence; never synthesize a date.
+        intent_required_any_like_terms = ["我爱你", "爱你"]
+        intent_bonus_like_terms = ["亲口", "第一次"]
+        intent_roles = ["assistant"]
+    elif explicit_literal_anchors:
+        # An exact user-supplied phrase/name is stronger than generic latest,
+        # preference or long-clause language.  Requiring every explicit handle
+        # prevents one common name or two-character phrase from filling the
+        # result set with unrelated rows.
+        intent_required_all_like_terms = list(explicit_literal_anchors)
+        intent_bonus_like_terms = list(explicit_literal_bonus_terms)
+        intent_relevance_first = True
     elif preference_entity is not None:
         # Bind the literal subject to generic preference/answer language.  A
         # matching question record may then carry the historical answer in its
@@ -2908,15 +2995,6 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
             )
         intent_bonus_like_terms = ["今天", "刚刚", "第一次"]
         intent_relevance_first = True
-    elif "第一次" in normalized and any(
-        marker in normalized for marker in ("说爱", "爱我", "我爱你")
-    ):
-        # Word order differs naturally between a question ("说爱我") and a
-        # quoted answer ("我爱你").  Require the temporal marker and use both
-        # phrasings only as ranking evidence; never synthesize a date.
-        intent_required_any_like_terms = ["我爱你", "爱你"]
-        intent_bonus_like_terms = ["亲口", "第一次"]
-        intent_roles = ["assistant"]
     elif prefer_oldest and primary_focused_segments:
         intent_required_any_like_terms = _temporal_topic_terms(
             primary_focused_segments[0]
@@ -2945,6 +3023,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         intent_min_any_matches=intent_min_any_matches,
         intent_roles=intent_roles,
         intent_relevance_first=intent_relevance_first,
+        explicit_literal_anchors=explicit_literal_anchors,
         shared_event_intent=shared_event_intent,
         shared_event_fts_terms=shared_event_fts_terms,
         shared_event_like_terms=shared_event_like_terms,
@@ -2959,6 +3038,24 @@ def _escaped_like_pattern(value: str) -> str:
         + value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         + "%"
     )
+
+
+def _literal_anchors_need_priority(plan: RecallQueryPlan) -> bool:
+    """Whether a long question should search its explicit handles first."""
+
+    if not plan.explicit_literal_anchors:
+        return False
+
+    def compact(value: str) -> str:
+        return re.sub(
+            r"[^0-9A-Za-z\u3400-\u9fff]+", "", value
+        ).casefold()
+
+    query_compact = compact(plan.normalized_query)
+    anchors_compact = "".join(
+        compact(value) for value in plan.explicit_literal_anchors
+    )
+    return bool(query_compact and query_compact != anchors_compact)
 
 
 def _confidence(record: Mapping[str, Any], query: str) -> tuple[float, List[str]]:
@@ -3538,17 +3635,32 @@ def recall_records(
 
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
-        for expression in query_plan.exact_expressions:
-            try:
-                rows = fetch_fts(expression)
-            except sqlite3.OperationalError:
-                # Query syntax/tokenizer edge cases fail safely into the next
-                # parameterized tier, never into string-built SQL.
-                rows = []
-            if rows:
-                break
+        prioritize_literal_anchors = _literal_anchors_need_priority(query_plan)
+        if prioritize_literal_anchors:
+            recall_mode = "sqlite_like_intent_focused"
+            rows = fetch_ranked_like(
+                query_plan.intent_required_all_like_terms,
+                query_plan.intent_required_any_like_terms,
+                query_plan.intent_bonus_like_terms,
+                prefer_compact=query_plan.intent_prefer_compact,
+                minimum_any_matches=query_plan.intent_min_any_matches,
+                roles=query_plan.intent_roles,
+                relevance_first=query_plan.intent_relevance_first,
+            )
+        allow_generic_fallback = not (prioritize_literal_anchors and not rows)
 
-        if not rows and (
+        if not rows and allow_generic_fallback:
+            for expression in query_plan.exact_expressions:
+                try:
+                    rows = fetch_fts(expression)
+                except sqlite3.OperationalError:
+                    # Query syntax/tokenizer edge cases fail safely into the next
+                    # parameterized tier, never into string-built SQL.
+                    rows = []
+                if rows:
+                    break
+
+        if not rows and allow_generic_fallback and (
             query_plan.intent_required_all_like_terms
             or query_plan.intent_required_any_like_terms
         ):
@@ -3563,21 +3675,33 @@ def recall_records(
                 relevance_first=query_plan.intent_relevance_first,
             )
 
-        if not rows and query_plan.focused_expression:
+        if (
+            not rows
+            and allow_generic_fallback
+            and query_plan.focused_expression
+        ):
             recall_mode = "sqlite_fts5_trigram_focused"
             try:
                 rows = fetch_fts(query_plan.focused_expression)
             except sqlite3.OperationalError:
                 rows = []
 
-        if not rows and query_plan.focused_relaxed_expression:
+        if (
+            not rows
+            and allow_generic_fallback
+            and query_plan.focused_relaxed_expression
+        ):
             recall_mode = "sqlite_fts5_trigram_focused_relaxed"
             try:
                 rows = fetch_fts(query_plan.focused_relaxed_expression)
             except sqlite3.OperationalError:
                 rows = []
 
-        if not rows and query_plan.focused_like_terms:
+        if (
+            not rows
+            and allow_generic_fallback
+            and query_plan.focused_like_terms
+        ):
             recall_mode = "sqlite_like_terms_focused"
             rows = fetch_like(
                 [
@@ -3586,21 +3710,25 @@ def recall_records(
                 ]
             )
 
-        if not rows and query_plan.relaxed_expression:
+        if (
+            not rows
+            and allow_generic_fallback
+            and query_plan.relaxed_expression
+        ):
             recall_mode = "sqlite_fts5_trigram_relaxed"
             try:
                 rows = fetch_fts(query_plan.relaxed_expression)
             except sqlite3.OperationalError:
                 rows = []
 
-        if not rows and query_plan.like_terms:
+        if not rows and allow_generic_fallback and query_plan.like_terms:
             recall_mode = "sqlite_like_terms_fallback"
             like_patterns = [
                 _escaped_like_pattern(term) for term in query_plan.like_terms
             ]
             rows = fetch_like(like_patterns)
 
-        if not rows:
+        if not rows and allow_generic_fallback:
             recall_mode = "sqlite_like_fallback"
             rows = fetch_like(
                 [_escaped_like_pattern(query_plan.normalized_query)]
@@ -3750,6 +3878,21 @@ def recall_records(
             )
 
         if context_hits:
+            context_before = (
+                RECALL_LITERAL_CONTEXT_BEFORE
+                if query_plan.explicit_literal_anchors
+                else RECALL_CONTEXT_BEFORE
+            )
+            context_after = (
+                RECALL_LITERAL_CONTEXT_AFTER
+                if query_plan.explicit_literal_anchors
+                else RECALL_CONTEXT_AFTER
+            )
+            max_context_records = (
+                MAX_RECALL_LITERAL_CONTEXT_RECORDS
+                if query_plan.explicit_literal_anchors
+                else MAX_RECALL_CONTEXT_RECORDS
+            )
             values_sql = ", ".join("(?, ?, ?, ?)" for _ in context_hits)
             context_params: List[Any] = []
             for hit in context_hits:
@@ -3766,8 +3909,8 @@ def recall_records(
                 JOIN records_v1_branch_memberships AS bm
                   ON bm.branch_id = h.branch_id
                  AND bm.position BETWEEN
-                     max(0, h.hit_position - {RECALL_CONTEXT_BEFORE})
-                     AND h.hit_position + {RECALL_CONTEXT_AFTER}
+                     max(0, h.hit_position - {context_before})
+                     AND h.hit_position + {context_after}
                 JOIN records_v1 AS r ON r.id = bm.record_rowid
                 WHERE r.id != h.hit_rowid
                 AND r.conversation_id = h.conversation_id
@@ -3783,7 +3926,7 @@ def recall_records(
                 items = context_by_rowid.setdefault(
                     context_row["hit_rowid"], []
                 )
-                if len(items) >= MAX_RECALL_CONTEXT_RECORDS:
+                if len(items) >= max_context_records:
                     continue
                 items.append(
                     {

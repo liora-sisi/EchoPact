@@ -516,6 +516,73 @@ def test_recall_returns_bounded_same_branch_conversation_context(tmp_path):
     assert all(item["record_id"] != "other-conversation" for item in context)
 
 
+def test_explicit_wording_returns_wider_same_branch_event_context(tmp_path):
+    db_path = tmp_path / "literal-context.sqlite3"
+    package_path = tmp_path / "literal-context.json"
+
+    def record(record_id: str, content: str, role: str, position: int) -> dict:
+        return {
+            "record_id": record_id,
+            "source_kind": "synthetic_conversation",
+            "source_ref": f"synthetic://literal-context/{record_id}",
+            "conversation_id": "synthetic-literal-context",
+            "branch_memberships": [{"branch_id": "main", "position": position}],
+            "message_id": f"message-{record_id}",
+            "role": role,
+            "content": content,
+            "created_at": f"2026-07-21T00:00:0{position}Z",
+            "verified": False,
+            "authority": "synthetic-unverified",
+            "source_cutoff_at": "2026-08-01T00:00:00Z",
+            "conflict_group_id": None,
+        }
+
+    records = [
+        record("meal-start", "我们刚开始吃热汤。", "assistant", 0),
+        record("meal-detail", "桌上还有烤南瓜和面包。", "user", 1),
+        record("literal-hit", "我说：快到站了。", "user", 2),
+        record("first-reply", "我误以为现在就要下车。", "assistant", 3),
+        record("first-correction", "你纠正我：快到不等于已经到。", "user", 4),
+        record("second-reply", "我承认自己把时态听错了。", "assistant", 5),
+        record("later-reaction", "你后来又笑我把这句话拐歪。", "user", 6),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    register_agent(OWNER, "Literal context owner", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(package_path),
+        db_path=str(db_path),
+        owner_agent_id=OWNER,
+        actor="test",
+    )
+
+    response = recall_records(
+        "我说“快到站了”时，前后发生了什么？",
+        limit=1,
+        db_path=str(db_path),
+        agent_id=OWNER,
+        read_only=True,
+    )
+
+    assert response["memories"][0]["record_id"] == "literal-hit"
+    assert [
+        item["record_id"]
+        for item in response["memories"][0]["conversation_context"]
+    ] == [
+        "meal-start",
+        "meal-detail",
+        "first-reply",
+        "first-correction",
+        "second-reply",
+        "later-reaction",
+    ]
+
+
 @pytest.mark.parametrize(
     ("query", "expected_id"),
     [("Echo Pact", "echo-pact"), ("Deep Seek", "deepseek")],

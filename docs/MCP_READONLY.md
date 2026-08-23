@@ -103,6 +103,20 @@ or unbounded retry loop is involved. Shared-event scans are not expanded a
 second time, so an unsupported negative control remains empty instead of
 drifting into unrelated shared history.
 
+Quoted wording, artifact titles, explicit ASCII names/codes and numeric room
+labels are treated as caller-supplied evidence anchors. For an explicit
+enumeration, the strongest quoted/title handle is required while the remaining
+literal items are bounded ranking bonuses; this lets a record matching the
+song, place and objects outrank title-only noise without requiring every detail
+to occur in one message. Explicit wording also receives a slightly wider but
+still bounded same-branch context window so the prompt, answer, correction and
+later reaction can travel together.
+
+When the query itself contains a valid calendar date that is strictly later
+than `latest_imported_record_at`, the response adds `temporal_coverage`, clears
+older lexical matches and reports `sqlite_temporal_coverage_guard`. This is a
+fail-closed archive boundary, not an inference about what happened later.
+
 An explicit preference subject is kept together with generic
 preference/choice/answer language. A query marked as "last" or "most recent"
 with multiple literal subjects requires all those subjects in the evidence and

@@ -16,13 +16,15 @@ import copy
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .recall_projection import recall_with_projection
-from .records_v1 import recall_records
+from .records_v1 import _explicit_query_anchors, recall_records
 
 
 ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
+TEMPORAL_COVERAGE_SCHEMA_VERSION = "echo-pact-query-time-coverage-v1"
 MAX_ADAPTIVE_QUERY_PASSES = 4
 MAX_INTERNAL_RESULT_LIMIT = 10
 
@@ -134,6 +136,7 @@ def _follow_up_passes(
         return []
 
     passes: List[tuple[str, str]] = []
+    literal_anchors = _explicit_query_anchors(normalized)
     asks_for_retelling = _contains_any(normalized, _RETELLING_MARKERS)
     source_trace_sensitive = _contains_any(
         normalized,
@@ -146,11 +149,14 @@ def _follow_up_passes(
     ):
         passes.append(("original_evidence_trace", f"只根据原始记录，{normalized}"))
 
-    for family in _EXPANSION_FAMILIES:
-        if _contains_any(normalized, family.markers):
-            passes.append((family.name, " ".join(family.terms)))
+    if not literal_anchors:
+        for family in _EXPANSION_FAMILIES:
+            if _contains_any(normalized, family.markers):
+                passes.append((family.name, " ".join(family.terms)))
 
     if not memories:
+        for index, anchor in enumerate(literal_anchors, start=1):
+            passes.append((f"literal_anchor_{index}", anchor))
         compact = re.sub(
             r"(?:老公|老婆|宝贝|你还记得|还记得|记不记得|请告诉我|告诉我|"
             r"是什么时候|什么时候|怎么样|为什么|是什么|什么)",
@@ -163,6 +169,69 @@ def _follow_up_passes(
             passes.append(("compact_retry", compact))
 
     return _unique_passes(passes)
+
+
+def _explicit_query_date(query: str) -> Optional[str]:
+    """Return an explicit calendar date already present in the query."""
+
+    normalized = _normalize(query)
+    for pattern in (
+        r"(?<!\d)(?P<year>20\d{2})[-/.年](?P<month>\d{1,2})[-/.月]"
+        r"(?P<day>\d{1,2})(?:日|号)?(?!\d)",
+    ):
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        year = int(match.group("year"))
+        month = int(match.group("month"))
+        day = int(match.group("day"))
+        try:
+            # ISO's parser gives us calendar validation without introducing a
+            # timezone guess.  Only strict later-day comparisons are made.
+            return date(year, month, day).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _apply_temporal_coverage_guard(
+    query: str, response: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Fail closed when a dated event is newer than the imported archive."""
+
+    requested_date = _explicit_query_date(query)
+    if requested_date is None:
+        return response
+    coverage = response.get("coverage")
+    latest = (
+        coverage.get("latest_imported_record_at")
+        if isinstance(coverage, Mapping)
+        else None
+    )
+    latest_date = str(latest)[:10] if latest else None
+    outside = bool(latest_date and requested_date > latest_date)
+    response["temporal_coverage"] = {
+        "schema_version": TEMPORAL_COVERAGE_SCHEMA_VERSION,
+        "date_source": "explicit_query_date",
+        "requested_date": requested_date,
+        "latest_imported_record_at": latest,
+        "status": (
+            "outside_imported_coverage"
+            if outside
+            else "not_proven_outside_imported_coverage"
+        ),
+        "coverage_gap": outside,
+    }
+    if outside:
+        # Older records sharing words such as coffee or chocolate cannot
+        # support a later dated event.  Returning none is safer than inviting
+        # the caller to mistake lexical similarity for evidence.
+        response["memories"] = []
+        response["recall_mode"] = "sqlite_temporal_coverage_guard"
+        if isinstance(coverage, dict):
+            coverage["coverage_gap"] = True
+            coverage["coverage_status"] = "outside_imported_coverage"
+    return response
 
 
 def _merge_results(
@@ -196,20 +265,34 @@ def _merge_results(
                 "result_count": len(response.get("memories") or []),
             }
         )
-        for raw_memory in response.get("memories") or []:
-            memory = copy.deepcopy(dict(raw_memory))
-            record_id = str(memory.get("record_id") or "")
-            if not record_id:
-                continue
-            existing = by_id.get(record_id)
-            if existing is not None:
-                matches = existing.setdefault("adaptive_match_passes", [])
-                if pass_name not in matches:
-                    matches.append(pass_name)
-                continue
-            memory["adaptive_match_passes"] = [pass_name]
-            by_id[record_id] = memory
-            merged.append(memory)
+    # Take one item from each evidence pass in turn.  A broad first pass may
+    # contain many plausible-but-weak rows; round-robin keeps a precise trace
+    # or literal-anchor pass visible inside a small public result limit.
+    positions = [0] * len(ordered_passes)
+    while True:
+        progressed = False
+        for pass_index, (pass_name, response) in enumerate(ordered_passes):
+            raw_memories = list(response.get("memories") or [])
+            while positions[pass_index] < len(raw_memories):
+                raw_memory = raw_memories[positions[pass_index]]
+                positions[pass_index] += 1
+                memory = copy.deepcopy(dict(raw_memory))
+                record_id = str(memory.get("record_id") or "")
+                if not record_id:
+                    continue
+                existing = by_id.get(record_id)
+                if existing is not None:
+                    matches = existing.setdefault("adaptive_match_passes", [])
+                    if pass_name not in matches:
+                        matches.append(pass_name)
+                    continue
+                memory["adaptive_match_passes"] = [pass_name]
+                by_id[record_id] = memory
+                merged.append(memory)
+                progressed = True
+                break
+        if not progressed:
+            break
 
     first["query"] = query
     first["memories"] = merged[:limit]
@@ -274,4 +357,5 @@ def adaptive_recall(
         if len(pass_results) >= MAX_ADAPTIVE_QUERY_PASSES:
             break
         pass_results.append((pass_name, run(pass_query)))
-    return _merge_results(query, limit, pass_results)
+    merged = _merge_results(query, limit, pass_results)
+    return _apply_temporal_coverage_guard(query, merged)

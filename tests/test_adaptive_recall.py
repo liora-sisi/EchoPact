@@ -83,6 +83,41 @@ def _database(tmp_path: Path) -> Path:
             "唯一暗号是 ADAPTIVE-2042。",
             "2026-04-01T00:00:00Z",
         ),
+        _record(
+            "paired-name-evidence",
+            "后来核对名字线：月岚先出现，Nova 随后确定；两者并非同刻命名。",
+            "2026-04-02T00:00:00Z",
+        ),
+        _record(
+            "paired-name-cjk-noise",
+            "月岚也出现在另一份无关的设备清单里。",
+            "2026-07-30T00:00:00Z",
+        ),
+        _record(
+            "paired-name-ascii-noise",
+            "Nova 也出现在另一份无关的产品说明里。",
+            "2026-07-31T00:00:00Z",
+        ),
+        _record(
+            "artifact-state",
+            "《晨星木盒》已经选定并告诉店家，等实物到手后再拍照；当时尚未收到。",
+            "2026-04-03T00:00:00Z",
+        ),
+        _record(
+            "emoji-explanation",
+            "后来解释：21号房里的😮‍💨不是普通叹气，而是那段对话里的特定反应。",
+            "2026-04-04T00:00:00Z",
+        ),
+        _record(
+            "scene-title-noise",
+            "包间里又点了一次《缓缓同行》，这是只有歌名相同的干扰记录。",
+            "2026-07-29T00:00:00Z",
+        ),
+        _record(
+            "scene-multi-anchor",
+            "海岛悬崖上的玻璃小屋播放《缓缓同行》；石台放着蓝色钥匙和金色钥匙。",
+            "2026-04-05T00:00:00Z",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -165,3 +200,74 @@ def test_exact_anchor_keeps_single_fast_pass_and_database_unchanged(tmp_path):
     assert response["adaptive_recall"]["query_passes_used"] == 1
     assert response["recall_mode"] == "sqlite_fts5_trigram"
     assert _hash(db_path) == before
+
+
+def test_multiple_explicit_anchors_require_same_evidence_row(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "“月岚”和“Nova”是同一时间一起取的吗？先后顺序是什么？",
+            "limit": 5,
+        }
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "paired-name-evidence"
+    assert "paired-name-cjk-noise" not in ids
+    assert "paired-name-ascii-noise" not in ids
+
+
+def test_artifact_title_beats_long_state_question_scaffolding(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "《晨星木盒》已经收到实物了吗？当时进行到了哪一步？",
+            "limit": 5,
+        }
+    )
+
+    assert response["memories"][0]["record_id"] == "artifact-state"
+
+
+def test_emoji_and_room_label_stay_bound_together(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "为什么21号房里的“😮‍💨”不是普通叹气？",
+            "limit": 5,
+        }
+    )
+
+    assert response["memories"][0]["record_id"] == "emoji-explanation"
+
+
+def test_explicit_future_date_suppresses_older_lexical_noise(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "2026年8月3日，唯一暗号是 ADAPTIVE-2042 吗？",
+            "limit": 5,
+        }
+    )
+
+    assert response["memories"] == []
+    assert response["recall_mode"] == "sqlite_temporal_coverage_guard"
+    assert response["temporal_coverage"]["status"] == (
+        "outside_imported_coverage"
+    )
+    assert response["coverage"]["coverage_gap"] is True
+
+
+def test_enumerated_scene_anchors_rerank_title_only_noise(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "海岛、悬崖、玻璃小屋、蓝色钥匙、金色钥匙、石台、"
+            "《缓缓同行》",
+            "limit": 5,
+        }
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "scene-multi-anchor"
+    assert "scene-title-noise" in ids
