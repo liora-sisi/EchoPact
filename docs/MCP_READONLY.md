@@ -103,6 +103,16 @@ or unbounded retry loop is involved. Shared-event scans are not expanded a
 second time, so an unsupported negative control remains empty instead of
 drifting into unrelated shared history.
 
+When the caller explicitly writes multiple questions separated by question
+marks or semicolons, the adaptive plan may search those clauses separately
+inside the same pass budget when they expose an auditable literal subject. A
+dependent clause beginning with wording such as "later", "at that time", or
+"as a result" may inherit only the bounded literal subject already present in
+the first question. An unanchored pronominal clause does not start a broad
+retry. Commas are not treated as task boundaries, quoted question marks are
+not split, and the planner does not add private entities, inferred answers, or
+model-generated synonyms.
+
 Quoted wording, artifact titles, explicit ASCII names/codes and numeric room
 labels are treated as caller-supplied evidence anchors. For an explicit
 enumeration, the strongest quoted/title handle is required while the remaining

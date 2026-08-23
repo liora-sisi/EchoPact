@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 
 from backend.mcp.readonly_server import ReadonlyGateway
-from backend.memory.adaptive_recall import MAX_ADAPTIVE_QUERY_PASSES
+from backend.memory.adaptive_recall import (
+    MAX_ADAPTIVE_QUERY_PASSES,
+    _explicit_subquestions,
+    _subquestion_passes,
+    _subquestion_subject_hint,
+)
 from backend.memory.identity import register_agent
 from backend.memory.records_v1 import import_record_package
 
@@ -117,6 +122,16 @@ def _database(tmp_path: Path) -> Path:
             "scene-multi-anchor",
             "海岛悬崖上的玻璃小屋播放《缓缓同行》；石台放着蓝色钥匙和金色钥匙。",
             "2026-04-05T00:00:00Z",
+        ),
+        _record(
+            "compound-trip-plan",
+            "第二次海边旅行原计划去白沙湾，在灯塔旁住两晚。",
+            "2026-04-07T00:00:00Z",
+        ),
+        _record(
+            "compound-trip-result",
+            "第二次海边旅行后来没有成行，因为暴雨导致交通停运。",
+            "2026-04-08T00:00:00Z",
         ),
     ]
     package_path.write_text(
@@ -271,3 +286,55 @@ def test_enumerated_scene_anchors_rerank_title_only_noise(tmp_path):
     ids = [item["record_id"] for item in response["memories"]]
     assert ids[0] == "scene-multi-anchor"
     assert "scene-title-noise" in ids
+
+
+def test_explicit_subquestions_recover_independent_topics_in_one_call(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "银纽扣在我们这里有什么意思？第二次海边旅行原计划去哪里？",
+            "limit": 5,
+        }
+    )
+
+    ids = {item["record_id"] for item in response["memories"]}
+    assert {"meaning-explanation", "compound-trip-plan"} <= ids
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert "subquestion_2" in passes
+    assert response["adaptive_recall"]["external_tool_calls_required"] == 1
+    assert response["adaptive_recall"]["query_passes_used"] <= (
+        MAX_ADAPTIVE_QUERY_PASSES
+    )
+
+
+def test_dependent_subquestion_keeps_literal_subject_without_guessing(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "第二次海边旅行原计划去哪里？后来实际有没有成行？",
+            "limit": 5,
+        }
+    )
+
+    ids = {item["record_id"] for item in response["memories"]}
+    assert {"compound-trip-plan", "compound-trip-result"} <= ids
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert "subquestion_2_subject" in passes
+
+
+def test_question_mark_inside_quote_is_not_a_subquestion_boundary():
+    assert _explicit_subquestions(
+        "“这是真的吗？”是什么意思？后来怎么解释？"
+    ) == ["“这是真的吗?”是什么意思", "后来怎么解释"]
+
+
+def test_subject_hint_removes_generic_version_scaffolding():
+    assert _subquestion_subject_hint(
+        "星轨木盒的几个版本最后怎么选定"
+    ) == "星轨木盒"
+
+
+def test_unanchored_pronominal_followup_does_not_consume_pass_budget():
+    assert _subquestion_passes(
+        "这个安排是在解释什么？我为什么离开？"
+    ) == []

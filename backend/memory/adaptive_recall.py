@@ -27,6 +27,7 @@ ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
 TEMPORAL_COVERAGE_SCHEMA_VERSION = "echo-pact-query-time-coverage-v1"
 MAX_ADAPTIVE_QUERY_PASSES = 4
 MAX_INTERNAL_RESULT_LIMIT = 10
+MAX_EXPLICIT_SUBQUESTIONS = 3
 
 _EARLIEST_MARKERS = (
     "第一次",
@@ -120,6 +121,164 @@ def _unique_passes(passes: Sequence[tuple[str, str]]) -> List[tuple[str, str]]:
     return result
 
 
+def _explicit_subquestions(query: str) -> List[str]:
+    """Split only caller-written question boundaries, outside quoted text.
+
+    This is deliberately narrower than sentence segmentation. Commas and
+    natural-language conjunctions are left untouched so the recall layer does
+    not invent a task decomposition the caller did not express. Question
+    marks and semicolons provide an auditable boundary for a small number of
+    deterministic internal passes.
+    """
+
+    normalized = _normalize(query)
+    parts: List[str] = []
+    current: List[str] = []
+    quote_end: Optional[str] = None
+    quote_pairs = {"“": "”", '"': '"', "'": "'", "《": "》"}
+    for char in normalized:
+        if quote_end is not None:
+            current.append(char)
+            if char == quote_end:
+                quote_end = None
+            continue
+        if char in quote_pairs:
+            quote_end = quote_pairs[char]
+            current.append(char)
+            continue
+        if char in "？?；;":
+            value = _normalize("".join(current).strip("，,。！!：: "))
+            if value:
+                parts.append(value)
+            current = []
+            continue
+        current.append(char)
+    value = _normalize("".join(current).strip("，,。！!：: "))
+    if value:
+        parts.append(value)
+
+    unique: List[str] = []
+    seen = set()
+    for part in parts:
+        key = part.casefold()
+        if len(part) < 3 or key in seen:
+            continue
+        seen.add(key)
+        unique.append(part)
+        if len(unique) >= MAX_EXPLICIT_SUBQUESTIONS:
+            break
+    return unique if len(unique) >= 2 else []
+
+
+def _subquestion_subject_hint(first_question: str) -> Optional[str]:
+    """Keep a bounded literal subject for dependent later questions."""
+
+    value = re.sub(
+        r"^(?:老公|老婆|宝贝|大宝贝|你还记得|还记得|记不记得)\s*",
+        "",
+        _normalize(first_question),
+    )
+    marker_positions = [
+        position
+        for marker in (
+            "是什么",
+            "为什么",
+            "怎么样",
+            "怎样",
+            "怎么",
+            "如何",
+            "什么时候",
+            "何时",
+            "哪里",
+            "哪儿",
+            "是否",
+            "有没有",
+            "谁",
+            "多少",
+        )
+        if (position := value.find(marker)) >= 2
+    ]
+    if marker_positions:
+        value = value[: min(marker_positions)]
+    value = re.sub(
+        r"(?:最初|最后|当时|后来|原计划去?|计划去?|想|要|是在|在|是|的)+$",
+        "",
+        value.strip("，,。！？!?；;：: "),
+    ).strip()
+    value = re.sub(
+        r"的?(?:几个|不同|这些|那些)?"
+        r"(?:版本|方案|款式|候选|选项|记录|说法|阶段)$",
+        "",
+        value,
+    ).strip()
+    if not 2 <= len(value) <= 48:
+        return None
+    if len(re.findall(r"[0-9A-Za-z\u3400-\u9fff]", value)) < 2:
+        return None
+    if value in {
+        "这件事",
+        "那件事",
+        "这个事",
+        "那个事",
+        "这次",
+        "那次",
+        "当时",
+        "后来",
+        "我们",
+    }:
+        return None
+    return value
+
+
+def _subquestion_passes(query: str) -> List[tuple[str, str]]:
+    """Return bounded passes for an explicitly multi-part user question."""
+
+    questions = _explicit_subquestions(query)
+    if not questions:
+        return []
+    subject_hint = _subquestion_subject_hint(questions[0])
+    dependent_markers = (
+        "后来",
+        "之后",
+        "再后来",
+        "当时",
+        "那时",
+        "那天",
+        "最后",
+        "结果",
+        "实际",
+        "接着",
+        "随后",
+        "然后",
+    )
+    result: List[tuple[str, str]] = []
+    has_independent_topic = False
+    # The initial pass already represents the first question. Add a second
+    # pass only when it is more focused than repeating the full prompt:
+    # dependent wording gets the first question's literal subject, while a
+    # genuinely independent question must expose its own non-pronominal
+    # subject. Broad clauses such as "why did I move" stay with the initial
+    # evidence instead of consuming result slots with an unanchored search.
+    for index, question in enumerate(questions[1:], start=2):
+        if question.startswith(dependent_markers):
+            if subject_hint:
+                result.append((f"subquestion_{index}_subject", subject_hint))
+            continue
+        own_subject = _subquestion_subject_hint(question)
+        if (
+            own_subject
+            and len(own_subject) >= 4
+            and not own_subject.startswith(
+                ("我", "你", "他", "她", "它", "这", "那", "当时", "后来")
+            )
+        ):
+            result.append((f"subquestion_{index}", question))
+            has_independent_topic = True
+    if has_independent_topic:
+        result.insert(0, ("subquestion_1", questions[0]))
+    return result
+
+
 def _follow_up_passes(
     query: str,
     first: Mapping[str, Any],
@@ -135,7 +294,7 @@ def _follow_up_passes(
     if isinstance(event_recall, Mapping):
         return []
 
-    passes: List[tuple[str, str]] = []
+    passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
     asks_for_retelling = _contains_any(normalized, _RETELLING_MARKERS)
     source_trace_sensitive = _contains_any(
@@ -249,7 +408,22 @@ def _merge_results(
     ) and not _contains_any(normalized, _RETELLING_MARKERS)
 
     ordered_passes = list(pass_results)
-    if source_trace_sensitive:
+    has_subquestion_pass = any(
+        name.startswith("subquestion_") for name, _ in ordered_passes
+    )
+    if has_subquestion_pass:
+        ordered_passes.sort(
+            key=lambda item: (
+                0
+                if item[0] == "original_evidence_trace"
+                else 1
+                if item[0].startswith("subquestion_")
+                else 2
+                if item[0] == "initial"
+                else 3
+            )
+        )
+    elif source_trace_sensitive:
         ordered_passes.sort(
             key=lambda item: 0 if item[0] == "original_evidence_trace" else 1
         )
