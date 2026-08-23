@@ -15,6 +15,7 @@ from backend.mcp.readonly_server import (
     ReadonlyGateway,
     SERVER_INSTRUCTIONS,
     StdioMcpServer,
+    _bounded_result,
     tool_definitions,
 )
 from backend.memory.identity import register_agent
@@ -152,6 +153,25 @@ def test_gateway_bounds_long_memory_content(mcp_db):
     assert memory["content_truncated"] is True
     assert memory["content_chars"] > MAX_CONTENT_CHARS
     assert memory["content"].endswith("[Echo Pact: content truncated]")
+
+
+def test_gateway_bounds_shared_event_evidence_content():
+    original = "乙" * (MAX_CONTENT_CHARS + 40)
+    bounded = _bounded_result(
+        {
+            "memories": [
+                {
+                    "content": "representative",
+                    "event_evidence": [{"content": original}],
+                }
+            ]
+        }
+    )
+
+    evidence = bounded["memories"][0]["event_evidence"][0]
+    assert evidence["content_chars"] == len(original)
+    assert evidence["content_truncated"] is True
+    assert evidence["content"].endswith("[Echo Pact: content truncated]")
 
 
 def test_readonly_open_refuses_old_schema_without_migrating(tmp_path):

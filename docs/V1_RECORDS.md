@@ -176,6 +176,26 @@ hypotheticals and later recollections may all contain the same literal words;
 Echo Pact returns traceable candidates and nearby turns instead of silently
 declaring one interpretation to be historical fact.
 
+For an earliest question that explicitly describes a shared two-person event,
+M6.1 can run one bounded rescue pass over records visible to the caller. It
+evaluates only fixed windows from one conversation and one branch, requires a
+literal event anchor plus explicit dyadic participation evidence, and rejects
+future plans, hypotheticals, negation, fictional framing, companion-only
+statements and incompatible event objects. Generic meal questions additionally
+require nearby food or meal evidence, so a phrase such as "eat an e-cigarette"
+does not become a shared meal. The category guard is deterministic and does not
+contain a private expected answer.
+
+A qualifying result reports `recall_mode=sqlite_shared_event_window` and adds
+`event_evidence`, `event_participation_evidence`, `event_start_at`,
+`event_end_at`, `earliest_support_status`, `earliest_support_reason`, and
+`assistant_identity_status`. Response-level `event_recall` reports the fixed
+candidate limit, candidates/windows inspected, qualifying count and whether
+the search was truncated. This is an earliest candidate within a bounded
+search, never proof of an absolute first. Historical records establish only an
+`assistant` role unless a separate identity mechanism verifies who occupied
+that role. M6.1 deliberately does not assemble events across conversations.
+
 When a query explicitly requests original wording, original messages or
 verbatim evidence, Echo Pact can make one bounded source-tracing pass after the
 normal precision-first lookup. It extracts literal snippets only from the

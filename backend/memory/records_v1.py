@@ -1682,6 +1682,26 @@ class RecallQueryPlan:
     intent_min_any_matches: int
     intent_roles: Sequence[str]
     intent_relevance_first: bool
+    shared_event_intent: bool
+    shared_event_fts_terms: Sequence[str]
+    shared_event_like_terms: Sequence[str]
+    shared_event_anchor_fts_terms: Sequence[str]
+    shared_event_anchor_like_terms: Sequence[str]
+
+
+@dataclass(frozen=True)
+class SharedEventMatch:
+    """One bounded same-branch window supporting a shared event candidate."""
+
+    representative_rowid: int
+    event_start_at: str
+    event_end_at: str
+    event_evidence: Sequence[Mapping[str, Any]]
+    participation_evidence: Sequence[Mapping[str, Any]]
+    support_status: str
+    support_reason: str
+    assistant_identity_status: str
+    signature: Sequence[str]
 
 
 MAX_RELAXED_TERMS_PER_GROUP = 24
@@ -1806,6 +1826,193 @@ MAX_ORIGINAL_TRACE_ANCHOR_CHARS = 120
 RECALL_CONTEXT_BEFORE = 1
 RECALL_CONTEXT_AFTER = 2
 MAX_RECALL_CONTEXT_RECORDS = 4
+
+MAX_SHARED_EVENT_CANDIDATES = 200
+MAX_SHARED_EVENT_RESULTS = 5
+SHARED_EVENT_CONTEXT_BEFORE = 6
+SHARED_EVENT_CONTEXT_AFTER = 4
+MAX_SHARED_EVENT_CONTEXT_RECORDS = (
+    SHARED_EVENT_CONTEXT_BEFORE + SHARED_EVENT_CONTEXT_AFTER + 1
+)
+
+_SHARED_EVENT_QUERY_MARKERS = (
+    "一起",
+    "共同",
+    "我们俩",
+    "我们两",
+    "我们两个",
+    "两个人都",
+)
+
+_SHARED_EVENT_DYADIC_MARKERS = (
+    "我跟你",
+    "我和你",
+    "你跟我",
+    "你和我",
+    "我们俩",
+    "我们两个人",
+    "我们两个",
+    "两个人都",
+    "咱俩",
+    "你我",
+)
+
+_SHARED_EVENT_TOPIC_STRIP_MARKERS = (
+    "我跟你一起",
+    "我和你一起",
+    "你跟我一起",
+    "你和我一起",
+    "我们两个一起",
+    "我们两个人一起",
+    "我们俩一起",
+    "两个人都",
+    "我们两个",
+    "我们两个人",
+    "我们俩",
+    "跟我一起",
+    "和我一起",
+    "跟你一起",
+    "和你一起",
+    "我们一起",
+    "共同",
+    "咱们",
+    "我们",
+    "一起",
+)
+
+_SHARED_EVENT_UNANSWERABLE_TOPICS = {
+    "",
+    "做",
+    "做了",
+    "事情",
+    "那件事",
+    "那个事",
+    "发生",
+    "发生了",
+}
+
+_SHARED_EVENT_CREATIVE_MARKERS = (
+    "故事里",
+    "小说里",
+    "画面",
+    "场景",
+    "漫画",
+    "短视频",
+    "画面里",
+    "画面中",
+    "提示词",
+    "想象中",
+    "梦里",
+    "角色扮演",
+    "设定中",
+    "虚构",
+)
+
+_SHARED_EVENT_CREATIVE_TOPIC_MARKERS = (
+    "画",
+    "绘",
+    "图",
+    "写",
+    "创作",
+    "故事",
+    "小说",
+    "视频",
+)
+
+_SHARED_EVENT_FUTURE_RE = re.compile(
+    r"(?:以后|下次|改天|将来|有机会|哪天).{0,18}"
+    r"(?:一起|共同|我跟你|我和你|你跟我|你和我|我们)"
+)
+_SHARED_EVENT_HYPOTHETICAL_RE = re.compile(
+    r"(?:如果|假如|要是|倘若).{0,30}"
+    r"(?:一起|共同|我跟你|我和你|你跟我|你和我|我们)"
+)
+_SHARED_EVENT_NEGATIVE_RE = re.compile(
+    r"(?:没有|没|从没|从未|不曾|还没|并没).{0,12}"
+    r"(?:一起|共同|我跟你|我和你|你跟我|你和我|我们)"
+    r"|(?:一起|共同|我跟你|我和你|你跟我|你和我|我们).{0,12}"
+    r"(?:没有|没|从没|从未|不曾|还没|并没)"
+)
+_SHARED_EVENT_INVITATION_RE = re.compile(
+    r"(?:要不要|想不想|愿不愿意).{0,18}(?:一起|共同)"
+)
+_SHARED_EVENT_COMPANION_ONLY_RE = re.compile(
+    r"(?:陪|陪着|看着)(?:你|我).{0,4}(?:吃|喝)"
+)
+
+_SHARED_EVENT_GENERIC_FOOD_QUERY_MARKERS = (
+    "吃东西",
+    "吃饭",
+    "吃的",
+    "吃什么",
+    "吃了什么",
+)
+
+# A generic meal question must not treat every literal ``一起吃...`` phrase as
+# food.  These are source-neutral category signals, not private answer aliases:
+# they keep ingestion, idioms, and smoking from masquerading as a shared meal.
+_SHARED_EVENT_FOOD_CONTEXT_MARKERS = (
+    "食物",
+    "食品",
+    "饭菜",
+    "菜品",
+    "吃饭",
+    "早餐",
+    "早饭",
+    "午餐",
+    "午饭",
+    "晚餐",
+    "晚饭",
+    "夜宵",
+    "烧烤",
+    "火锅",
+    "外卖",
+    "零食",
+    "小吃",
+    "甜品",
+    "甜点",
+    "米饭",
+    "米线",
+    "面条",
+    "面包",
+    "饺子",
+    "包子",
+    "馒头",
+    "蛋糕",
+    "牛肉",
+    "羊肉",
+    "鸡肉",
+    "猪肉",
+    "鱼肉",
+    "海鲜",
+    "鸡翅",
+    "口蘑",
+    "蘑菇",
+    "蔬菜",
+    "青菜",
+    "清淡",
+    "辣的",
+    "甜的",
+    "咸的",
+    "水果",
+    "苹果",
+    "香蕉",
+    "草莓",
+    "西瓜",
+    "火腿",
+    "香肠",
+    "鸡蛋",
+    "辣椒",
+    "蘸料",
+    "饮料",
+    "奶茶",
+    "咖啡",
+)
+
+_SHARED_EVENT_NON_FOOD_CONSUMPTION_RE = re.compile(
+    r"(?:一起|共同|我跟你|我和你|你跟我|你和我|我们).{0,6}"
+    r"吃(?:着|了|过)?(?:电子烟|香烟|烟|药|药片|胶囊|亏|苦头|哑巴亏)"
+)
 
 
 def _unique_text(values: Iterable[str]) -> List[str]:
@@ -1969,6 +2176,305 @@ def _temporal_topic_terms(segment: str) -> List[str]:
     return _unique_text(terms)
 
 
+def _swap_first_second_person(value: str) -> str:
+    return value.replace("我", "\0").replace("你", "我").replace("\0", "你")
+
+
+def _shared_event_query_terms(
+    normalized: str,
+) -> tuple[List[str], List[str], List[str], List[str]]:
+    """Build bounded literal rescue anchors without inventing topic synonyms."""
+
+    segments = _focused_query_segments(normalized)
+    if not segments:
+        return [], [], [], []
+    segment = max(segments, key=len)
+    for marker in _EARLIEST_QUERY_MARKERS + ("第一回", "当时"):
+        segment = segment.replace(marker, "")
+    segment = re.sub(r"\s+", "", segment)
+    if not segment:
+        return [], [], [], []
+
+    topic = segment
+    for marker in _SHARED_EVENT_TOPIC_STRIP_MARKERS:
+        topic = topic.replace(marker, "")
+    topic = topic.strip()
+    if topic in _SHARED_EVENT_UNANSWERABLE_TOPICS:
+        return [], [], [], []
+
+    variants = _unique_text(
+        value
+        for value in (topic, segment, _swap_first_second_person(segment))
+    )
+
+    def lexical_terms(values: Sequence[str]) -> tuple[List[str], List[str]]:
+        fts_terms: List[str] = []
+        like_terms: List[str] = []
+        for variant in values:
+            for lexical in re.findall(
+                r"[0-9A-Za-z]+|[\u3400-\u9fff]+", variant
+            ):
+                if re.fullmatch(r"[\u3400-\u9fff]+", lexical):
+                    if len(lexical) == 2:
+                        like_terms.append(lexical)
+                    elif len(lexical) >= 3:
+                        fts_terms.extend(
+                            lexical[index : index + 3]
+                            for index in range(len(lexical) - 2)
+                        )
+                elif len(lexical) >= 3:
+                    fts_terms.append(lexical)
+        return _unique_text(fts_terms), _unique_text(like_terms)
+
+    topic_fts_terms, topic_like_terms = lexical_terms([topic])
+    rescue_fts_terms, rescue_like_terms = lexical_terms(variants)
+    relation_action_terms = [
+        term
+        for term in rescue_fts_terms
+        if term.startswith("一起") or term.startswith("共同")
+    ]
+    fts_terms = _bounded_text(
+        _unique_text(topic_fts_terms + rescue_fts_terms),
+        MAX_RELAXED_TERMS_PER_GROUP,
+    )
+    like_terms = _bounded_text(
+        _unique_text(topic_like_terms + rescue_like_terms), MAX_LIKE_TERMS
+    )
+    anchor_fts_terms = _bounded_text(
+        _unique_text(topic_fts_terms + relation_action_terms),
+        MAX_RELAXED_TERMS_PER_GROUP,
+    )
+    anchor_like_terms = _bounded_text(
+        _unique_text(topic_like_terms), MAX_LIKE_TERMS
+    )
+    return fts_terms, like_terms, anchor_fts_terms, anchor_like_terms
+
+
+def _shared_event_exclusion_reason(
+    content: str, normalized_query: str
+) -> Optional[str]:
+    normalized = re.sub(r"\s+", "", unicodedata.normalize("NFKC", content))
+    query_is_creative_event = any(
+        marker in normalized_query
+        for marker in _SHARED_EVENT_CREATIVE_TOPIC_MARKERS
+    )
+    if not query_is_creative_event and any(
+        marker in normalized for marker in _SHARED_EVENT_CREATIVE_MARKERS
+    ):
+        return "creative_or_hypothetical_context"
+    if _SHARED_EVENT_NEGATIVE_RE.search(normalized):
+        return "negated_event"
+    if _SHARED_EVENT_FUTURE_RE.search(normalized):
+        return "future_plan"
+    if _SHARED_EVENT_HYPOTHETICAL_RE.search(normalized):
+        return "hypothetical_event"
+    if _SHARED_EVENT_INVITATION_RE.search(normalized):
+        return "uncompleted_invitation"
+    if _SHARED_EVENT_COMPANION_ONLY_RE.search(normalized) and not any(
+        marker in normalized
+        for marker in ("我也", "我跟你", "我和你", "我们一起", "咱们一起")
+    ):
+        return "companionship_without_shared_participation"
+    return None
+
+
+def _shared_event_participation_markers(content: str) -> List[str]:
+    normalized = re.sub(r"\s+", "", unicodedata.normalize("NFKC", content))
+    return [
+        marker for marker in _SHARED_EVENT_DYADIC_MARKERS if marker in normalized
+    ]
+
+
+def _shared_event_food_context_is_compatible(
+    window_rows: Sequence[sqlite3.Row],
+    event_rows: Sequence[sqlite3.Row],
+    normalized_query: str,
+) -> bool:
+    """Fail closed when a generic eating query lacks nearby meal evidence."""
+
+    if not any(
+        marker in normalized_query
+        for marker in _SHARED_EVENT_GENERIC_FOOD_QUERY_MARKERS
+    ):
+        return True
+
+    event_positions = {
+        row["context_position"]
+        for row in event_rows
+        if "context_position" in row.keys()
+        and row["context_position"] is not None
+    }
+    nearby_contents: List[str] = []
+    for row in window_rows:
+        position = (
+            row["context_position"]
+            if "context_position" in row.keys()
+            else None
+        )
+        if event_positions and (
+            position is None
+            or min(abs(position - event_position) for event_position in event_positions)
+            > 2
+        ):
+            continue
+        nearby_contents.append(
+            re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(row["content"] or "")))
+        )
+
+    if any(
+        _SHARED_EVENT_NON_FOOD_CONSUMPTION_RE.search(content)
+        for content in nearby_contents
+    ):
+        return False
+    return any(
+        marker in content
+        for content in nearby_contents
+        for marker in _SHARED_EVENT_FOOD_CONTEXT_MARKERS
+    )
+
+
+def _shared_event_evidence_payload(
+    row: sqlite3.Row,
+    *,
+    branch_id: str,
+    hit_position: Optional[int],
+    matched_terms: Sequence[str],
+) -> Dict[str, Any]:
+    position = row["context_position"] if "context_position" in row.keys() else None
+    relative_position = (
+        position - hit_position
+        if position is not None and hit_position is not None
+        else None
+    )
+    return {
+        "record_id": row["record_id"],
+        "content": row["content"],
+        "created_at": row["created_at"],
+        "source_kind": row["source_kind"],
+        "source_ref": row["source_ref"],
+        "conversation_id": row["conversation_id"],
+        "message_id": row["message_id"],
+        "role": row["role"],
+        "verified": bool(row["verified"]),
+        "authority": row["authority"],
+        "conflict_group_id": row["conflict_group_id"],
+        "source_cutoff_at": row["source_cutoff_at"],
+        "branch_ids": [branch_id],
+        "branch_memberships": [
+            {
+                "branch_id": branch_id,
+                "position": position,
+                "relative_position": relative_position,
+            }
+        ],
+        "matched_terms": list(matched_terms),
+    }
+
+
+def _judge_shared_event_window(
+    window_rows: Sequence[sqlite3.Row],
+    *,
+    branch_id: str,
+    hit_position: Optional[int],
+    fts_terms: Sequence[str],
+    like_terms: Sequence[str],
+    anchor_fts_terms: Sequence[str],
+    anchor_like_terms: Sequence[str],
+    normalized_query: str,
+) -> Optional[SharedEventMatch]:
+    """Return a deterministic event match only when literal evidence passes."""
+
+    all_terms = _unique_text(list(fts_terms) + list(like_terms))
+    anchor_terms = _unique_text(
+        list(anchor_fts_terms) + list(anchor_like_terms)
+    )
+    participation: List[Dict[str, Any]] = []
+    event_rows: List[sqlite3.Row] = []
+    payloads: List[Dict[str, Any]] = []
+
+    for row in window_rows[:MAX_SHARED_EVENT_CONTEXT_RECORDS]:
+        normalized_content = unicodedata.normalize("NFKC", str(row["content"] or ""))
+        matched_terms = [term for term in all_terms if term in normalized_content]
+        matched_anchors = [
+            term for term in anchor_terms if term in normalized_content
+        ]
+        payloads.append(
+            _shared_event_evidence_payload(
+                row,
+                branch_id=branch_id,
+                hit_position=hit_position,
+                matched_terms=matched_terms,
+            )
+        )
+        if not matched_anchors or _shared_event_exclusion_reason(
+            normalized_content, normalized_query
+        ):
+            continue
+        markers = _shared_event_participation_markers(normalized_content)
+        if not markers:
+            continue
+        event_rows.append(row)
+        participation.extend(
+            {
+                "record_id": row["record_id"],
+                "role": row["role"],
+                "marker": marker,
+            }
+            for marker in markers
+        )
+
+    if not event_rows or not participation:
+        return None
+
+    if not _shared_event_food_context_is_compatible(
+        window_rows, event_rows, normalized_query
+    ):
+        return None
+
+    event_rows.sort(
+        key=lambda row: (
+            row["created_at"],
+            row["context_position"]
+            if "context_position" in row.keys()
+            and row["context_position"] is not None
+            else -1,
+            row["id"],
+        )
+    )
+    assistant_present = any(row["role"] == "assistant" for row in window_rows)
+    identity_sensitive = any(
+        marker in normalized_query for marker in ("你", "我们", "我跟你", "你跟我")
+    )
+    if assistant_present and identity_sensitive:
+        support_status = "partial_support"
+        identity_status = "historical_assistant_role_only"
+        support_reason = (
+            "This is the earliest qualifying candidate found by a bounded "
+            "same-branch search, but the historical assistant identity is not "
+            "verified and an absolute first is not claimed."
+        )
+    else:
+        support_status = "earliest_supported_candidate"
+        identity_status = "not_applicable"
+        support_reason = (
+            "This is the earliest qualifying candidate found by a bounded "
+            "same-branch search; it does not prove an absolute first."
+        )
+
+    signature = _unique_text(item["record_id"] for item in participation)
+    return SharedEventMatch(
+        representative_rowid=event_rows[0]["id"],
+        event_start_at=event_rows[0]["created_at"],
+        event_end_at=event_rows[-1]["created_at"],
+        event_evidence=payloads,
+        participation_evidence=participation,
+        support_status=support_status,
+        support_reason=support_reason,
+        assistant_identity_status=identity_status,
+        signature=signature,
+    )
+
+
 def _relaxed_expression_for_segments(segments: Sequence[str]) -> Optional[str]:
     """Build a bounded relevance expression from already-focused segments."""
 
@@ -2094,6 +2600,23 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     prefer_oldest = any(
         marker in normalized for marker in _EARLIEST_QUERY_MARKERS
     )
+    shared_event_intent = prefer_oldest and any(
+        marker in normalized for marker in _SHARED_EVENT_QUERY_MARKERS
+    )
+    if shared_event_intent:
+        (
+            shared_event_fts_terms,
+            shared_event_like_terms,
+            shared_event_anchor_fts_terms,
+            shared_event_anchor_like_terms,
+        ) = _shared_event_query_terms(normalized)
+    else:
+        (
+            shared_event_fts_terms,
+            shared_event_like_terms,
+            shared_event_anchor_fts_terms,
+            shared_event_anchor_like_terms,
+        ) = ([], [], [], [])
     intent_required_all_like_terms: List[str] = []
     intent_required_any_like_terms: List[str] = []
     intent_bonus_like_terms: List[str] = []
@@ -2154,6 +2677,11 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         intent_min_any_matches=intent_min_any_matches,
         intent_roles=intent_roles,
         intent_relevance_first=intent_relevance_first,
+        shared_event_intent=shared_event_intent,
+        shared_event_fts_terms=shared_event_fts_terms,
+        shared_event_like_terms=shared_event_like_terms,
+        shared_event_anchor_fts_terms=shared_event_anchor_fts_terms,
+        shared_event_anchor_like_terms=shared_event_anchor_like_terms,
     )
 
 
@@ -2191,9 +2719,10 @@ def _row_to_recall_result(
     recall_mode: str,
     branch_memberships: Sequence[Mapping[str, Any]],
     conversation_context: Sequence[Mapping[str, Any]] = (),
+    event_annotation: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     confidence, confidence_basis = _confidence(row, query)
-    return {
+    result = {
         "record_id": row["record_id"],
         "content": row["content"],
         "created_at": row["created_at"],
@@ -2214,6 +2743,9 @@ def _row_to_recall_result(
         "recall_mode": recall_mode,
         "conversation_context": [dict(item) for item in conversation_context],
     }
+    if event_annotation:
+        result.update(dict(event_annotation))
+    return result
 
 
 def recall_records(
@@ -2414,6 +2946,324 @@ def recall_records(
                 + [max(limit * 2, limit)],
             ).fetchall()
 
+        def fetch_shared_event_candidates(
+            seed_rows: Sequence[sqlite3.Row],
+        ) -> tuple[List[sqlite3.Row], bool]:
+            """Run one bounded rescue pass ordered by original evidence time."""
+
+            prioritized: Dict[int, sqlite3.Row] = {}
+            discovered: Dict[int, sqlite3.Row] = {}
+            truncated = False
+            fetch_limit = MAX_SHARED_EVENT_CANDIDATES + 1
+
+            anchor_expression = " OR ".join(
+                _quote_fts(term)
+                for term in query_plan.shared_event_anchor_fts_terms
+            )
+            dyadic_patterns = [
+                _escaped_like_pattern(marker)
+                for marker in _SHARED_EVENT_DYADIC_MARKERS
+            ]
+            if anchor_expression and dyadic_patterns:
+                dyadic_where = " OR ".join(
+                    "r.content LIKE ? ESCAPE '\\'" for _ in dyadic_patterns
+                )
+                try:
+                    fetched = conn.execute(
+                        f"""
+                        SELECT r.*, bm25(records_v1_fts) AS lexical_rank
+                        FROM records_v1_fts
+                        JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
+                        WHERE records_v1_fts MATCH ?
+                          AND ({dyadic_where})
+                        {vis_where}
+                        ORDER BY r.created_at ASC, r.id ASC
+                        LIMIT ?
+                        """,
+                        [anchor_expression]
+                        + dyadic_patterns
+                        + vis_params
+                        + [fetch_limit],
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    fetched = []
+                if len(fetched) > MAX_SHARED_EVENT_CANDIDATES:
+                    truncated = True
+                for row in fetched[:MAX_SHARED_EVENT_CANDIDATES]:
+                    prioritized.setdefault(row["id"], row)
+
+            if query_plan.shared_event_anchor_like_terms and dyadic_patterns:
+                anchor_patterns = [
+                    _escaped_like_pattern(term)
+                    for term in query_plan.shared_event_anchor_like_terms
+                ]
+                dyadic_where = " OR ".join(
+                    "r.content LIKE ? ESCAPE '\\'" for _ in dyadic_patterns
+                )
+                anchor_where = " OR ".join(
+                    "r.content LIKE ? ESCAPE '\\'" for _ in anchor_patterns
+                )
+                fetched = conn.execute(
+                    f"""
+                    SELECT r.*, 0 AS lexical_rank
+                    FROM records_v1 AS r
+                    WHERE ({dyadic_where})
+                      AND ({anchor_where})
+                    {vis_where}
+                    ORDER BY r.created_at ASC, r.id ASC
+                    LIMIT ?
+                    """,
+                    dyadic_patterns
+                    + anchor_patterns
+                    + vis_params
+                    + [fetch_limit],
+                ).fetchall()
+                if len(fetched) > MAX_SHARED_EVENT_CANDIDATES:
+                    truncated = True
+                for row in fetched[:MAX_SHARED_EVENT_CANDIDATES]:
+                    prioritized.setdefault(row["id"], row)
+
+            if query_plan.shared_event_anchor_fts_terms:
+                try:
+                    fetched = conn.execute(
+                        f"""
+                        SELECT r.*, bm25(records_v1_fts) AS lexical_rank
+                        FROM records_v1_fts
+                        JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
+                        WHERE records_v1_fts MATCH ?
+                        {vis_where}
+                        ORDER BY r.created_at ASC, r.id ASC
+                        LIMIT ?
+                        """,
+                        [anchor_expression] + vis_params + [fetch_limit],
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    fetched = []
+                if len(fetched) > MAX_SHARED_EVENT_CANDIDATES:
+                    truncated = True
+                for row in fetched[:MAX_SHARED_EVENT_CANDIDATES]:
+                    discovered.setdefault(row["id"], row)
+
+            if query_plan.shared_event_anchor_like_terms:
+                patterns = [
+                    _escaped_like_pattern(term)
+                    for term in query_plan.shared_event_anchor_like_terms
+                ]
+                where_sql = " OR ".join(
+                    "r.content LIKE ? ESCAPE '\\'" for _ in patterns
+                )
+                fetched = conn.execute(
+                    f"""
+                    SELECT r.*, 0 AS lexical_rank
+                    FROM records_v1 AS r
+                    WHERE ({where_sql})
+                    {vis_where}
+                    ORDER BY r.created_at ASC, r.id ASC
+                    LIMIT ?
+                    """,
+                    patterns + vis_params + [fetch_limit],
+                ).fetchall()
+                if len(fetched) > MAX_SHARED_EVENT_CANDIDATES:
+                    truncated = True
+                for row in fetched[:MAX_SHARED_EVENT_CANDIDATES]:
+                    discovered.setdefault(row["id"], row)
+
+            for row in seed_rows:
+                discovered.setdefault(row["id"], row)
+
+            prioritized_ordered = sorted(
+                prioritized.values(),
+                key=lambda row: (row["created_at"], row["id"]),
+            )
+            remaining = MAX_SHARED_EVENT_CANDIDATES - len(prioritized_ordered)
+            filler_ordered = sorted(
+                (
+                    row
+                    for row_id, row in discovered.items()
+                    if row_id not in prioritized
+                ),
+                key=lambda row: (row["created_at"], row["id"]),
+            )
+            if remaining < 0 or len(filler_ordered) > max(remaining, 0):
+                truncated = True
+            ordered = (
+                prioritized_ordered[:MAX_SHARED_EVENT_CANDIDATES]
+                + filler_ordered[: max(remaining, 0)]
+            )
+            return ordered, truncated
+
+        def evaluate_shared_event_candidates(
+            candidates: Sequence[sqlite3.Row],
+            *,
+            search_truncated: bool,
+        ) -> tuple[
+            List[sqlite3.Row],
+            Dict[int, Dict[str, Any]],
+            Dict[str, Any],
+        ]:
+            if not candidates:
+                return [], {}, {
+                    "intent": "shared_earliest_event",
+                    "status": "insufficient_evidence",
+                    "candidate_limit": MAX_SHARED_EVENT_CANDIDATES,
+                    "candidates_scanned": 0,
+                    "windows_evaluated": 0,
+                    "qualifying_windows": 0,
+                    "search_truncated": search_truncated,
+                }
+
+            candidate_by_id = {row["id"]: row for row in candidates}
+            candidate_rowids = list(candidate_by_id)
+            placeholders = ",".join("?" for _ in candidate_rowids)
+            memberships_by_rowid: Dict[int, List[sqlite3.Row]] = {}
+            for membership in conn.execute(
+                "SELECT record_rowid, branch_id, position "
+                "FROM records_v1_branch_memberships "
+                f"WHERE record_rowid IN ({placeholders}) "
+                "AND position IS NOT NULL "
+                "ORDER BY record_rowid, branch_id, position",
+                candidate_rowids,
+            ).fetchall():
+                memberships_by_rowid.setdefault(
+                    membership["record_rowid"], []
+                ).append(membership)
+
+            context_hits: List[tuple[int, str, int, str]] = []
+            unpositioned: List[sqlite3.Row] = []
+            for row in candidates:
+                memberships = memberships_by_rowid.get(row["id"], [])
+                if not memberships:
+                    unpositioned.append(row)
+                    continue
+                membership = next(
+                    (
+                        item
+                        for item in memberships
+                        if item["branch_id"] == row["branch_id"]
+                    ),
+                    memberships[0],
+                )
+                context_hits.append(
+                    (
+                        row["id"],
+                        membership["branch_id"],
+                        membership["position"],
+                        row["conversation_id"],
+                    )
+                )
+
+            windows: Dict[int, List[sqlite3.Row]] = {
+                row["id"]: [row] for row in unpositioned
+            }
+            hit_meta: Dict[int, tuple[str, Optional[int]]] = {
+                row["id"]: (row["branch_id"], None) for row in unpositioned
+            }
+            if context_hits:
+                values_sql = ", ".join("(?, ?, ?, ?)" for _ in context_hits)
+                context_params: List[Any] = []
+                for hit in context_hits:
+                    context_params.extend(hit)
+                    hit_meta[hit[0]] = (hit[1], hit[2])
+                context_rows = conn.execute(
+                    f"""
+                    WITH event_hits(
+                        hit_rowid, branch_id, hit_position, conversation_id
+                    ) AS (VALUES {values_sql})
+                    SELECT h.hit_rowid, h.hit_position,
+                           r.*, bm.branch_id AS context_branch_id,
+                           bm.position AS context_position
+                    FROM event_hits AS h
+                    JOIN records_v1_branch_memberships AS bm
+                      ON bm.branch_id = h.branch_id
+                     AND bm.position BETWEEN
+                         max(0, h.hit_position - {SHARED_EVENT_CONTEXT_BEFORE})
+                         AND h.hit_position + {SHARED_EVENT_CONTEXT_AFTER}
+                    JOIN records_v1 AS r ON r.id = bm.record_rowid
+                    WHERE r.conversation_id = h.conversation_id
+                    {vis_where}
+                    ORDER BY h.hit_rowid, bm.position, r.id
+                    """,
+                    context_params + vis_params,
+                ).fetchall()
+                for context_row in context_rows:
+                    windows.setdefault(context_row["hit_rowid"], []).append(
+                        context_row
+                    )
+
+            matches: List[tuple[SharedEventMatch, sqlite3.Row]] = []
+            seen_signatures = set()
+            for hit_rowid, window_rows in windows.items():
+                branch_id, hit_position = hit_meta[hit_rowid]
+                match = _judge_shared_event_window(
+                    window_rows,
+                    branch_id=branch_id,
+                    hit_position=hit_position,
+                    fts_terms=query_plan.shared_event_fts_terms,
+                    like_terms=query_plan.shared_event_like_terms,
+                    anchor_fts_terms=query_plan.shared_event_anchor_fts_terms,
+                    anchor_like_terms=query_plan.shared_event_anchor_like_terms,
+                    normalized_query=query_plan.normalized_query,
+                )
+                if match is None:
+                    continue
+                signature = (
+                    window_rows[0]["conversation_id"],
+                    branch_id,
+                    tuple(match.signature),
+                )
+                if signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
+                representative = next(
+                    row
+                    for row in window_rows
+                    if row["id"] == match.representative_rowid
+                )
+                matches.append((match, representative))
+
+            matches.sort(
+                key=lambda item: (
+                    item[0].event_start_at,
+                    -len(item[0].participation_evidence),
+                    item[0].representative_rowid,
+                )
+            )
+            selected = matches[: min(limit, MAX_SHARED_EVENT_RESULTS)]
+            selected_rows = [item[1] for item in selected]
+            annotations = {
+                item[0].representative_rowid: {
+                    "event_evidence": [
+                        dict(evidence) for evidence in item[0].event_evidence
+                    ],
+                    "event_start_at": item[0].event_start_at,
+                    "event_end_at": item[0].event_end_at,
+                    "event_participation_evidence": [
+                        dict(evidence)
+                        for evidence in item[0].participation_evidence
+                    ],
+                    "earliest_support_status": item[0].support_status,
+                    "earliest_support_reason": item[0].support_reason,
+                    "assistant_identity_status": (
+                        item[0].assistant_identity_status
+                    ),
+                }
+                for item in selected
+            }
+            status = (
+                selected[0][0].support_status
+                if selected
+                else "insufficient_evidence"
+            )
+            return selected_rows, annotations, {
+                "intent": "shared_earliest_event",
+                "status": status,
+                "candidate_limit": MAX_SHARED_EVENT_CANDIDATES,
+                "candidates_scanned": len(candidates),
+                "windows_evaluated": len(windows),
+                "qualifying_windows": len(matches),
+                "search_truncated": search_truncated,
+            }
+
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
         for expression in query_plan.exact_expressions:
@@ -2501,6 +3351,36 @@ def recall_records(
                             break
                     rows = merged_rows
                     recall_mode = "sqlite_original_wording_trace"
+
+        event_annotations_by_rowid: Dict[int, Dict[str, Any]] = {}
+        event_recall: Optional[Dict[str, Any]] = None
+        if query_plan.shared_event_intent:
+            if not (
+                query_plan.shared_event_fts_terms
+                or query_plan.shared_event_like_terms
+            ):
+                rows = []
+                recall_mode = "sqlite_shared_event_window"
+                event_recall = {
+                    "intent": "shared_earliest_event",
+                    "status": "insufficient_anchor",
+                    "candidate_limit": MAX_SHARED_EVENT_CANDIDATES,
+                    "candidates_scanned": 0,
+                    "windows_evaluated": 0,
+                    "qualifying_windows": 0,
+                    "search_truncated": False,
+                }
+            else:
+                candidates, search_truncated = fetch_shared_event_candidates(rows)
+                (
+                    rows,
+                    event_annotations_by_rowid,
+                    event_recall,
+                ) = evaluate_shared_event_candidates(
+                    candidates,
+                    search_truncated=search_truncated,
+                )
+                recall_mode = "sqlite_shared_event_window"
 
         if agent_id is None:
             coverage = _coverage_from_connection(conn)
@@ -2644,7 +3524,7 @@ def recall_records(
                         ],
                     }
                 )
-        return {
+        response = {
             "schema_version": RECALL_SCHEMA_VERSION,
             "query": query,
             "recall_mode": recall_mode,
@@ -2664,9 +3544,13 @@ def recall_records(
                         [{"branch_id": row["branch_id"], "position": None}],
                     ),
                     context_by_rowid.get(row["id"], []),
+                    event_annotations_by_rowid.get(row["id"]),
                 )
                 for row in rows
             ],
         }
+        if event_recall is not None:
+            response["event_recall"] = event_recall
+        return response
     finally:
         conn.close()

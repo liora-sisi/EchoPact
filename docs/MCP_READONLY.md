@@ -91,7 +91,17 @@ exact phrases precede deterministic natural-language relaxation, and the
 returned `recall_mode` identifies the tier that actually supplied the result.
 Where ordered branch positions exist, each match may include a bounded
 `conversation_context` window with full provenance. MCP truncation limits are
-applied to both the match and its context records.
+applied to the match, its context records and any `event_evidence` records.
+
+An earliest question that explicitly asks about a shared two-person event may
+use `recall_mode=sqlite_shared_event_window`. This mode runs one bounded,
+identity-filtered, same-conversation and same-branch rescue pass. It requires
+literal topic and dyadic-participation evidence, rejects non-events and
+incompatible event objects, and returns the candidate boundary in
+`event_recall`. Its `partial_support` and
+`historical_assistant_role_only` statuses are intentional: the result is not
+proof of an absolute first or of the historical assistant's present identity.
+The gateway does not assemble event evidence across conversations.
 
 Queries that explicitly ask for original wording, original messages or
 verbatim evidence may perform one additional offline source-tracing pass. The
