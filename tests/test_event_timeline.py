@@ -150,6 +150,48 @@ def test_same_day_similarity_stays_as_separate_unlinked_mentions(tmp_path):
     )
 
 
+def test_relative_weekday_uses_explicit_chengdu_reference_without_claiming_evidence():
+    timeline = build_event_timeline(
+        "上周三我们一起做了什么？",
+        [],
+        reference_instant="2026-08-24T11:00:00+08:00",
+        reference_source="caller_as_of",
+    )
+
+    query_clock = timeline["query_clock"]
+    assert query_clock["status"] == "resolved_calendar_scope"
+    assert query_clock["matched_expression"] == "上周三"
+    assert query_clock["resolved_on"] == "2026-08-19"
+    assert query_clock["reference_at_local"].startswith(
+        "2026-08-24T11:00:00+08:00"
+    )
+    assert query_clock["used_for_record_filtering"] is False
+
+
+def test_last_month_resolves_to_calendar_range():
+    timeline = build_event_timeline(
+        "上个月我们做了什么？",
+        [],
+        reference_instant="2026-08-24T11:00:00+08:00",
+        reference_source="caller_as_of",
+    )
+
+    query_clock = timeline["query_clock"]
+    assert query_clock["resolved_start_on"] == "2026-07-01"
+    assert query_clock["resolved_end_on"] == "2026-07-31"
+    assert query_clock["precision"] == "month"
+
+
+def test_relative_time_without_reference_remains_unresolved():
+    timeline = build_event_timeline("昨晚我们做了什么？", [])
+
+    query_clock = timeline["query_clock"]
+    assert query_clock["status"] == (
+        "unresolved_missing_timezone_aware_reference"
+    )
+    assert query_clock["resolved_on"] is None
+
+
 def test_qualified_shared_event_adds_one_bounded_retelling_trace(tmp_path):
     db_path = _database(tmp_path)
     response = ReadonlyGateway(str(db_path), OWNER).recall(

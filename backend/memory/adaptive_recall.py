@@ -67,6 +67,16 @@ _RETELLING_EVIDENCE_MARKERS = (
     "复述",
     "再说起",
 )
+_GENERIC_MEAL_QUERY_MARKERS = (
+    "吃东西",
+    "吃饭",
+    "吃了什么",
+    "吃的什么",
+)
+_GENERIC_MEAL_RESCUE_QUERY = (
+    "我们第一次一起吃饭 吃东西 食物 早餐 午饭 晚饭 夜宵 "
+    "烧烤 火锅 外卖 零食 水果"
+)
 
 
 @dataclass(frozen=True)
@@ -307,25 +317,26 @@ def _follow_up_passes(
     # Once the event window itself qualifies, one narrow pass may look for
     # explicit later retellings; an unsupported event still fails closed.
     if isinstance(event_recall, Mapping):
+        passes: List[tuple[str, str]] = []
+        if _contains_any(normalized, _GENERIC_MEAL_QUERY_MARKERS):
+            passes.append(("shared_event_food_trace", _GENERIC_MEAL_RESCUE_QUERY))
         if event_recall.get("status") not in {
             "partial_support",
             "earliest_supported_candidate",
         }:
-            return []
+            return _unique_passes(passes)
         subject = _subquestion_subject_hint(normalized) or normalized
         for marker in _EARLIEST_MARKERS + ("当时",):
             subject = subject.replace(marker, "")
         subject = _normalize(subject.strip("，,。！？!?；;：: "))
         if len(subject) >= 2:
-            return _unique_passes(
-                [
-                    (
-                        "event_retelling_trace",
-                        f"{subject} 后来回忆 后来复盘 后来提起",
-                    )
-                ]
+            passes.append(
+                (
+                    "event_retelling_trace",
+                    f"{subject} 后来回忆 后来复盘 后来提起",
+                )
             )
-        return []
+        return _unique_passes(passes)
 
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
@@ -491,6 +502,9 @@ def _merge_results(
     query: str,
     limit: int,
     pass_results: Sequence[tuple[str, Mapping[str, Any]]],
+    *,
+    reference_instant: Optional[str] = None,
+    reference_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     first = copy.deepcopy(dict(pass_results[0][1]))
     normalized = _normalize(query)
@@ -587,7 +601,12 @@ def _merge_results(
     # the bounded internal plan, including rows that do not fit the caller's
     # ordinary memory limit. It never mutates records_v1 or asserts that two
     # similar mentions are the same real-world event.
-    first["event_timeline"] = build_event_timeline(query, merged)
+    first["event_timeline"] = build_event_timeline(
+        query,
+        merged,
+        reference_instant=reference_instant,
+        reference_source=reference_source,
+    )
     return first
 
 
@@ -600,6 +619,7 @@ def adaptive_recall(
     db_path: Optional[str] = None,
     read_only: bool = False,
     include_projection: bool = True,
+    reference_time_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return one bounded memory packet from a small internal recall plan."""
 
@@ -633,5 +653,11 @@ def adaptive_recall(
         if pass_name == "event_retelling_trace":
             result = _filter_event_retelling_trace(pass_query, result)
         pass_results.append((pass_name, result))
-    merged = _merge_results(query, limit, pass_results)
+    merged = _merge_results(
+        query,
+        limit,
+        pass_results,
+        reference_instant=as_of,
+        reference_source=reference_time_source,
+    )
     return _apply_temporal_coverage_guard(query, merged)

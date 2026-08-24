@@ -121,9 +121,41 @@ def test_recall_contract_routes_context_gaps_without_overcalling():
     )
     assert "before saying you do not remember or asking for a hint" in description
     assert "image" in description and "explicitly asks to create or edit" in description
+    query_description = recall["inputSchema"]["properties"]["query"][
+        "description"
+    ].lower()
+    assert "only the semantic" in query_description
+    assert "number of calls" in query_description
+    as_of_description = recall["inputSchema"]["properties"]["as_of"][
+        "description"
+    ].lower()
+    assert "timezone-aware" in as_of_description
+    assert "last wednesday" in as_of_description
     assert "not a replacement for the current conversation" in instructions
     assert "answering from a vague impression" in instructions
     assert "do not call merely because a past topic is mentioned" in instructions
+    assert "pass only the semantic memory question" in instructions
+
+
+def test_gateway_anchors_relative_time_to_local_server_clock(mcp_db, monkeypatch):
+    from backend.mcp import readonly_server
+    real_datetime = readonly_server.datetime
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz):
+            return real_datetime.fromisoformat(
+                "2026-08-24T11:00:00+08:00"
+            ).astimezone(tz)
+
+    monkeypatch.setattr(readonly_server, "datetime", FixedDateTime)
+    recalled = ReadonlyGateway(str(mcp_db), OWNER).recall(
+        {"query": "上周三我们一起做了什么？", "limit": 1}
+    )
+
+    query_clock = recalled["event_timeline"]["query_clock"]
+    assert query_clock["reference_source"] == "mcp_server_clock"
+    assert query_clock["resolved_on"] == "2026-08-19"
 
 
 def test_gateway_recalls_owner_only_without_changing_database(mcp_db):

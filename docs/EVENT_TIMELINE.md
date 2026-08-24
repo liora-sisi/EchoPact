@@ -45,6 +45,15 @@ become a midnight instant. Relative phrases such as “昨晚” remain unresolv
 without a reliable timezone-aware anchor. Import time, Room Ferry export time,
 `firstImportedAt`, and `lastImportedAt` are never substituted for event time.
 
+M6.2.1 adds a separate `query_clock` for supported caller-relative phrases.
+With a reliable reference instant, `今天`、`昨天`、`前天`、`昨晚`、`上周X`、
+`上周` / `上星期` and `上个月` resolve against `Asia/Shanghai`. A missing
+reference remains `unresolved_missing_timezone_aware_reference`. The local MCP
+gateway supplies its own Chengdu server clock only when a relative phrase is
+present and the caller omitted `as_of`. The resolved day/week/month is a query
+interpretation aid (`used_for_record_filtering=false`), not evidence that any
+returned record describes that event.
+
 ChatGPT export timestamps travel through Room Ferry as epoch milliseconds and
 are normalized by Echo Pact to UTC instants. They are not stored as Beijing
 wall-clock strings. Local conversion happens only in the response annotation.
@@ -59,6 +68,9 @@ wall-clock strings. Local conversion happens only in the response annotation.
   explicitly say it is adding a detail.
 - A qualifying shared-event window may trigger one additional deterministic
   retelling trace. An unsupported event does not receive that expansion.
+- A generic "first time we ate together" question may also receive one bounded,
+  source-neutral meal-category rescue inside the same external tool call. The
+  rescue never contains a private dish, date, restaurant, or expected answer.
 - A query outside the imported coverage boundary suppresses the timeline rather
   than exposing older lexical lookalikes.
 - The response carries a generator version, input SHA-256 and deterministic

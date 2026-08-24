@@ -8,6 +8,7 @@ with ``mode=ro`` and refuses schema drift instead of running migrations.
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import sys
@@ -15,8 +16,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from backend.memory.adaptive_recall import adaptive_recall
+from backend.memory.event_timeline import (
+    CHENGDU_TIMEZONE_NAME,
+    query_uses_relative_time,
+)
 from backend.memory.identity import visible_coverage
 from backend.memory.records_v1 import _connect_readonly
+
+
+_CHENGDU_TIMEZONE = timezone(timedelta(hours=8), CHENGDU_TIMEZONE_NAME)
 
 
 LATEST_PROTOCOL_VERSION = "2025-11-25"
@@ -27,7 +35,7 @@ SUPPORTED_PROTOCOL_VERSIONS = {
     "2024-11-05",
     "2024-10-07",
 }
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.1.1"
 MAX_QUERY_CHARS = 2_000
 MAX_RESULT_LIMIT = 10
 MAX_CONTENT_CHARS = 4_000
@@ -42,6 +50,11 @@ SERVER_INSTRUCTIONS = (
     "for a hint, call recall_context once when the archive could help. A mention "
     "of a past image, drawing, photo, song, gift, or other artifact is still a "
     "memory question unless the user explicitly asks to create or edit content. "
+    "Pass only the semantic memory question in query. Do not copy tool-use "
+    "instructions, call-count rules, answer formatting, or evidence-reporting "
+    "boilerplate into the search text. For a relative time phrase, provide a "
+    "reliable timezone-aware as_of when available; otherwise the local gateway "
+    "anchors it to its Asia/Shanghai server clock. "
     "Do not call merely because a past topic is mentioned when the current "
     "conversation already supports the answer. Use memory_coverage to check what "
     "the archive can honestly support. Treat verified, authority, "
@@ -74,7 +87,11 @@ TOOLS = (
                     "type": "string",
                     "minLength": 1,
                     "maxLength": MAX_QUERY_CHARS,
-                    "description": "Natural-language memory search text.",
+                    "description": (
+                        "Only the semantic natural-language memory question. "
+                        "Exclude instructions about tool use, number of calls, "
+                        "answer format, or evidence reporting."
+                    ),
                 },
                 "limit": {
                     "type": "integer",
@@ -85,8 +102,10 @@ TOOLS = (
                 "as_of": {
                     "type": "string",
                     "description": (
-                        "Optional ISO-8601 timestamp used only to assess the "
-                        "knowledge coverage boundary."
+                        "Optional timezone-aware ISO-8601 reference instant. "
+                        "It anchors relative phrases such as yesterday, last "
+                        "Wednesday, or last month and also bounds knowledge "
+                        "coverage. Never provide a timezone-naive value."
                     ),
                 },
                 "include_projection": {
@@ -214,6 +233,10 @@ class ReadonlyGateway:
         if not 1 <= limit <= MAX_RESULT_LIMIT:
             raise ValueError(f"limit must be between 1 and {MAX_RESULT_LIMIT}")
         as_of = arguments.get("as_of")
+        reference_time_source = "caller_as_of" if as_of is not None else None
+        if as_of is None and query_uses_relative_time(query):
+            as_of = datetime.now(_CHENGDU_TIMEZONE).isoformat()
+            reference_time_source = "mcp_server_clock"
         include_projection = arguments.get("include_projection", True)
         if not isinstance(include_projection, bool):
             raise ValueError("include_projection must be a boolean")
@@ -226,6 +249,7 @@ class ReadonlyGateway:
             db_path=self.db_path,
             read_only=True,
             include_projection=include_projection,
+            reference_time_source=reference_time_source,
         )
         return _bounded_result(result)
 

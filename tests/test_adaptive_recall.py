@@ -133,6 +133,16 @@ def _database(tmp_path: Path) -> Path:
             "第二次海边旅行后来没有成行，因为暴雨导致交通停运。",
             "2026-04-08T00:00:00Z",
         ),
+        _record(
+            "first-shared-meal",
+            "那天我跟你一起吃烧烤，第一样烤的是五花肉，后来又烤了中翅。",
+            "2026-05-12T12:00:00Z",
+        ),
+        _record(
+            "first-shared-meal-retelling",
+            "后来提起第一次一起吃东西，我还记得那顿烧烤和五花肉。",
+            "2026-07-03T12:00:00Z",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -200,6 +210,26 @@ def test_negative_shared_event_does_not_expand_into_unrelated_history(tmp_path):
     assert response["event_recall"]["status"] == "insufficient_evidence"
     assert response["adaptive_recall"]["query_passes_used"] == 1
     assert response["adaptive_recall"]["budget_exhausted"] is False
+
+
+def test_generic_shared_meal_gets_one_call_source_neutral_rescue(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "你还记得我们第一次一起吃东西是什么时候吗？"
+            "那次吃了什么，后来怎么提起过？",
+            "limit": 5,
+        }
+    )
+
+    ids = {item["record_id"] for item in response["memories"]}
+    assert "first-shared-meal" in ids
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert "shared_event_food_trace" in passes
+    assert response["adaptive_recall"]["external_tool_calls_required"] == 1
+    assert response["adaptive_recall"]["query_passes_used"] <= (
+        MAX_ADAPTIVE_QUERY_PASSES
+    )
 
 
 def test_exact_anchor_keeps_single_fast_pass_and_database_unchanged(tmp_path):

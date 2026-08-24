@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 
 EVENT_TIMELINE_SCHEMA_VERSION = "echo-pact-event-timeline-v1"
-EVENT_TIMELINE_GENERATOR_VERSION = "event-timeline-query-time-v1"
+EVENT_TIMELINE_GENERATOR_VERSION = "event-timeline-query-time-v1.1"
 MAX_ORDINARY_TIMELINE_NODES = 12
 MAX_TIMELINE_EXCERPT_CHARS = 480
 CHENGDU_TIMEZONE_NAME = "Asia/Shanghai"
@@ -79,6 +79,26 @@ _PLAN_MARKERS = (
     "等以后",
 )
 _QUESTION_MARKERS = ("吗", "么", "呢", "为什么", "什么时候", "哪天", "哪次")
+
+_RELATIVE_QUERY_MARKERS = (
+    "今天",
+    "昨天",
+    "前天",
+    "昨晚",
+    "上周",
+    "上星期",
+    "上个月",
+)
+_WEEKDAY_INDEX = {
+    "一": 0,
+    "二": 1,
+    "三": 2,
+    "四": 3,
+    "五": 4,
+    "六": 5,
+    "日": 6,
+    "天": 6,
+}
 
 _AWARE_ISO_RE = re.compile(
     r"(?<!\d)(?P<value>20\d{2}-\d{2}-\d{2}[T ]\d{2}:\d{2}"
@@ -150,6 +170,118 @@ def _utc_iso(value: datetime) -> str:
 
 def _local_iso(value: datetime) -> str:
     return value.astimezone(_CHENGDU_TIMEZONE).isoformat()
+
+
+def query_uses_relative_time(query: Any) -> bool:
+    """Return whether the caller wrote a supported relative clock phrase."""
+
+    compact = re.sub(r"\s+", "", _normalize_text(query))
+    return any(marker in compact for marker in _RELATIVE_QUERY_MARKERS)
+
+
+def _relative_query_clock(
+    query: str,
+    reference_instant: Optional[str],
+    reference_source: Optional[str],
+) -> Dict[str, Any]:
+    """Resolve a small explicit relative-date vocabulary against Chengdu.
+
+    This only describes the caller's requested calendar scope. It never turns
+    a message timestamp into an event timestamp and does not claim that the
+    recalled evidence actually belongs to the resolved date.
+    """
+
+    compact = re.sub(r"\s+", "", _normalize_text(query))
+    markers = [marker for marker in _RELATIVE_QUERY_MARKERS if marker in compact]
+    if not markers:
+        return {
+            "status": "not_requested",
+            "reference_at": None,
+            "reference_at_local": None,
+            "reference_source": None,
+            "matched_expression": None,
+            "resolved_on": None,
+            "resolved_start_on": None,
+            "resolved_end_on": None,
+            "used_for_record_filtering": False,
+        }
+
+    parsed = _parse_aware_instant(reference_instant)
+    if parsed is None:
+        return {
+            "status": "unresolved_missing_timezone_aware_reference",
+            "reference_at": None,
+            "reference_at_local": None,
+            "reference_source": reference_source,
+            "matched_expression": markers[0],
+            "resolved_on": None,
+            "resolved_start_on": None,
+            "resolved_end_on": None,
+            "used_for_record_filtering": False,
+        }
+
+    local_reference = parsed.astimezone(_CHENGDU_TIMEZONE)
+    reference_date = local_reference.date()
+    resolved_on = None
+    resolved_start = None
+    resolved_end = None
+    matched_expression = markers[0]
+    precision = "day"
+
+    weekday_match = re.search(r"上(?:周|星期)([一二三四五六日天])", compact)
+    if weekday_match:
+        previous_monday = reference_date - timedelta(
+            days=reference_date.weekday() + 7
+        )
+        resolved_on = previous_monday + timedelta(
+            days=_WEEKDAY_INDEX[weekday_match.group(1)]
+        )
+        matched_expression = weekday_match.group(0)
+    elif "上个月" in compact:
+        current_month_start = reference_date.replace(day=1)
+        resolved_end = current_month_start - timedelta(days=1)
+        resolved_start = resolved_end.replace(day=1)
+        matched_expression = "上个月"
+        precision = "month"
+    elif "上周" in compact or "上星期" in compact:
+        current_monday = reference_date - timedelta(days=reference_date.weekday())
+        resolved_start = current_monday - timedelta(days=7)
+        resolved_end = current_monday - timedelta(days=1)
+        matched_expression = "上星期" if "上星期" in compact else "上周"
+        precision = "week"
+    elif "前天" in compact:
+        resolved_on = reference_date - timedelta(days=2)
+        matched_expression = "前天"
+    elif "昨晚" in compact:
+        resolved_on = reference_date - timedelta(days=1)
+        matched_expression = "昨晚"
+        precision = "part_of_day"
+    elif "昨天" in compact:
+        resolved_on = reference_date - timedelta(days=1)
+        matched_expression = "昨天"
+    elif "今天" in compact:
+        resolved_on = reference_date
+        matched_expression = "今天"
+
+    return {
+        "status": "resolved_calendar_scope",
+        "reference_at": _utc_iso(parsed),
+        "reference_at_local": _local_iso(parsed),
+        "reference_source": reference_source or "caller_supplied",
+        "display_timezone": CHENGDU_TIMEZONE_NAME,
+        "matched_expression": matched_expression,
+        "precision": precision,
+        "resolved_on": resolved_on.isoformat() if resolved_on else None,
+        "resolved_start_on": (
+            resolved_start.isoformat() if resolved_start else None
+        ),
+        "resolved_end_on": resolved_end.isoformat() if resolved_end else None,
+        "used_for_record_filtering": False,
+        "evidence_rule": (
+            "calendar scope is a query aid only; recalled evidence must still "
+            "support the event"
+        ),
+    }
 
 
 def _explicit_event_clock(content: str) -> Dict[str, Any]:
@@ -356,6 +488,9 @@ def _select_nodes(nodes: Sequence[Dict[str, Any]]) -> tuple[List[Dict[str, Any]]
 def build_event_timeline(
     query: str,
     memories: Sequence[Mapping[str, Any]],
+    *,
+    reference_instant: Optional[str] = None,
+    reference_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a deterministic, read-only chronology from recalled evidence."""
 
@@ -385,6 +520,8 @@ def build_event_timeline(
 
     input_material = {
         "query": _normalize_text(query),
+        "reference_instant": reference_instant,
+        "reference_source": reference_source,
         "records": sorted(
             [
             {
@@ -428,9 +565,15 @@ def build_event_timeline(
                 "an explicit source calendar date without inventing a timezone"
             ),
             "relative_time": (
-                "not resolved without a reliable timezone-aware anchor"
+                "resolved only against a reliable timezone-aware reference; "
+                "never inferred from message time"
             ),
         },
+        "query_clock": _relative_query_clock(
+            query,
+            reference_instant,
+            reference_source,
+        ),
         "archive_first_mentioned_at": archive_first,
         "archive_first_mentioned_at_local": archive_first_local,
         "archive_first_scope": {

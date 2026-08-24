@@ -80,6 +80,12 @@ when the archive could help. Words such as image, drawing, photo, song, or gift
 do not turn a past-memory question into a creation request unless the user
 explicitly asks to create or edit content.
 
+The `query` value must contain only the semantic memory question. Tool-use
+instructions, call-count constraints, answer formatting, and evidence-report
+boilerplate stay outside the search text; copying them into `query` can drown
+the literal event subject in unrelated words. Multi-part clauses about the
+same event may remain together.
+
 ### `recall_context`
 
 Inputs: `query`, optional `limit` (1-10), optional `as_of`, and optional
@@ -92,6 +98,11 @@ returned `recall_mode` identifies the tier that actually supplied the result.
 Where ordered branch positions exist, each match may include a bounded
 `conversation_context` window with full provenance. MCP truncation limits are
 applied to the match, its context records and any `event_evidence` records.
+`as_of` is a timezone-aware reference instant. It both bounds archive coverage
+and anchors supported relative phrases. When a relative phrase is present and
+the caller omits `as_of`, the local MCP gateway supplies its own trustworthy
+`Asia/Shanghai` server clock; it never derives the reference from a recalled
+message timestamp.
 
 One public call may contain a bounded adaptive plan. Exact anchors keep the
 single-pass fast path. Meaning questions require an entity and explanatory
@@ -102,6 +113,10 @@ original-source tracing and a small source-neutral vocabulary expansion, up to
 or unbounded retry loop is involved. A shared-event scan receives one narrow
 retelling trace only after its event window qualifies. An unsupported negative
 control remains empty instead of drifting into unrelated shared history.
+For the source-neutral question category "first time we ate together", one
+additional bounded meal-language rescue can run inside the same public tool
+call. It contains only generic meal categories, never a private expected dish,
+restaurant, date, or answer.
 
 When the caller explicitly writes multiple questions separated by question
 marks or semicolons, the adaptive plan may search those clauses separately
@@ -154,6 +169,11 @@ time, and the earliest observed mention within this packet. The packet is
 non-exhaustive (`at_least` count semantics), does not merge same-day or similar
 messages, and never calls its earliest observed node the absolute archive first.
 Conflict, correction and denial nodes survive the ordinary timeline-node limit.
+`query_clock` separately reports how a supported relative phrase such as
+"last Wednesday" or "last month" resolves against its reliable Chengdu
+reference. This calendar scope is an interpretation aid, not proof that any
+recalled record belongs to that event or date, and it is not yet a record
+filter.
 See `docs/EVENT_TIMELINE.md` for the clock and linkage contract.
 
 Queries that explicitly ask for original wording, original messages or
