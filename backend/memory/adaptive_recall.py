@@ -19,6 +19,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from .event_timeline import (
+    build_event_timeline,
+    suppress_event_timeline_for_coverage_gap,
+)
 from .recall_projection import recall_with_projection
 from .records_v1 import _explicit_query_anchors, recall_records
 
@@ -53,6 +57,15 @@ _RETELLING_MARKERS = (
     "后来怎样复盘",
     "后来怎么回忆",
     "后来怎样回忆",
+)
+_RETELLING_EVIDENCE_MARKERS = (
+    "后来",
+    "回忆",
+    "复盘",
+    "提起",
+    "重述",
+    "复述",
+    "再说起",
 )
 
 
@@ -291,7 +304,27 @@ def _follow_up_passes(
 
     # Shared-event recall already performs a bounded candidate/window scan.
     # Generic retries are unsafe for negative controls such as landing on Mars.
+    # Once the event window itself qualifies, one narrow pass may look for
+    # explicit later retellings; an unsupported event still fails closed.
     if isinstance(event_recall, Mapping):
+        if event_recall.get("status") not in {
+            "partial_support",
+            "earliest_supported_candidate",
+        }:
+            return []
+        subject = _subquestion_subject_hint(normalized) or normalized
+        for marker in _EARLIEST_MARKERS + ("当时",):
+            subject = subject.replace(marker, "")
+        subject = _normalize(subject.strip("，,。！？!?；;：: "))
+        if len(subject) >= 2:
+            return _unique_passes(
+                [
+                    (
+                        "event_retelling_trace",
+                        f"{subject} 后来回忆 后来复盘 后来提起",
+                    )
+                ]
+            )
         return []
 
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
@@ -328,6 +361,62 @@ def _follow_up_passes(
             passes.append(("compact_retry", compact))
 
     return _unique_passes(passes)
+
+
+def _event_retelling_topic_terms(pass_query: str) -> List[str]:
+    subject = pass_query.split(" 后来回忆", 1)[0]
+    compact = re.sub(r"\s+", "", _normalize(subject))
+    for marker in (
+        "我跟你",
+        "我和你",
+        "你跟我",
+        "你和我",
+        "我们俩",
+        "我们两个",
+        "我们",
+        "咱们",
+        "一起",
+        "共同",
+    ) + _EARLIEST_MARKERS:
+        compact = compact.replace(marker, "")
+    terms: List[str] = []
+    for lexical in re.findall(r"[0-9A-Za-z]+|[\u3400-\u9fff]+", compact):
+        if re.fullmatch(r"[\u3400-\u9fff]+", lexical):
+            if len(lexical) == 2:
+                terms.append(lexical)
+            elif len(lexical) >= 3:
+                terms.extend(
+                    lexical[index : index + 3]
+                    for index in range(len(lexical) - 2)
+                )
+        elif len(lexical) >= 2:
+            terms.append(lexical.casefold())
+    return list(dict.fromkeys(terms))[:16]
+
+
+def _filter_event_retelling_trace(
+    pass_query: str,
+    response: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Keep the extra pass anchored to the qualifying event's literal topic."""
+
+    filtered = copy.deepcopy(dict(response))
+    topic_terms = _event_retelling_topic_terms(pass_query)
+    if not topic_terms:
+        filtered["memories"] = []
+        return filtered
+    kept = []
+    for memory in response.get("memories") or []:
+        content = _normalize(str(memory.get("content") or ""))
+        compact = re.sub(r"\s+", "", content)
+        if not any(marker in compact for marker in _RETELLING_EVIDENCE_MARKERS):
+            continue
+        folded = compact.casefold()
+        if not any(term.casefold() in folded for term in topic_terms):
+            continue
+        kept.append(copy.deepcopy(dict(memory)))
+    filtered["memories"] = kept
+    return filtered
 
 
 def _explicit_query_date(query: str) -> Optional[str]:
@@ -387,6 +476,11 @@ def _apply_temporal_coverage_guard(
         # the caller to mistake lexical similarity for evidence.
         response["memories"] = []
         response["recall_mode"] = "sqlite_temporal_coverage_guard"
+        timeline = response.get("event_timeline")
+        if isinstance(timeline, Mapping):
+            response["event_timeline"] = suppress_event_timeline_for_coverage_gap(
+                timeline
+            )
         if isinstance(coverage, dict):
             coverage["coverage_gap"] = True
             coverage["coverage_status"] = "outside_imported_coverage"
@@ -489,6 +583,11 @@ def _merge_results(
             "answers, private-fact dictionary, or database writes"
         ),
     }
+    # This is a rebuildable response annotation over all evidence gathered by
+    # the bounded internal plan, including rows that do not fit the caller's
+    # ordinary memory limit. It never mutates records_v1 or asserts that two
+    # similar mentions are the same real-world event.
+    first["event_timeline"] = build_event_timeline(query, merged)
     return first
 
 
@@ -530,6 +629,9 @@ def adaptive_recall(
     for pass_name, pass_query in _follow_up_passes(query, first):
         if len(pass_results) >= MAX_ADAPTIVE_QUERY_PASSES:
             break
-        pass_results.append((pass_name, run(pass_query)))
+        result = run(pass_query)
+        if pass_name == "event_retelling_trace":
+            result = _filter_event_retelling_trace(pass_query, result)
+        pass_results.append((pass_name, result))
     merged = _merge_results(query, limit, pass_results)
     return _apply_temporal_coverage_guard(query, merged)

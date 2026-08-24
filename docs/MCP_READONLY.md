@@ -99,9 +99,9 @@ language in the same record. Source-sensitive questions can add deterministic
 original-source tracing and a small source-neutral vocabulary expansion, up to
 `MAX_ADAPTIVE_QUERY_PASSES`. The response reports this under
 `adaptive_recall`; no private-fact dictionary, network model, database write,
-or unbounded retry loop is involved. Shared-event scans are not expanded a
-second time, so an unsupported negative control remains empty instead of
-drifting into unrelated shared history.
+or unbounded retry loop is involved. A shared-event scan receives one narrow
+retelling trace only after its event window qualifies. An unsupported negative
+control remains empty instead of drifting into unrelated shared history.
 
 When the caller explicitly writes multiple questions separated by question
 marks or semicolons, the adaptive plan may search those clauses separately
@@ -146,6 +146,15 @@ incompatible event objects, and returns the candidate boundary in
 `historical_assistant_role_only` statuses are intentional: the result is not
 proof of an absolute first or of the historical assistant's present identity.
 The gateway does not assemble event evidence across conversations.
+
+Every adaptive response also carries a rebuildable `event_timeline` over the
+bounded evidence gathered by that call. It exposes multi-label mention facets,
+UTC source-message time, optional explicitly sourced event time, Chengdu display
+time, and the earliest observed mention within this packet. The packet is
+non-exhaustive (`at_least` count semantics), does not merge same-day or similar
+messages, and never calls its earliest observed node the absolute archive first.
+Conflict, correction and denial nodes survive the ordinary timeline-node limit.
+See `docs/EVENT_TIMELINE.md` for the clock and linkage contract.
 
 Queries that explicitly ask for original wording, original messages or
 verbatim evidence may perform one additional offline source-tracing pass. The

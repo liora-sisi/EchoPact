@@ -271,6 +271,10 @@ def test_explicit_future_date_suppresses_older_lexical_noise(tmp_path):
         "outside_imported_coverage"
     )
     assert response["coverage"]["coverage_gap"] is True
+    assert response["event_timeline"]["status"] == (
+        "suppressed_outside_imported_coverage"
+    )
+    assert response["event_timeline"]["mentions"] == []
 
 
 def test_enumerated_scene_anchors_rerank_title_only_noise(tmp_path):

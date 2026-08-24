@@ -210,6 +210,23 @@ search, never proof of an absolute first. Historical records establish only an
 `assistant` role unless a separate identity mechanism verifies who occupied
 that role. M6.1 deliberately does not assemble events across conversations.
 
+M6.2 adds no records table or migration. The adaptive read path can attach an
+`echo-pact-event-timeline-v1` response annotation over the evidence selected by
+the bounded recall plan. Mention classification is multi-label. Every source
+record stays independent: same-day proximity and lexical similarity do not
+create event identity, and cross-conversation automatic linking remains off.
+Corrections, denials and conflict-group records are retained even if the normal
+timeline-node budget is exhausted.
+
+The annotation separates source-message time (`mentioned_at`), an event instant
+explicitly bound in source wording (`occurred_at`), and the query-scope earliest
+observed mention (`archive_first_mentioned_at`). UTC remains the comparison and
+storage form; `Asia/Shanghai` is an additional display conversion. A date-only
+source value keeps day precision, and relative dates stay unresolved without a
+reliable timezone-aware anchor. The aggregate is explicitly non-exhaustive and
+uses `at_least` count semantics. Generator/input hashes make the annotation a
+rebuildable derived cache rather than mutable evidence.
+
 When a query explicitly requests original wording, original messages or
 verbatim evidence, Echo Pact can make one bounded source-tracing pass after the
 normal precision-first lookup. It extracts literal snippets only from the
