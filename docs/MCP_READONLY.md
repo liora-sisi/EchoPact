@@ -86,6 +86,36 @@ boilerplate stay outside the search text; copying them into `query` can drown
 the literal event subject in unrelated words. Multi-part clauses about the
 same event may remain together.
 
+### Two different acceptance profiles
+
+Do not mix a retriever-only blind test with an end-to-end conversation test.
+They answer different questions:
+
+- **Echo-only evidence test:** use the same database generation, agent, query,
+  `limit`, and `as_of` on every host. The host must answer only from that call's
+  returned records and labelled context. Cross-chat summaries, saved product
+  memory, and unstated model recollection are not evidence; if the response is
+  insufficient, the answer must say so. Compare returned record IDs, source
+  references, event annotations, and coverage before comparing prose. A true
+  retriever comparison inspects the tool response, because a model's final
+  wording alone cannot prove which memory layer it used.
+- **Integrated experience test:** allow the current conversation, product
+  memory, and Echo Pact to work together. Judge the final synthesis for
+  accuracy, naturalness, conflict handling, and honest uncertainty. Different
+  hosts may legitimately phrase or combine the same Echo evidence differently.
+
+A suggested Echo-only host instruction is: `Answer only from this Echo Pact
+call. Do not fill gaps from cross-chat memory or prior summaries. Cite the
+returned source fields; if Echo is insufficient, say insufficient evidence.`
+Keep that instruction outside the tool's `query` value.
+
+Asymmetric relationship wording is role-bound during shared-event recall.
+For example, query-speaker `你带我` and a historical assistant row saying
+`我带你` can describe the same guide/guest direction. A historical user row
+saying `我带你` describes the opposite direction and is not silently merged.
+The same rule applies to inviter/invitee wording around a fulfilled invitation.
+An invitation or future plan alone is context, not proof that the event occurred.
+
 ### `recall_context`
 
 Inputs: `query`, optional `limit` (1-10), optional `as_of`, and optional

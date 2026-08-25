@@ -52,7 +52,9 @@ SERVER_INSTRUCTIONS = (
     "memory question unless the user explicitly asks to create or edit content. "
     "Pass only the semantic memory question in query. Do not copy tool-use "
     "instructions, call-count rules, answer formatting, or evidence-reporting "
-    "boilerplate into the search text. For a relative time phrase, provide a "
+    "boilerplate into the search text. Preserve the question speaker's first/"
+    "second-person relationship direction; do not rewrite I/you roles into the "
+    "assistant narrator's perspective. For a relative time phrase, provide a "
     "reliable timezone-aware as_of when available; otherwise the local gateway "
     "anchors it to its Asia/Shanghai server clock. "
     "Do not call merely because a past topic is mentioned when the current "
@@ -90,7 +92,8 @@ TOOLS = (
                     "description": (
                         "Only the semantic natural-language memory question. "
                         "Exclude instructions about tool use, number of calls, "
-                        "answer format, or evidence reporting."
+                        "answer format, or evidence reporting. Preserve the "
+                        "original question speaker's I/you direction."
                     ),
                 },
                 "limit": {

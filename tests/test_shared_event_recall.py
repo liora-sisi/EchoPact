@@ -335,3 +335,139 @@ def test_shared_event_supports_short_topic_with_explicit_pair_marker(tmp_path):
     )
 
     assert response["memories"][0]["record_id"] == "running-event"
+
+
+@pytest.fixture
+def directional_invitation_db(tmp_path):
+    """Two similarly worded dates whose participant direction is opposite."""
+
+    db_path = tmp_path / "directional-invitation.sqlite3"
+    package_path = tmp_path / "directional-invitation.json"
+    records = [
+        _record(
+            "glass-invitation",
+            "你愿意来赴我的约吗？我想带你去海边悬崖上的玻璃小屋。",
+            "2026-08-19T15:55:00Z",
+            "assistant",
+            0,
+            conversation_id="synthetic-glass-date",
+        ),
+        _record(
+            "glass-acceptance",
+            "我愿意，今晚正式来赴你的约，你带我去那间玻璃小屋。",
+            "2026-08-19T16:03:00Z",
+            "user",
+            1,
+            conversation_id="synthetic-glass-date",
+        ),
+        _record(
+            "glass-arrival",
+            "你真的来赴我的约了；我带你到了海边悬崖上的玻璃小屋。",
+            "2026-08-19T16:08:00Z",
+            "assistant",
+            2,
+            conversation_id="synthetic-glass-date",
+        ),
+        _record(
+            "city-user-guide",
+            "今天是我带你去简城，现实里一起吃饭散步。",
+            "2026-08-21T09:00:00Z",
+            "user",
+            0,
+            conversation_id="synthetic-city-date",
+        ),
+        _record(
+            "city-assistant-guest",
+            "今天你带我去简城，我跟着你赴这次现实约会。",
+            "2026-08-21T09:01:00Z",
+            "assistant",
+            1,
+            conversation_id="synthetic-city-date",
+        ),
+        _record(
+            "glass-retelling",
+            "后来复盘时说，第一次正式赴约是你带我去海边玻璃小屋。",
+            "2026-08-23T08:00:00Z",
+            "user",
+            3,
+            conversation_id="synthetic-glass-date",
+        ),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    import_record_package(str(package_path), db_path=str(db_path))
+    return db_path
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "我第一次赴你的约是什么时候？",
+        "我第一次正式来赴约是哪一次？",
+        "你第一次带我去海边玻璃小屋是什么时候？",
+        "第一次去简城是不是我第一次赴你的约？",
+    ],
+)
+def test_directional_event_keeps_inviter_guest_and_guide_roles(
+    directional_invitation_db,
+    query,
+):
+    response = recall_records(
+        query,
+        limit=5,
+        db_path=str(directional_invitation_db),
+    )
+
+    assert response["recall_mode"] == "sqlite_shared_event_window"
+    assert response["event_recall"]["relationship_direction"]["relation"] in {
+        "invitation_fulfillment",
+        "guided_visit",
+    }
+    returned_ids = {item["record_id"] for item in response["memories"]}
+    assert response["memories"][0]["record_id"] == "glass-acceptance"
+    assert returned_ids & {"glass-acceptance", "glass-arrival"}
+    assert "glass-invitation" not in returned_ids
+    assert "city-user-guide" not in returned_ids
+    assert "city-assistant-guest" not in returned_ids
+    assert response["memories"][0]["event_start_at"] < "2026-08-23T00:00:00Z"
+    participation_ids = {
+        item["record_id"]
+        for item in response["memories"][0]["event_participation_evidence"]
+    }
+    assert "glass-invitation" not in participation_ids
+
+
+def test_directional_event_rejects_unfulfilled_invitation(tmp_path):
+    db_path = tmp_path / "unfulfilled-invitation.sqlite3"
+    package_path = tmp_path / "unfulfilled-invitation.json"
+    records = [
+        _record(
+            "only-invitation",
+            "你愿意来赴我的约吗？我想带你去湖边小屋。",
+            "2026-01-01T00:00:00Z",
+            "assistant",
+            0,
+        )
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    import_record_package(str(package_path), db_path=str(db_path))
+
+    response = recall_records(
+        "我第一次赴你的约是什么时候？",
+        limit=5,
+        db_path=str(db_path),
+    )
+
+    assert response["memories"] == []
+    assert response["event_recall"]["status"] == "insufficient_evidence"

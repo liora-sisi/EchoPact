@@ -1664,6 +1664,20 @@ def rebuild_records_index(db_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 @dataclass(frozen=True)
+class DirectionalRelationIntent:
+    """Role-bound relationship direction expressed by the query text.
+
+    ``query_speaker_role`` describes the speaker of the natural-language
+    question, not a private person or a configured agent.  Historical ``user``
+    rows keep that perspective; historical ``assistant`` rows reverse the
+    surface pronouns while preserving the same semantic roles.
+    """
+
+    relation: str
+    query_speaker_role: str
+
+
+@dataclass(frozen=True)
 class RecallQueryPlan:
     """Deterministic, dependency-free tiers for SQLite lexical recall."""
 
@@ -1689,6 +1703,7 @@ class RecallQueryPlan:
     shared_event_like_terms: Sequence[str]
     shared_event_anchor_fts_terms: Sequence[str]
     shared_event_anchor_like_terms: Sequence[str]
+    directional_relation: Optional[DirectionalRelationIntent]
 
 
 @dataclass(frozen=True)
@@ -2478,6 +2493,118 @@ def _swap_first_second_person(value: str) -> str:
     return value.replace("我", "\0").replace("你", "我").replace("\0", "你")
 
 
+def _directional_relation_query(value: str) -> Optional[DirectionalRelationIntent]:
+    """Recognize a small, source-neutral set of asymmetric relationship acts.
+
+    The rules intentionally model roles rather than private names or expected
+    places.  Invitation fulfilment is checked before guided travel so a
+    comparison such as ``X是不是我第一次赴你的约`` keeps the semantically
+    stronger invitation direction instead of becoming a generic trip query.
+    """
+
+    compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
+    if re.search(r"我.{0,16}(?:来赴|赴)(?:了)?(?:你的)?约", compact):
+        return DirectionalRelationIntent("invitation_fulfillment", "invitee")
+    if re.search(r"你.{0,16}(?:来赴|赴)(?:了)?(?:我的)?约", compact):
+        return DirectionalRelationIntent("invitation_fulfillment", "inviter")
+    if re.search(r"你.{0,12}(?:带|领)我.{0,16}(?:去|到)", compact):
+        return DirectionalRelationIntent("guided_visit", "guest")
+    if re.search(r"我.{0,12}(?:带|领)你.{0,16}(?:去|到)", compact):
+        return DirectionalRelationIntent("guided_visit", "guide")
+    return None
+
+
+def _directional_relation_marker(
+    content: str,
+    role: str,
+    intent: DirectionalRelationIntent,
+) -> Optional[str]:
+    """Return a marker only when source role and relationship direction agree."""
+
+    if role not in {"user", "assistant"}:
+        return None
+    compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", content))
+
+    if intent.relation == "invitation_fulfillment":
+        speaker_is_invitee = intent.query_speaker_role == "invitee"
+        source_speaker_is_invitee = (
+            speaker_is_invitee if role == "user" else not speaker_is_invitee
+        )
+        invitee = "我" if source_speaker_is_invitee else "你"
+        inviter = "你" if source_speaker_is_invitee else "我"
+        patterns = (
+            rf"{invitee}.{{0,18}}(?:来赴|赴)(?:了)?.{{0,4}}{inviter}的约",
+            rf"{invitee}.{{0,18}}(?:来赴|赴)(?:了)?约",
+            rf"{invitee}.{{0,18}}(?:接受|答应).{{0,6}}{inviter}的邀请",
+        )
+        matched = next((item for item in patterns if re.search(item, compact)), None)
+        if matched is None:
+            return None
+        # A question or proposal is context for a possible event, not proof
+        # that the invitee actually arrived or accepted it.
+        if re.search(
+            r"(?:愿不愿意|要不要|想不想|可不可以|是否愿意).{0,24}"
+            r"(?:来赴|赴|接受|答应)",
+            compact,
+        ) or re.search(r"愿意.{0,18}(?:来赴|赴).{0,8}约吗", compact):
+            return None
+        source_role = "invitee" if source_speaker_is_invitee else "inviter"
+        return f"invitation_fulfillment:source_speaker_is_{source_role}"
+
+    if intent.relation == "guided_visit":
+        if re.search(
+            r"(?:想|想要|打算|计划|准备|以后|下次|要不要).{0,16}(?:带|领)",
+            compact,
+        ):
+            return None
+        speaker_is_guide = intent.query_speaker_role == "guide"
+        source_speaker_is_guide = (
+            speaker_is_guide if role == "user" else not speaker_is_guide
+        )
+        guide = "我" if source_speaker_is_guide else "你"
+        guest = "你" if source_speaker_is_guide else "我"
+        if not re.search(
+            rf"{guide}.{{0,12}}(?:带|领){guest}.{{0,16}}(?:去|到)", compact
+        ):
+            return None
+        source_role = "guide" if source_speaker_is_guide else "guest"
+        return f"guided_visit:source_speaker_is_{source_role}"
+
+    return None
+
+
+def _relationship_direction_payload(
+    intent: Optional[DirectionalRelationIntent],
+) -> Optional[Dict[str, str]]:
+    if intent is None:
+        return None
+    return {
+        "relation": intent.relation,
+        "query_speaker_role": intent.query_speaker_role,
+        "perspective_policy": (
+            "query 我 follows historical user rows; historical assistant rows "
+            "may reverse surface pronouns only when semantic roles still agree"
+        ),
+        "candidate_separation_policy": (
+            "opposite inviter/invitee or guide/guest directions are not equivalent"
+        ),
+    }
+
+
+def _directional_relation_surface_anchors(
+    intent: Optional[DirectionalRelationIntent],
+) -> List[str]:
+    """Return generic surface forms for both role-correct message perspectives."""
+
+    if intent is None:
+        return []
+    if intent.relation == "invitation_fulfillment":
+        return ["赴你的约", "赴我的约", "来赴约"]
+    if intent.relation == "guided_visit":
+        return ["你带我", "我带你", "你领我", "我领你"]
+    return []
+
+
 def _shared_event_query_terms(
     normalized: str,
 ) -> tuple[List[str], List[str], List[str], List[str]]:
@@ -2500,6 +2627,7 @@ def _shared_event_query_terms(
     if topic in _SHARED_EVENT_UNANSWERABLE_TOPICS:
         return [], [], [], []
 
+    directional_relation = _directional_relation_query(normalized)
     variants = _unique_text(
         value
         for value in (topic, segment, _swap_first_second_person(segment))
@@ -2526,11 +2654,23 @@ def _shared_event_query_terms(
 
     topic_fts_terms, topic_like_terms = lexical_terms([topic])
     rescue_fts_terms, rescue_like_terms = lexical_terms(variants)
-    relation_action_terms = [
-        term
-        for term in rescue_fts_terms
-        if term.startswith("一起") or term.startswith("共同")
-    ]
+    directional_fts_terms, directional_like_terms = lexical_terms(
+        _directional_relation_surface_anchors(directional_relation)
+    )
+    rescue_fts_terms = _unique_text(rescue_fts_terms + directional_fts_terms)
+    rescue_like_terms = _unique_text(rescue_like_terms + directional_like_terms)
+    if directional_relation is not None:
+        # Both surface perspectives are discoverable, but role-aware window
+        # validation below decides whether the direction is semantically valid.
+        relation_action_terms = list(rescue_fts_terms)
+        relation_action_like_terms = list(rescue_like_terms)
+    else:
+        relation_action_terms = [
+            term
+            for term in rescue_fts_terms
+            if term.startswith("一起") or term.startswith("共同")
+        ]
+        relation_action_like_terms = []
     fts_terms = _bounded_text(
         _unique_text(topic_fts_terms + rescue_fts_terms),
         MAX_RELAXED_TERMS_PER_GROUP,
@@ -2543,7 +2683,7 @@ def _shared_event_query_terms(
         MAX_RELAXED_TERMS_PER_GROUP,
     )
     anchor_like_terms = _bounded_text(
-        _unique_text(topic_like_terms), MAX_LIKE_TERMS
+        _unique_text(topic_like_terms + relation_action_like_terms), MAX_LIKE_TERMS
     )
     return fts_terms, like_terms, anchor_fts_terms, anchor_like_terms
 
@@ -2679,6 +2819,7 @@ def _judge_shared_event_window(
     anchor_fts_terms: Sequence[str],
     anchor_like_terms: Sequence[str],
     normalized_query: str,
+    directional_relation: Optional[DirectionalRelationIntent] = None,
 ) -> Optional[SharedEventMatch]:
     """Return a deterministic event match only when literal evidence passes."""
 
@@ -2708,7 +2849,15 @@ def _judge_shared_event_window(
             normalized_content, normalized_query
         ):
             continue
-        markers = _shared_event_participation_markers(normalized_content)
+        if directional_relation is None:
+            markers = _shared_event_participation_markers(normalized_content)
+        else:
+            direction_marker = _directional_relation_marker(
+                normalized_content,
+                str(row["role"]),
+                directional_relation,
+            )
+            markers = [direction_marker] if direction_marker else []
         if not markers:
             continue
         event_rows.append(row)
@@ -2905,8 +3054,10 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     prefer_latest = any(marker in normalized for marker in _LATEST_QUERY_MARKERS)
     preference_entity = _preference_query_entity(normalized)
     latest_composite_terms = _latest_composite_topic_terms(normalized)
-    shared_event_intent = prefer_oldest and any(
-        marker in normalized for marker in _SHARED_EVENT_QUERY_MARKERS
+    directional_relation = _directional_relation_query(normalized)
+    shared_event_intent = prefer_oldest and (
+        directional_relation is not None
+        or any(marker in normalized for marker in _SHARED_EVENT_QUERY_MARKERS)
     )
     if shared_event_intent:
         (
@@ -3029,6 +3180,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         shared_event_like_terms=shared_event_like_terms,
         shared_event_anchor_fts_terms=shared_event_anchor_fts_terms,
         shared_event_anchor_like_terms=shared_event_anchor_like_terms,
+        directional_relation=directional_relation,
     )
 
 
@@ -3501,8 +3653,11 @@ def recall_records(
             Dict[int, Dict[str, Any]],
             Dict[str, Any],
         ]:
+            relationship_direction = _relationship_direction_payload(
+                query_plan.directional_relation
+            )
             if not candidates:
-                return [], {}, {
+                empty_event_recall: Dict[str, Any] = {
                     "intent": "shared_earliest_event",
                     "status": "insufficient_evidence",
                     "candidate_limit": MAX_SHARED_EVENT_CANDIDATES,
@@ -3511,6 +3666,11 @@ def recall_records(
                     "qualifying_windows": 0,
                     "search_truncated": search_truncated,
                 }
+                if relationship_direction is not None:
+                    empty_event_recall["relationship_direction"] = (
+                        relationship_direction
+                    )
+                return [], {}, empty_event_recall
 
             candidate_by_id = {row["id"]: row for row in candidates}
             candidate_rowids = list(candidate_by_id)
@@ -3603,6 +3763,7 @@ def recall_records(
                     anchor_fts_terms=query_plan.shared_event_anchor_fts_terms,
                     anchor_like_terms=query_plan.shared_event_anchor_like_terms,
                     normalized_query=query_plan.normalized_query,
+                    directional_relation=query_plan.directional_relation,
                 )
                 if match is None:
                     continue
@@ -3630,8 +3791,9 @@ def recall_records(
             )
             selected = matches[: min(limit, MAX_SHARED_EVENT_RESULTS)]
             selected_rows = [item[1] for item in selected]
-            annotations = {
-                item[0].representative_rowid: {
+            annotations = {}
+            for item in selected:
+                annotation: Dict[str, Any] = {
                     "event_evidence": [
                         dict(evidence) for evidence in item[0].event_evidence
                     ],
@@ -3647,14 +3809,15 @@ def recall_records(
                         item[0].assistant_identity_status
                     ),
                 }
-                for item in selected
-            }
+                if relationship_direction is not None:
+                    annotation["relationship_direction"] = relationship_direction
+                annotations[item[0].representative_rowid] = annotation
             status = (
                 selected[0][0].support_status
                 if selected
                 else "insufficient_evidence"
             )
-            return selected_rows, annotations, {
+            event_recall_result: Dict[str, Any] = {
                 "intent": "shared_earliest_event",
                 "status": status,
                 "candidate_limit": MAX_SHARED_EVENT_CANDIDATES,
@@ -3663,6 +3826,11 @@ def recall_records(
                 "qualifying_windows": len(matches),
                 "search_truncated": search_truncated,
             }
+            if relationship_direction is not None:
+                event_recall_result["relationship_direction"] = (
+                    relationship_direction
+                )
+            return selected_rows, annotations, event_recall_result
 
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
@@ -3814,6 +3982,11 @@ def recall_records(
                     "qualifying_windows": 0,
                     "search_truncated": False,
                 }
+                relationship_direction = _relationship_direction_payload(
+                    query_plan.directional_relation
+                )
+                if relationship_direction is not None:
+                    event_recall["relationship_direction"] = relationship_direction
             else:
                 candidates, search_truncated = fetch_shared_event_candidates(rows)
                 (

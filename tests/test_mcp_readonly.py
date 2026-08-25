@@ -126,6 +126,7 @@ def test_recall_contract_routes_context_gaps_without_overcalling():
     ].lower()
     assert "only the semantic" in query_description
     assert "number of calls" in query_description
+    assert "speaker's i/you direction" in query_description
     as_of_description = recall["inputSchema"]["properties"]["as_of"][
         "description"
     ].lower()
@@ -189,12 +190,20 @@ def test_gateway_bounds_long_memory_content(mcp_db):
 
 def test_gateway_bounds_shared_event_evidence_content():
     original = "乙" * (MAX_CONTENT_CHARS + 40)
+    relationship_direction = {
+        "relation": "guided_visit",
+        "query_speaker_role": "guest",
+    }
     bounded = _bounded_result(
         {
+            "event_recall": {
+                "relationship_direction": relationship_direction,
+            },
             "memories": [
                 {
                     "content": "representative",
                     "event_evidence": [{"content": original}],
+                    "relationship_direction": relationship_direction,
                 }
             ]
         }
@@ -204,6 +213,8 @@ def test_gateway_bounds_shared_event_evidence_content():
     assert evidence["content_chars"] == len(original)
     assert evidence["content_truncated"] is True
     assert evidence["content"].endswith("[Echo Pact: content truncated]")
+    assert bounded["event_recall"]["relationship_direction"] == relationship_direction
+    assert bounded["memories"][0]["relationship_direction"] == relationship_direction
 
 
 def test_gateway_bounds_outside_scope_retelling_content():
