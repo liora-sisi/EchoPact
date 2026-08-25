@@ -206,6 +206,27 @@ def test_gateway_bounds_shared_event_evidence_content():
     assert evidence["content"].endswith("[Echo Pact: content truncated]")
 
 
+def test_gateway_bounds_outside_scope_retelling_content():
+    original = "丙" * (MAX_CONTENT_CHARS + 40)
+    bounded = _bounded_result(
+        {
+            "temporal_scope": {
+                "outside_scope_retellings": [
+                    {
+                        "content": original,
+                        "conversation_context": [{"content": original}],
+                    }
+                ]
+            }
+        }
+    )
+
+    retelling = bounded["temporal_scope"]["outside_scope_retellings"][0]
+    assert retelling["content_truncated"] is True
+    assert retelling["content"].endswith("[Echo Pact: content truncated]")
+    assert retelling["conversation_context"][0]["content_truncated"] is True
+
+
 def test_readonly_open_refuses_old_schema_without_migrating(tmp_path):
     db_path = tmp_path / "old.sqlite3"
     with sqlite3.connect(db_path) as conn:

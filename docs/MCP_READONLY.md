@@ -117,6 +117,10 @@ For the source-neutral question category "first time we ate together", one
 additional bounded meal-language rescue can run inside the same public tool
 call. It contains only generic meal categories, never a private expected dish,
 restaurant, date, or answer.
+Name-origin questions may receive one generic `name / naming / origin / first`
+language pass. The pass contains no private expected answer. If the actual naming
+message is absent from the visible source archive, later mentions remain partial
+evidence and the gateway does not invent an origin.
 
 When the caller explicitly writes multiple questions separated by question
 marks or semicolons, the adaptive plan may search those clauses separately
@@ -170,10 +174,13 @@ non-exhaustive (`at_least` count semantics), does not merge same-day or similar
 messages, and never calls its earliest observed node the absolute archive first.
 Conflict, correction and denial nodes survive the ordinary timeline-node limit.
 `query_clock` separately reports how a supported relative phrase such as
-"last Wednesday" or "last month" resolves against its reliable Chengdu
-reference. This calendar scope is an interpretation aid, not proof that any
-recalled record belongs to that event or date, and it is not yet a record
-filter.
+"last Wednesday", "last month", or "the recent month" resolves against its
+reliable Chengdu reference. The resulting half-open UTC interval filters primary
+record timestamps before ranking and limiting. `last month` is the previous
+calendar month; `recent/past month` is rolling. A separately labelled
+`outside_scope_retellings` list may contain later recollections, but those rows
+never become primary in-range evidence. Timestamp membership is still not proof
+of the event's occurrence date.
 See `docs/EVENT_TIMELINE.md` for the clock and linkage contract.
 
 Queries that explicitly ask for original wording, original messages or

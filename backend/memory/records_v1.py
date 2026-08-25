@@ -3118,6 +3118,8 @@ def recall_records(
     *,
     limit: int = 5,
     as_of: Optional[str] = None,
+    created_at_start: Optional[str] = None,
+    created_at_end_exclusive: Optional[str] = None,
     db_path: Optional[str] = None,
     agent_id: Optional[str] = None,
     read_only: bool = False,
@@ -3135,6 +3137,27 @@ def recall_records(
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
     normalized_as_of = _normalize_timestamp(as_of, "as_of") if as_of else None
+    normalized_created_at_start = (
+        _normalize_timestamp(created_at_start, "created_at_start")
+        if created_at_start
+        else None
+    )
+    normalized_created_at_end = (
+        _normalize_timestamp(
+            created_at_end_exclusive,
+            "created_at_end_exclusive",
+        )
+        if created_at_end_exclusive
+        else None
+    )
+    if (
+        normalized_created_at_start
+        and normalized_created_at_end
+        and normalized_created_at_start >= normalized_created_at_end
+    ):
+        raise ValueError(
+            "created_at_start must be earlier than created_at_end_exclusive"
+        )
     if read_only:
         conn = _connect_readonly(db_path)
     else:
@@ -3152,6 +3175,14 @@ def recall_records(
             vis_where = (
                 f"AND r.id IN ({visible_rowids_query})"
             )
+        scope_where = vis_where
+        scope_params: List[Any] = list(vis_params)
+        if normalized_created_at_start:
+            scope_where += "\nAND r.created_at >= ?"
+            scope_params.append(normalized_created_at_start)
+        if normalized_created_at_end:
+            scope_where += "\nAND r.created_at < ?"
+            scope_params.append(normalized_created_at_end)
         conn.execute("PRAGMA query_only = ON")
         query_plan = _recall_query_plan(query)
 
@@ -3164,11 +3195,11 @@ def recall_records(
                 FROM records_v1_fts
                 JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
                 WHERE records_v1_fts MATCH ?
-                {vis_where}
+                {scope_where}
                 ORDER BY lexical_rank ASC, r.created_at {date_direction}
                 LIMIT ?
                 """,
-                [expression] + vis_params + [limit],
+                [expression] + scope_params + [limit],
             ).fetchall()
 
         def fetch_like(patterns: Sequence[str]) -> List[sqlite3.Row]:
@@ -3184,11 +3215,11 @@ def recall_records(
                 SELECT r.*, ({score_sql}) AS lexical_rank
                 FROM records_v1 AS r
                 WHERE ({where_sql})
-                {vis_where}
+                {scope_where}
                 ORDER BY lexical_rank DESC, r.created_at {date_direction}
                 LIMIT ?
                 """,
-                list(patterns) + list(patterns) + vis_params + [limit],
+                list(patterns) + list(patterns) + scope_params + [limit],
             ).fetchall()
 
         def fetch_ranked_like(
@@ -3260,13 +3291,13 @@ def recall_records(
                 SELECT r.*, ({score_sql}) AS lexical_rank
                 FROM records_v1 AS r
                 WHERE ({where_sql})
-                {vis_where}
+                {scope_where}
                 ORDER BY {order_sql}
                 LIMIT ?
                 """,
                 score_patterns
                 + where_params
-                + vis_params
+                + scope_params
                 + [limit],
             ).fetchall()
 
@@ -3281,9 +3312,9 @@ def recall_records(
                     SELECT COUNT(*)
                     FROM records_v1 AS r
                     WHERE r.content LIKE ? ESCAPE '\\'
-                    {vis_where}
+                    {scope_where}
                     """,
-                    [pattern] + vis_params,
+                    [pattern] + scope_params,
                 ).fetchone()[0]
                 # A literal that exists only in the first-pass retelling cannot
                 # lead to a distinct source. Removing such singleton prose also
@@ -3303,7 +3334,7 @@ def recall_records(
                 SELECT r.*, ({score_sql}) AS lexical_rank
                 FROM records_v1 AS r
                 WHERE ({score_sql}) >= ?
-                {vis_where}
+                {scope_where}
                 ORDER BY r.created_at ASC, lexical_rank DESC,
                          length(r.content) ASC, r.id ASC
                 LIMIT ?
@@ -3311,7 +3342,7 @@ def recall_records(
                 patterns
                 + patterns
                 + [minimum_matches]
-                + vis_params
+                + scope_params
                 + [max(limit * 2, limit)],
             ).fetchall()
 
@@ -3345,13 +3376,13 @@ def recall_records(
                         JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
                         WHERE records_v1_fts MATCH ?
                           AND ({dyadic_where})
-                        {vis_where}
+                        {scope_where}
                         ORDER BY r.created_at ASC, r.id ASC
                         LIMIT ?
                         """,
                         [anchor_expression]
                         + dyadic_patterns
-                        + vis_params
+                        + scope_params
                         + [fetch_limit],
                     ).fetchall()
                 except sqlite3.OperationalError:
@@ -3378,13 +3409,13 @@ def recall_records(
                     FROM records_v1 AS r
                     WHERE ({dyadic_where})
                       AND ({anchor_where})
-                    {vis_where}
+                    {scope_where}
                     ORDER BY r.created_at ASC, r.id ASC
                     LIMIT ?
                     """,
                     dyadic_patterns
                     + anchor_patterns
-                    + vis_params
+                    + scope_params
                     + [fetch_limit],
                 ).fetchall()
                 if len(fetched) > MAX_SHARED_EVENT_CANDIDATES:
@@ -3400,11 +3431,11 @@ def recall_records(
                         FROM records_v1_fts
                         JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
                         WHERE records_v1_fts MATCH ?
-                        {vis_where}
+                        {scope_where}
                         ORDER BY r.created_at ASC, r.id ASC
                         LIMIT ?
                         """,
-                        [anchor_expression] + vis_params + [fetch_limit],
+                        [anchor_expression] + scope_params + [fetch_limit],
                     ).fetchall()
                 except sqlite3.OperationalError:
                     fetched = []
@@ -3426,11 +3457,11 @@ def recall_records(
                     SELECT r.*, 0 AS lexical_rank
                     FROM records_v1 AS r
                     WHERE ({where_sql})
-                    {vis_where}
+                    {scope_where}
                     ORDER BY r.created_at ASC, r.id ASC
                     LIMIT ?
                     """,
-                    patterns + vis_params + [fetch_limit],
+                    patterns + scope_params + [fetch_limit],
                 ).fetchall()
                 if len(fetched) > MAX_SHARED_EVENT_CANDIDATES:
                     truncated = True
@@ -3962,6 +3993,17 @@ def recall_records(
                 "traceable source_ref 0.05. It is not a probability."
             ),
             "coverage": coverage,
+            "record_time_filter": {
+                "applied": bool(
+                    normalized_created_at_start or normalized_created_at_end
+                ),
+                "created_at_start": normalized_created_at_start,
+                "created_at_end_exclusive": normalized_created_at_end,
+                "semantics": (
+                    "primary record timestamps only; conversation context is "
+                    "kept as labelled local context"
+                ),
+            },
             "memories": [
                 _row_to_recall_result(
                     row,

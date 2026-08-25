@@ -14,12 +14,13 @@ import hashlib
 import json
 import re
 import unicodedata
+from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 
 EVENT_TIMELINE_SCHEMA_VERSION = "echo-pact-event-timeline-v1"
-EVENT_TIMELINE_GENERATOR_VERSION = "event-timeline-query-time-v1.1"
+EVENT_TIMELINE_GENERATOR_VERSION = "event-timeline-query-time-v1.2"
 MAX_ORDINARY_TIMELINE_NODES = 12
 MAX_TIMELINE_EXCERPT_CHARS = 480
 CHENGDU_TIMEZONE_NAME = "Asia/Shanghai"
@@ -87,6 +88,8 @@ _RELATIVE_QUERY_MARKERS = (
     "昨晚",
     "上周",
     "上星期",
+    "最近一个月",
+    "过去一个月",
     "上个月",
 )
 _WEEKDAY_INDEX = {
@@ -179,10 +182,22 @@ def query_uses_relative_time(query: Any) -> bool:
     return any(marker in compact for marker in _RELATIVE_QUERY_MARKERS)
 
 
-def _relative_query_clock(
+def _previous_calendar_month_same_day(value):
+    year = value.year if value.month > 1 else value.year - 1
+    month = value.month - 1 if value.month > 1 else 12
+    return value.replace(
+        year=year,
+        month=month,
+        day=min(value.day, monthrange(year, month)[1]),
+    )
+
+
+def resolve_query_calendar_scope(
     query: str,
     reference_instant: Optional[str],
     reference_source: Optional[str],
+    *,
+    used_for_record_filtering: bool = False,
 ) -> Dict[str, Any]:
     """Resolve a small explicit relative-date vocabulary against Chengdu.
 
@@ -203,6 +218,8 @@ def _relative_query_clock(
             "resolved_on": None,
             "resolved_start_on": None,
             "resolved_end_on": None,
+            "filter_start_at": None,
+            "filter_end_at_exclusive": None,
             "used_for_record_filtering": False,
         }
 
@@ -217,6 +234,8 @@ def _relative_query_clock(
             "resolved_on": None,
             "resolved_start_on": None,
             "resolved_end_on": None,
+            "filter_start_at": None,
+            "filter_end_at_exclusive": None,
             "used_for_record_filtering": False,
         }
 
@@ -237,6 +256,13 @@ def _relative_query_clock(
             days=_WEEKDAY_INDEX[weekday_match.group(1)]
         )
         matched_expression = weekday_match.group(0)
+    elif "最近一个月" in compact or "过去一个月" in compact:
+        resolved_start = _previous_calendar_month_same_day(reference_date)
+        resolved_end = reference_date
+        matched_expression = (
+            "最近一个月" if "最近一个月" in compact else "过去一个月"
+        )
+        precision = "rolling_calendar_month"
     elif "上个月" in compact:
         current_month_start = reference_date.replace(day=1)
         resolved_end = current_month_start - timedelta(days=1)
@@ -263,6 +289,27 @@ def _relative_query_clock(
         resolved_on = reference_date
         matched_expression = "今天"
 
+    range_start = resolved_on or resolved_start
+    range_end = resolved_on or resolved_end
+    filter_start_at = None
+    filter_end_at_exclusive = None
+    if range_start is not None and range_end is not None:
+        start_local = datetime.combine(
+            range_start,
+            datetime.min.time(),
+            tzinfo=_CHENGDU_TIMEZONE,
+        )
+        end_local = datetime.combine(
+            range_end + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=_CHENGDU_TIMEZONE,
+        )
+        filter_start_at = _utc_iso(start_local)
+        filter_end_at_exclusive = _utc_iso(end_local)
+
+    filtering_applied = bool(
+        used_for_record_filtering and filter_start_at and filter_end_at_exclusive
+    )
     return {
         "status": "resolved_calendar_scope",
         "reference_at": _utc_iso(parsed),
@@ -276,10 +323,16 @@ def _relative_query_clock(
             resolved_start.isoformat() if resolved_start else None
         ),
         "resolved_end_on": resolved_end.isoformat() if resolved_end else None,
-        "used_for_record_filtering": False,
+        "filter_start_at": filter_start_at,
+        "filter_end_at_exclusive": filter_end_at_exclusive,
+        "used_for_record_filtering": filtering_applied,
         "evidence_rule": (
-            "calendar scope is a query aid only; recalled evidence must still "
-            "support the event"
+            "primary recalled records are restricted to the resolved calendar "
+            "scope; separately labelled later retellings never become primary "
+            "in-range evidence"
+            if filtering_applied
+            else "calendar scope is a query aid only; recalled evidence must "
+            "still support the event"
         ),
     }
 
@@ -491,6 +544,7 @@ def build_event_timeline(
     *,
     reference_instant: Optional[str] = None,
     reference_source: Optional[str] = None,
+    record_filtering_applied: bool = False,
 ) -> Dict[str, Any]:
     """Build a deterministic, read-only chronology from recalled evidence."""
 
@@ -522,6 +576,7 @@ def build_event_timeline(
         "query": _normalize_text(query),
         "reference_instant": reference_instant,
         "reference_source": reference_source,
+        "record_filtering_applied": record_filtering_applied,
         "records": sorted(
             [
             {
@@ -569,10 +624,11 @@ def build_event_timeline(
                 "never inferred from message time"
             ),
         },
-        "query_clock": _relative_query_clock(
+        "query_clock": resolve_query_calendar_scope(
             query,
             reference_instant,
             reference_source,
+            used_for_record_filtering=record_filtering_applied,
         ),
         "archive_first_mentioned_at": archive_first,
         "archive_first_mentioned_at_local": archive_first_local,

@@ -166,7 +166,8 @@ def _bounded_result(result: Mapping[str, Any]) -> Dict[str, Any]:
     """Bound tool output while preserving provenance and coverage metadata."""
 
     bounded = copy.deepcopy(dict(result))
-    for memory in bounded.get("memories", []):
+
+    def bound_memory(memory: Dict[str, Any]) -> None:
         original = memory.get("content")
         if isinstance(original, str):
             memory["content_chars"] = len(original)
@@ -184,6 +185,13 @@ def _bounded_result(result: Mapping[str, Any]) -> Dict[str, Any]:
                         len(original) > MAX_CONTENT_CHARS
                     )
                     context_record["content"] = _truncate_text(original)
+
+    for memory in bounded.get("memories", []):
+        bound_memory(memory)
+    temporal_scope = bounded.get("temporal_scope")
+    if isinstance(temporal_scope, dict):
+        for memory in temporal_scope.get("outside_scope_retellings", []):
+            bound_memory(memory)
     return bounded
 
 

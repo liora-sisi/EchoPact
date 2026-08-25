@@ -182,6 +182,22 @@ def test_last_month_resolves_to_calendar_range():
     assert query_clock["precision"] == "month"
 
 
+def test_recent_month_resolves_to_rolling_calendar_range():
+    timeline = build_event_timeline(
+        "最近一个月我们做了什么？",
+        [],
+        reference_instant="2026-08-25T10:00:00+08:00",
+        reference_source="caller_as_of",
+    )
+
+    query_clock = timeline["query_clock"]
+    assert query_clock["resolved_start_on"] == "2026-07-25"
+    assert query_clock["resolved_end_on"] == "2026-08-25"
+    assert query_clock["filter_start_at"] == "2026-07-24T16:00:00Z"
+    assert query_clock["filter_end_at_exclusive"] == "2026-08-25T16:00:00Z"
+    assert query_clock["precision"] == "rolling_calendar_month"
+
+
 def test_relative_time_without_reference_remains_unresolved():
     timeline = build_event_timeline("昨晚我们做了什么？", [])
 

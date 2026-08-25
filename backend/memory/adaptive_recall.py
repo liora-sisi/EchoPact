@@ -16,11 +16,12 @@ import copy
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .event_timeline import (
     build_event_timeline,
+    resolve_query_calendar_scope,
     suppress_event_timeline_for_coverage_gap,
 )
 from .recall_projection import recall_with_projection
@@ -76,6 +77,27 @@ _GENERIC_MEAL_QUERY_MARKERS = (
 _GENERIC_MEAL_RESCUE_QUERY = (
     "我们第一次一起吃饭 吃东西 食物 早餐 午饭 晚饭 夜宵 "
     "烧烤 火锅 外卖 零食 水果"
+)
+_NAME_ORIGIN_MARKERS = (
+    "为什么叫",
+    "名字怎么",
+    "名字是怎么",
+    "名字由来",
+    "这个名字",
+    "取名",
+    "命名",
+    "叫法",
+)
+_RELATIVE_SCOPE_MARKERS = (
+    "最近一个月",
+    "过去一个月",
+    "上个月",
+    "上星期",
+    "上周",
+    "前天",
+    "昨天",
+    "昨晚",
+    "今天",
 )
 
 
@@ -340,6 +362,14 @@ def _follow_up_passes(
 
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
+    name_subject = _name_origin_subject(normalized)
+    if name_subject:
+        passes.append(
+            (
+                "name_origin_language",
+                f"{name_subject} 名字 取名 命名 叫法 由来 最初 当时",
+            )
+        )
     asks_for_retelling = _contains_any(normalized, _RETELLING_MARKERS)
     source_trace_sensitive = _contains_any(
         normalized,
@@ -372,6 +402,111 @@ def _follow_up_passes(
             passes.append(("compact_retry", compact))
 
     return _unique_passes(passes)
+
+
+def _name_origin_subject(query: str) -> Optional[str]:
+    """Extract only the caller-written name for a generic origin rescue."""
+
+    normalized = _normalize(query)
+    if not _contains_any(normalized, _NAME_ORIGIN_MARKERS):
+        return None
+    candidates: List[str] = []
+    candidates.extend(
+        match.group(1)
+        for match in re.finditer(r"[“\"《]([^”\"》]{2,32})[”\"》]", normalized)
+    )
+    for pattern in (
+        r"([0-9A-Za-z\u3400-\u9fff_-]{2,24}?)(?:这个)?名字",
+        r"([0-9A-Za-z\u3400-\u9fff_-]{2,24})为什么叫",
+        r"(?:为什么)?叫([0-9A-Za-z\u3400-\u9fff_-]{2,24})",
+    ):
+        match = re.search(pattern, normalized)
+        if match:
+            candidates.append(match.group(1))
+    hinted = _subquestion_subject_hint(normalized)
+    if hinted:
+        candidates.append(hinted)
+    for candidate in candidates:
+        value = re.sub(
+            r"^(?:老公|老婆|宝贝|你还记得|还记得|记不记得)",
+            "",
+            candidate,
+        )
+        value = re.sub(r"(?:这个)?名字$|的名字$|这个$", "", value)
+        value = value.strip("，,。！？!?；;：: 的")
+        if not 2 <= len(value) <= 24:
+            continue
+        if value in {"这个", "那个", "名字", "我们", "为什么"}:
+            continue
+        if len(re.findall(r"[0-9A-Za-z\u3400-\u9fff]", value)) >= 2:
+            return value
+    return None
+
+
+def _parse_utc(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _temporal_retelling_query(query: str) -> Optional[str]:
+    anchors = _explicit_query_anchors(query)
+    if anchors:
+        subject = " ".join(anchors[:3])
+    else:
+        subject = _normalize(query)
+        for marker in _RELATIVE_SCOPE_MARKERS:
+            subject = subject.replace(marker, " ")
+        subject = re.sub(
+            r"(?:我们|我和你|我跟你|做过|发生过|有哪些|哪些|什么|"
+            r"什么时候|还记得|记不记得|呀|吗|呢)",
+            " ",
+            subject,
+        )
+        subject = re.sub(r"[，,。！？!?；;：:]", " ", subject)
+        subject = _normalize(subject)
+    if len(re.findall(r"[0-9A-Za-z\u3400-\u9fff]", subject)) < 2:
+        return None
+    return f"{subject} 后来回忆 后来复盘 后来提起"
+
+
+def _filter_outside_scope_retellings(
+    pass_query: str,
+    response: Mapping[str, Any],
+    *,
+    start_at: str,
+    end_at_exclusive: str,
+) -> List[Dict[str, Any]]:
+    topic_terms = _event_retelling_topic_terms(pass_query)
+    start = _parse_utc(start_at)
+    end = _parse_utc(end_at_exclusive)
+    if not topic_terms or start is None or end is None:
+        return []
+    kept: List[Dict[str, Any]] = []
+    for raw_memory in response.get("memories") or []:
+        memory = dict(raw_memory)
+        mentioned = _parse_utc(memory.get("created_at"))
+        if mentioned is None or mentioned < end:
+            continue
+        compact = re.sub(
+            r"\s+", "", _normalize(str(memory.get("content") or ""))
+        )
+        if not any(marker in compact for marker in _RETELLING_EVIDENCE_MARKERS):
+            continue
+        folded = compact.casefold()
+        if not any(term.casefold() in folded for term in topic_terms):
+            continue
+        memory["temporal_evidence_role"] = (
+            "later_retelling_outside_primary_scope"
+        )
+        kept.append(memory)
+    return kept
 
 
 def _event_retelling_topic_terms(pass_query: str) -> List[str]:
@@ -505,6 +640,7 @@ def _merge_results(
     *,
     reference_instant: Optional[str] = None,
     reference_source: Optional[str] = None,
+    record_filtering_applied: bool = False,
 ) -> Dict[str, Any]:
     first = copy.deepcopy(dict(pass_results[0][1]))
     normalized = _normalize(query)
@@ -606,6 +742,7 @@ def _merge_results(
         merged,
         reference_instant=reference_instant,
         reference_source=reference_source,
+        record_filtering_applied=record_filtering_applied,
     )
     return first
 
@@ -624,14 +761,31 @@ def adaptive_recall(
     """Return one bounded memory packet from a small internal recall plan."""
 
     internal_limit = min(MAX_INTERNAL_RESULT_LIMIT, max(limit, 8))
+    query_clock = resolve_query_calendar_scope(
+        query,
+        as_of,
+        reference_time_source,
+        used_for_record_filtering=True,
+    )
+    scope_start = query_clock.get("filter_start_at")
+    scope_end = query_clock.get("filter_end_at_exclusive")
+    scope_applied = bool(
+        query_clock.get("used_for_record_filtering")
+        and scope_start
+        and scope_end
+    )
 
-    def run(pass_query: str) -> Dict[str, Any]:
+    def run(pass_query: str, *, apply_scope: bool = True) -> Dict[str, Any]:
+        created_at_start = scope_start if scope_applied and apply_scope else None
+        created_at_end = scope_end if scope_applied and apply_scope else None
         if include_projection:
             return recall_with_projection(
                 pass_query,
                 agent_id=agent_id,
                 limit=internal_limit,
                 as_of=as_of,
+                created_at_start=created_at_start,
+                created_at_end_exclusive=created_at_end,
                 db_path=db_path,
                 read_only=read_only,
             )
@@ -640,14 +794,17 @@ def adaptive_recall(
             agent_id=agent_id,
             limit=internal_limit,
             as_of=as_of,
+            created_at_start=created_at_start,
+            created_at_end_exclusive=created_at_end,
             db_path=db_path,
             read_only=read_only,
         )
 
     first = run(query)
     pass_results: List[tuple[str, Mapping[str, Any]]] = [("initial", first)]
+    follow_up_budget = MAX_ADAPTIVE_QUERY_PASSES - (1 if scope_applied else 0)
     for pass_name, pass_query in _follow_up_passes(query, first):
-        if len(pass_results) >= MAX_ADAPTIVE_QUERY_PASSES:
+        if len(pass_results) >= follow_up_budget:
             break
         result = run(pass_query)
         if pass_name == "event_retelling_trace":
@@ -659,5 +816,41 @@ def adaptive_recall(
         pass_results,
         reference_instant=as_of,
         reference_source=reference_time_source,
+        record_filtering_applied=scope_applied,
     )
+    outside_retellings: List[Dict[str, Any]] = []
+    if scope_applied and len(pass_results) < MAX_ADAPTIVE_QUERY_PASSES:
+        retelling_query = _temporal_retelling_query(query)
+        if retelling_query:
+            retelling_response = run(retelling_query, apply_scope=False)
+            outside_retellings = _filter_outside_scope_retellings(
+                retelling_query,
+                retelling_response,
+                start_at=str(scope_start),
+                end_at_exclusive=str(scope_end),
+            )[:3]
+            merged["adaptive_recall"]["passes"].append(
+                {
+                    "pass": "outside_scope_retelling_trace",
+                    "recall_mode": retelling_response.get("recall_mode"),
+                    "result_count": len(outside_retellings),
+                }
+            )
+            merged["adaptive_recall"]["query_passes_used"] += 1
+            merged["adaptive_recall"]["budget_exhausted"] = (
+                merged["adaptive_recall"]["query_passes_used"]
+                >= MAX_ADAPTIVE_QUERY_PASSES
+            )
+    merged["temporal_scope"] = {
+        **query_clock,
+        "primary_evidence_policy": (
+            "records inside the resolved half-open UTC interval only"
+            if scope_applied
+            else "no resolved record-time filter"
+        ),
+        "outside_scope_retellings_policy": (
+            "separate labelled evidence; never primary in-range evidence"
+        ),
+        "outside_scope_retellings": outside_retellings,
+    }
     return _apply_temporal_coverage_guard(query, merged)

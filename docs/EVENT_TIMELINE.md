@@ -45,14 +45,19 @@ become a midnight instant. Relative phrases such as “昨晚” remain unresolv
 without a reliable timezone-aware anchor. Import time, Room Ferry export time,
 `firstImportedAt`, and `lastImportedAt` are never substituted for event time.
 
-M6.2.1 adds a separate `query_clock` for supported caller-relative phrases.
+M6.2.2 uses a separate `query_clock` for supported caller-relative phrases.
 With a reliable reference instant, `今天`、`昨天`、`前天`、`昨晚`、`上周X`、
-`上周` / `上星期` and `上个月` resolve against `Asia/Shanghai`. A missing
+`上周` / `上星期`, `上个月`, and `最近一个月` / `过去一个月` resolve against
+`Asia/Shanghai`. `上个月` means the previous calendar month; the latter two
+mean a rolling calendar month ending on the reference date. A missing
 reference remains `unresolved_missing_timezone_aware_reference`. The local MCP
 gateway supplies its own Chengdu server clock only when a relative phrase is
-present and the caller omitted `as_of`. The resolved day/week/month is a query
-interpretation aid (`used_for_record_filtering=false`), not evidence that any
-returned record describes that event.
+present and the caller omitted `as_of`. The resolved day/week/month becomes a
+half-open UTC filter over primary record timestamps
+(`used_for_record_filtering=true`). This proves only that a returned message was
+recorded inside the requested calendar scope; it does not prove the real-world
+event happened then. Later retellings outside the scope are returned only in a
+separate labelled channel and never merged into the primary in-range memories.
 
 ChatGPT export timestamps travel through Room Ferry as epoch milliseconds and
 are normalized by Echo Pact to UTC instants. They are not stored as Beijing
@@ -71,6 +76,9 @@ wall-clock strings. Local conversion happens only in the response annotation.
 - A generic "first time we ate together" question may also receive one bounded,
   source-neutral meal-category rescue inside the same external tool call. The
   rescue never contains a private dish, date, restaurant, or expected answer.
+- A name-origin question may receive one bounded generic naming-language rescue.
+  It never supplies a private etymology or fills an origin that the source archive
+  does not contain.
 - A query outside the imported coverage boundary suppresses the timeline rather
   than exposing older lexical lookalikes.
 - The response carries a generator version, input SHA-256 and deterministic

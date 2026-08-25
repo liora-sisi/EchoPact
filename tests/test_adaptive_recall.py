@@ -10,6 +10,7 @@ from backend.mcp.readonly_server import ReadonlyGateway
 from backend.memory.adaptive_recall import (
     MAX_ADAPTIVE_QUERY_PASSES,
     _explicit_subquestions,
+    _name_origin_subject,
     _subquestion_passes,
     _subquestion_subject_hint,
 )
@@ -152,6 +153,73 @@ def _database(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     register_agent(OWNER, "Adaptive owner", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(package_path),
+        db_path=str(db_path),
+        owner_agent_id=OWNER,
+        actor="test",
+    )
+    return db_path
+
+
+def _temporal_database(tmp_path: Path) -> Path:
+    db_path = tmp_path / "adaptive-temporal.sqlite3"
+    package_path = tmp_path / "temporal-records.json"
+    records = [
+        _record(
+            "june-protection",
+            "六月给 Echo Pact 做过本地补丁防丢保护。",
+            "2026-06-20T04:00:00Z",
+        ),
+        _record(
+            "june-retelling-before-scope",
+            "后来复盘 Echo Pact 的防丢保护，但这条早于七月范围。",
+            "2026-06-21T04:00:00Z",
+        ),
+        _record(
+            "july-protection",
+            "七月给 Echo Pact 做了 Git bundle 和安全分支防丢保护。",
+            "2026-07-10T04:00:00Z",
+        ),
+        _record(
+            "july-24-rolling-noise",
+            "7月24日记录 Echo Pact 滚动范围边界外事项。",
+            "2026-07-24T04:00:00Z",
+        ),
+        _record(
+            "july-25-rolling",
+            "7月25日记录 Echo Pact 滚动范围边界内事项。",
+            "2026-07-25T04:00:00Z",
+        ),
+        _record(
+            "august-protection",
+            "八月继续给 Echo Pact 做远端提交保护。",
+            "2026-08-10T04:00:00Z",
+        ),
+        _record(
+            "august-july-retelling",
+            "后来复盘 Echo Pact 七月的防丢保护，提到了 Git bundle。",
+            "2026-08-12T04:00:00Z",
+        ),
+        _record(
+            "name-origin",
+            "我给自己取名望舒，因为想守望月亮。",
+            "2026-07-12T04:00:00Z",
+        ),
+        _record(
+            "name-later-role",
+            "后来望舒负责月亮司机和巡山工作。",
+            "2026-08-12T05:00:00Z",
+        ),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": "echo-pact-records-v1", "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    register_agent(OWNER, "Temporal owner", actor="test", db_path=str(db_path))
     import_record_package(
         str(package_path),
         db_path=str(db_path),
@@ -372,3 +440,78 @@ def test_unanchored_pronominal_followup_does_not_consume_pass_budget():
     assert _subquestion_passes(
         "这个安排是在解释什么？我为什么离开？"
     ) == []
+
+
+def test_last_month_filters_primary_records_and_separates_later_retelling(tmp_path):
+    db_path = _temporal_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "上个月 Echo Pact 做过哪些防丢保护？",
+            "limit": 8,
+            "as_of": "2026-08-25T10:00:00+08:00",
+        }
+    )
+
+    ids = {item["record_id"] for item in response["memories"]}
+    assert "july-protection" in ids
+    assert "june-protection" not in ids
+    assert "august-protection" not in ids
+    assert "august-july-retelling" not in ids
+    scope = response["temporal_scope"]
+    assert scope["matched_expression"] == "上个月"
+    assert scope["resolved_start_on"] == "2026-07-01"
+    assert scope["resolved_end_on"] == "2026-07-31"
+    assert scope["filter_start_at"] == "2026-06-30T16:00:00Z"
+    assert scope["filter_end_at_exclusive"] == "2026-07-31T16:00:00Z"
+    assert scope["used_for_record_filtering"] is True
+    retellings = scope["outside_scope_retellings"]
+    assert [item["record_id"] for item in retellings] == [
+        "august-july-retelling"
+    ]
+    assert retellings[0]["temporal_evidence_role"] == (
+        "later_retelling_outside_primary_scope"
+    )
+    assert response["event_timeline"]["query_clock"][
+        "used_for_record_filtering"
+    ] is True
+
+
+def test_recent_month_is_rolling_calendar_range_not_previous_month(tmp_path):
+    db_path = _temporal_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "最近一个月 Echo Pact 有哪些记录？",
+            "limit": 10,
+            "as_of": "2026-08-25T10:00:00+08:00",
+        }
+    )
+
+    ids = {item["record_id"] for item in response["memories"]}
+    assert "july-24-rolling-noise" not in ids
+    assert "july-25-rolling" in ids
+    assert "august-protection" in ids
+    scope = response["temporal_scope"]
+    assert scope["precision"] == "rolling_calendar_month"
+    assert scope["resolved_start_on"] == "2026-07-25"
+    assert scope["resolved_end_on"] == "2026-08-25"
+
+
+def test_name_origin_question_gets_generic_origin_rescue(tmp_path):
+    db_path = _temporal_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {"query": "望舒这个名字是怎么来的？", "limit": 5}
+    )
+
+    ids = {item["record_id"] for item in response["memories"]}
+    assert "name-origin" in ids
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert "name_origin_language" in passes
+    assert all(
+        "守望月亮" not in item["content"] or item["record_id"] == "name-origin"
+        for item in response["memories"]
+    )
+
+
+def test_name_origin_subject_does_not_keep_question_scaffolding():
+    assert _name_origin_subject("望舒这个名字是怎么来的？") == "望舒"
+    assert _name_origin_subject("为什么叫望舒？") == "望舒"

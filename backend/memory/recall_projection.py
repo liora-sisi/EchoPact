@@ -160,6 +160,8 @@ def recall_with_projection(
     agent_id: str,
     limit: int = 5,
     as_of: Optional[str] = None,
+    created_at_start: Optional[str] = None,
+    created_at_end_exclusive: Optional[str] = None,
     db_path: Optional[str] = None,
     read_only: bool = False,
 ) -> Dict[str, Any]:
@@ -176,6 +178,8 @@ def recall_with_projection(
         query,
         limit=limit,
         as_of=as_of,
+        created_at_start=created_at_start,
+        created_at_end_exclusive=created_at_end_exclusive,
         db_path=db_path,
         agent_id=agent_id,
         read_only=read_only,
