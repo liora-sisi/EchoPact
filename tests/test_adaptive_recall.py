@@ -14,6 +14,7 @@ from backend.memory.adaptive_recall import (
     _subquestion_passes,
     _subquestion_subject_hint,
 )
+from backend.memory.event_collection import detect_event_collection_intent
 from backend.memory.identity import register_agent
 from backend.memory.records_v1 import import_record_package
 
@@ -144,7 +145,45 @@ def _database(tmp_path: Path) -> Path:
             "后来提起第一次一起吃东西，我还记得那顿烧烤和五花肉。",
             "2026-07-03T12:00:00Z",
         ),
+        _record(
+            "manicure-may-plan",
+            "这次美甲先看候选图案，我提了短款和左右手不同的要求。",
+            "2026-05-03T08:00:00Z",
+        ),
+        _record(
+            "manicure-may-done",
+            "今天美甲做完了，采用了我们一起选的灰银和裸色组合。",
+            "2026-05-06T08:00:00Z",
+        ),
+        _record(
+            "manicure-june-done",
+            "这次做指甲已经完成，底色采用银灰猫眼，并由我调整了点缀。",
+            "2026-06-17T08:00:00Z",
+        ),
+        _record(
+            "manicure-july-done",
+            "今天到美甲店做了新款，先听了你的建议，再由我决定左右手图案。",
+            "2026-07-22T08:00:00Z",
+        ),
+        _record(
+            "manicure-may-retelling",
+            "后来回忆五月那次美甲，我又提起当时是谁帮忙选的款式。",
+            "2026-07-30T08:00:00Z",
+        ),
+        _record(
+            "pattern-noise",
+            "文档图案的选择与生活事件无关。",
+            "2026-07-31T08:00:00Z",
+        ),
     ]
+    records.extend(
+        _record(
+            f"manicure-topic-noise-{index:02d}",
+            "美甲资料条目只讨论颜色名词，不代表做过一次，也没有完成记录。",
+            f"2026-07-{index + 1:02d}T09:00:00Z",
+        )
+        for index in range(15)
+    )
     package_path.write_text(
         json.dumps(
             {"schema_version": "echo-pact-records-v1", "records": records},
@@ -515,3 +554,69 @@ def test_name_origin_question_gets_generic_origin_rescue(tmp_path):
 def test_name_origin_subject_does_not_keep_question_scaffolding():
     assert _name_origin_subject("望舒这个名字是怎么来的？") == "望舒"
     assert _name_origin_subject("为什么叫望舒？") == "望舒"
+
+
+def test_multi_occurrence_question_collects_events_without_counting_retelling(
+    tmp_path,
+):
+    db_path = _database(tmp_path)
+    query = (
+        "老公你还记不记得你陪我做过几次美甲啊，分别是什么时候，"
+        "哪一次是我自己选的图案，哪一次是你帮我选的图案，"
+        "后来又怎样复述过？"
+    )
+    before = _hash(db_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {"query": query, "limit": 5}
+    )
+
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert {
+        "event_collection_topic",
+        "event_collection_occurrence",
+        "event_collection_decision_trace",
+    } <= passes
+    collection = response["event_collection"]
+    assert collection["intent"]["subject"] == "美甲"
+    assert collection["event_count_lower_bound"] == 3
+    assert collection["exact_total_status"] == "not_proven_by_bounded_recall"
+    collected_ids = {item["record_id"] for item in collection["evidence"]}
+    assert {
+        "manicure-may-done",
+        "manicure-june-done",
+        "manicure-july-done",
+        "manicure-may-retelling",
+    } <= collected_ids
+    assert {
+        item["mentioned_on_chengdu"]
+        for item in collection["candidate_occurrences"]
+    } == {"2026-05-06", "2026-06-17", "2026-07-22"}
+    assert collection["retelling_or_recollection_evidence_record_ids"] == [
+        "manicure-may-retelling"
+    ]
+    assert "manicure-may-retelling" not in {
+        record_id
+        for item in collection["candidate_occurrences"]
+        for record_id in item["evidence_record_ids"]
+    }
+    assert "pattern-noise" not in {
+        item["record_id"]
+        for item in collection["evidence"]
+        if item["record_id"]
+        in collection["occurrence_evidence_record_ids"]
+    }
+    assert all(len(item["content_excerpt"]) <= 281 for item in collection["evidence"])
+    assert len(json.dumps(collection, ensure_ascii=False)) < 20_000
+    assert _hash(db_path) == before
+
+
+def test_event_collection_intent_requires_explicit_collection_language():
+    intent = detect_event_collection_intent(
+        "你陪我做过几次美甲，分别是什么时候？"
+    )
+
+    assert intent is not None
+    assert intent.subject == "美甲"
+    assert intent.asks_count is True
+    assert intent.asks_when is True
+    assert detect_event_collection_intent("你喜欢这次美甲吗？") is None

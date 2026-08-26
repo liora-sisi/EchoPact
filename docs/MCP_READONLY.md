@@ -213,6 +213,17 @@ never become primary in-range evidence. Timestamp membership is still not proof
 of the event's occurrence date.
 See `docs/EVENT_TIMELINE.md` for the clock and linkage contract.
 
+An explicitly plural question such as "how many times did we do this, when,
+and who chose the details?" may additionally return `event_collection`.  The
+gateway spends no more than the existing adaptive budget to collect the
+literal activity, a bounded public-language surface form, decision evidence,
+and later retellings.  It separates occurrence/completion evidence from plans,
+choice/advice evidence, and recollections.  `event_count_lower_bound` is only
+an `at_least` result over explicit completion wording; questions and retellings
+do not increase it, and an exact archive total is never inferred.  The Chengdu
+source-message day is a conservative grouping proxy, not an asserted event
+time.  Full semantics are documented in `docs/EVENT_COLLECTION.md`.
+
 Queries that explicitly ask for original wording, original messages or
 verbatim evidence may perform one additional offline source-tracing pass. The
 pass extracts a bounded set of literal snippets from the first-pass evidence

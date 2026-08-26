@@ -19,6 +19,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from .event_collection import (
+    MAX_COLLECTION_INTERNAL_RESULT_LIMIT,
+    build_event_collection,
+    plan_event_collection_passes,
+)
 from .event_timeline import (
     build_event_timeline,
     resolve_query_calendar_scope,
@@ -359,6 +364,10 @@ def _follow_up_passes(
                 )
             )
         return _unique_passes(passes)
+
+    collection_intent, collection_passes = plan_event_collection_passes(normalized)
+    if collection_intent is not None:
+        return _unique_passes(collection_passes)
 
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
@@ -744,6 +753,9 @@ def _merge_results(
         reference_source=reference_source,
         record_filtering_applied=record_filtering_applied,
     )
+    event_collection = build_event_collection(query, merged)
+    if event_collection is not None:
+        first["event_collection"] = event_collection
     return first
 
 
@@ -760,7 +772,18 @@ def adaptive_recall(
 ) -> Dict[str, Any]:
     """Return one bounded memory packet from a small internal recall plan."""
 
-    internal_limit = min(MAX_INTERNAL_RESULT_LIMIT, max(limit, 8))
+    collection_intent, _ = plan_event_collection_passes(query)
+    internal_ceiling = (
+        MAX_COLLECTION_INTERNAL_RESULT_LIMIT
+        if collection_intent is not None
+        else MAX_INTERNAL_RESULT_LIMIT
+    )
+    internal_floor = (
+        MAX_COLLECTION_INTERNAL_RESULT_LIMIT
+        if collection_intent is not None
+        else 8
+    )
+    internal_limit = min(internal_ceiling, max(limit, internal_floor))
     query_clock = resolve_query_calendar_scope(
         query,
         as_of,

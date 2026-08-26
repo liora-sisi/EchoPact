@@ -57,6 +57,9 @@ SERVER_INSTRUCTIONS = (
     "assistant narrator's perspective. For a relative time phrase, provide a "
     "reliable timezone-aware as_of when available; otherwise the local gateway "
     "anchors it to its Asia/Shanghai server clock. "
+    "For an explicitly plural history question, use event_collection when "
+    "present: distinguish completed occurrences from plans and retellings, "
+    "and describe event_count_lower_bound as at least rather than an exact total. "
     "Do not call merely because a past topic is mentioned when the current "
     "conversation already supports the answer. Use memory_coverage to check what "
     "the archive can honestly support. Treat verified, authority, "
@@ -80,7 +83,9 @@ TOOLS = (
             "once if the archive could help, even when words such as image, "
             "drawing, photo, song, or gift appear, unless the user explicitly "
             "asks to create or edit. Results include source, branch, verification, "
-            "cutoff, coverage, and optional Claim annotations."
+            "cutoff, coverage, optional Claim annotations, and a conservative "
+            "multi-occurrence event_collection when the query explicitly asks "
+            "for several related events."
         ),
         "inputSchema": {
             "type": "object",
