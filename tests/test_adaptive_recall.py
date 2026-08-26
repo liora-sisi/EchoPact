@@ -10,6 +10,7 @@ from backend.mcp.readonly_server import ReadonlyGateway
 from backend.memory.adaptive_recall import (
     MAX_ADAPTIVE_QUERY_PASSES,
     _explicit_subquestions,
+    _meaning_subject,
     _name_origin_subject,
     _subquestion_passes,
     _subquestion_subject_hint,
@@ -71,6 +72,12 @@ def _database(tmp_path: Path) -> Path:
             "2026-02-03T00:05:00Z",
         ),
         _record(
+            "meaning-origin-story",
+            "第一次出现银纽扣是在《雾港来信》的故事里：旅人把它留在灯塔门口，"
+            "让后来的人知道这里曾经有人等过。",
+            "2026-01-10T00:00:00Z",
+        ),
+        _record(
             "meaning-explanation",
             "银纽扣的故事含义是：在陌生城市里彼此照亮。",
             "2026-02-10T00:00:00Z",
@@ -79,6 +86,11 @@ def _database(tmp_path: Path) -> Path:
             "meaning-casual-mention",
             "今天整理抽屉时又看见那枚银纽扣。",
             "2026-02-11T00:00:00Z",
+        ),
+        _record(
+            "meaning-evolution",
+            "后来我们把银纽扣做成随身小物，它从故事意象变成了共同纪念物。",
+            "2026-02-12T00:00:00Z",
         ),
         _record(
             "unrelated-trip",
@@ -183,6 +195,17 @@ def _database(tmp_path: Path) -> Path:
             f"2026-07-{index + 1:02d}T09:00:00Z",
         )
         for index in range(15)
+    )
+    # A larger archive can contain many terse later summaries.  They must not
+    # crowd the longer origin/evolution evidence out of a natural meaning
+    # question merely because compact rows sort first.
+    records.extend(
+        _record(
+            f"meaning-shallow-summary-{index:02d}",
+            f"银纽扣是一个有特殊含义的称呼（简短摘要 {index}）。",
+            f"2026-03-{index + 1:02d}T00:00:00Z",
+        )
+        for index in range(12)
     )
     package_path.write_text(
         json.dumps(
@@ -305,6 +328,29 @@ def test_meaning_question_excludes_short_unexplained_mentions(tmp_path):
     ids = [item["record_id"] for item in response["memories"]]
     assert ids[0] == "meaning-explanation"
     assert "meaning-casual-mention" not in ids
+
+
+def test_meaning_question_keeps_origin_evolution_and_current_explanation(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {"query": "银纽扣在我们这里有什么意思？", "limit": 5}
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert {
+        "meaning-origin-story",
+        "meaning-evolution",
+        "meaning-explanation",
+    } <= set(ids)
+    assert "meaning-casual-mention" not in ids
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert {"meaning_origin_trace", "meaning_subject_mentions"} <= passes
+
+
+def test_meaning_subject_keeps_only_caller_written_literal():
+    assert _meaning_subject("小银铃在我们这里有什么意思？") == "小银铃"
+    assert _meaning_subject("“蓝钥匙”象征什么？") == "蓝钥匙"
+    assert _meaning_subject("这个是什么意思？") is None
 
 
 def test_negative_shared_event_does_not_expand_into_unrelated_history(tmp_path):

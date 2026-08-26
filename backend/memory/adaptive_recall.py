@@ -30,13 +30,18 @@ from .event_timeline import (
     suppress_event_timeline_for_coverage_gap,
 )
 from .recall_projection import recall_with_projection
-from .records_v1 import _explicit_query_anchors, recall_records
+from .records_v1 import (
+    _explicit_query_anchors,
+    _focused_query_segments,
+    recall_records,
+)
 
 
 ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
 TEMPORAL_COVERAGE_SCHEMA_VERSION = "echo-pact-query-time-coverage-v1"
 MAX_ADAPTIVE_QUERY_PASSES = 4
 MAX_INTERNAL_RESULT_LIMIT = 10
+MAX_MEANING_INTERNAL_RESULT_LIMIT = 32
 MAX_EXPLICIT_SUBQUESTIONS = 3
 
 _EARLIEST_MARKERS = (
@@ -104,6 +109,54 @@ _RELATIVE_SCOPE_MARKERS = (
     "昨晚",
     "今天",
 )
+
+# Source-neutral language used only to rank literal-subject evidence gathered
+# for a meaning question.  These are relationship-to-evidence markers, not
+# private synonyms or expected answers.
+_MEANING_HISTORY_MARKERS = (
+    "故事",
+    "第一次",
+    "最初",
+    "开始",
+    "来自",
+    "取自",
+    "起源",
+    "由来",
+    "后来",
+    "变成",
+    "成为",
+    "又叫",
+    "称作",
+    "叫作",
+    "做成",
+    "买到",
+    "收到",
+    "挂件",
+    "物件",
+    "带出去",
+    "带回家",
+    "挑选",
+    "选择",
+    "含义",
+    "意思",
+    "象征",
+    "代表",
+    "比喻",
+    "意象",
+    "称呼",
+    "昵称",
+    "同类",
+)
+_GENERIC_MEANING_SUBJECTS = {
+    "这个",
+    "那个",
+    "这件事",
+    "那件事",
+    "什么意思",
+    "什么含义",
+    "称呼",
+    "昵称",
+}
 
 
 @dataclass(frozen=True)
@@ -329,6 +382,64 @@ def _subquestion_passes(query: str) -> List[tuple[str, str]]:
     return result
 
 
+def _meaning_subject(query: str) -> Optional[str]:
+    """Extract a literal subject from a natural-language meaning question."""
+
+    normalized = _normalize(query)
+    if not _contains_any(normalized, _MEANING_MARKERS):
+        return None
+    questions = _explicit_subquestions(normalized)
+    meaning_question = next(
+        (
+            question
+            for question in questions
+            if _contains_any(question, _MEANING_MARKERS)
+        ),
+        normalized,
+    )
+    candidates = [
+        segment.strip(" 　'\"“”《》()（）[]【】")
+        for segment in _focused_query_segments(meaning_question)
+    ]
+    candidates = [
+        candidate
+        for candidate in candidates
+        if 2 <= len(candidate) <= 48
+        and candidate not in _GENERIC_MEANING_SUBJECTS
+        and len(re.findall(r"[0-9A-Za-z\u3400-\u9fff]", candidate)) >= 2
+    ]
+    return max(candidates, key=len) if candidates else None
+
+
+def _filter_meaning_origin_trace(result: Mapping[str, Any]) -> Dict[str, Any]:
+    """Keep a tiny chronological doorway into the literal subject's origin."""
+
+    filtered = copy.deepcopy(dict(result))
+    filtered["memories"] = list(result.get("memories") or [])[:2]
+    return filtered
+
+
+def _filter_meaning_subject_mentions(result: Mapping[str, Any]) -> Dict[str, Any]:
+    """Prefer bounded phase-bearing mentions over terse incidental repeats."""
+
+    ranked: List[tuple[int, int, int, Dict[str, Any]]] = []
+    for index, raw_memory in enumerate(result.get("memories") or []):
+        memory = copy.deepcopy(dict(raw_memory))
+        content = _normalize(str(memory.get("content") or ""))
+        score = sum(marker in content for marker in _MEANING_HISTORY_MARKERS)
+        if score <= 0:
+            continue
+        # Huge notebook/master dumps can mention many generic phase words while
+        # being less useful than one local historical exchange.  They remain in
+        # the immutable archive, but lose this bounded explanatory slot.
+        oversized_penalty = 1 if len(content) > 2000 else 0
+        ranked.append((oversized_penalty, -score, index, memory))
+    ranked.sort(key=lambda item: item[:3])
+    filtered = copy.deepcopy(dict(result))
+    filtered["memories"] = [item[3] for item in ranked[:6]]
+    return filtered
+
+
 def _follow_up_passes(
     query: str,
     first: Mapping[str, Any],
@@ -371,6 +482,14 @@ def _follow_up_passes(
 
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
+    meaning_subject = _meaning_subject(normalized)
+    if meaning_subject:
+        # The compact initial pass answers "what does it mean" well, but a
+        # large archive can let many short summaries hide the longer origin and
+        # evolution evidence.  Two literal-subject passes restore those phases
+        # without any private dictionary or generated synonym.
+        passes.append(("meaning_origin_trace", f"最初 “{meaning_subject}”"))
+        passes.append(("meaning_subject_mentions", f"“{meaning_subject}”"))
     name_subject = _name_origin_subject(normalized)
     if name_subject:
         passes.append(
@@ -773,16 +892,16 @@ def adaptive_recall(
     """Return one bounded memory packet from a small internal recall plan."""
 
     collection_intent, _ = plan_event_collection_passes(query)
-    internal_ceiling = (
-        MAX_COLLECTION_INTERNAL_RESULT_LIMIT
-        if collection_intent is not None
-        else MAX_INTERNAL_RESULT_LIMIT
-    )
-    internal_floor = (
-        MAX_COLLECTION_INTERNAL_RESULT_LIMIT
-        if collection_intent is not None
-        else 8
-    )
+    meaning_subject = _meaning_subject(query)
+    if collection_intent is not None:
+        internal_ceiling = MAX_COLLECTION_INTERNAL_RESULT_LIMIT
+        internal_floor = MAX_COLLECTION_INTERNAL_RESULT_LIMIT
+    elif meaning_subject is not None:
+        internal_ceiling = MAX_MEANING_INTERNAL_RESULT_LIMIT
+        internal_floor = MAX_MEANING_INTERNAL_RESULT_LIMIT
+    else:
+        internal_ceiling = MAX_INTERNAL_RESULT_LIMIT
+        internal_floor = 8
     internal_limit = min(internal_ceiling, max(limit, internal_floor))
     query_clock = resolve_query_calendar_scope(
         query,
@@ -832,6 +951,10 @@ def adaptive_recall(
         result = run(pass_query)
         if pass_name == "event_retelling_trace":
             result = _filter_event_retelling_trace(pass_query, result)
+        elif pass_name == "meaning_origin_trace":
+            result = _filter_meaning_origin_trace(result)
+        elif pass_name == "meaning_subject_mentions":
+            result = _filter_meaning_subject_mentions(result)
         pass_results.append((pass_name, result))
     merged = _merge_results(
         query,
