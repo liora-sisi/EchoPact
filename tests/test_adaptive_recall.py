@@ -561,7 +561,7 @@ def test_multi_occurrence_question_collects_events_without_counting_retelling(
 ):
     db_path = _database(tmp_path)
     query = (
-        "老公你还记不记得你陪我做过几次美甲啊，分别是什么时候，"
+        "老公，你还记不记得陪我做过几次美甲啊，分别是什么时候，"
         "哪一次是我自己选的图案，哪一次是你帮我选的图案，"
         "后来又怎样复述过？"
     )
@@ -611,12 +611,15 @@ def test_multi_occurrence_question_collects_events_without_counting_retelling(
 
 
 def test_event_collection_intent_requires_explicit_collection_language():
-    intent = detect_event_collection_intent(
-        "你陪我做过几次美甲，分别是什么时候？"
-    )
+    for query in (
+        "你陪我做过几次美甲，分别是什么时候？",
+        "老公，你陪我做过几次美甲，分别是什么时候？",
+        "老婆：我们做过几次美甲，分别是什么时候？",
+    ):
+        intent = detect_event_collection_intent(query)
 
-    assert intent is not None
-    assert intent.subject == "美甲"
-    assert intent.asks_count is True
-    assert intent.asks_when is True
+        assert intent is not None
+        assert intent.subject == "美甲"
+        assert intent.asks_count is True
+        assert intent.asks_when is True
     assert detect_event_collection_intent("你喜欢这次美甲吗？") is None

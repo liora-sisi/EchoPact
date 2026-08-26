@@ -171,7 +171,16 @@ def detect_event_collection_intent(query: str) -> Optional[EventCollectionIntent
     if not any(marker in compact for marker in _COLLECTION_MARKERS):
         return None
 
-    first_clause = re.split(r"[，,。！？!?；;：:]", normalized, maxsplit=1)[0]
+    # A spoken-memory question often begins with a vocative pause, for example
+    # ``老公，你还记不记得……``.  Strip only that leading form of address before
+    # taking the first semantic clause; otherwise the first comma leaves the
+    # intent detector looking at the single word ``老公``.
+    semantic_query = re.sub(
+        r"^(?:(?:老公|老婆|宝贝|大宝贝)\s*[，,、。！？!?；;：:]\s*)+",
+        "",
+        normalized,
+    )
+    first_clause = re.split(r"[，,。！？!?；;：:]", semantic_query, maxsplit=1)[0]
     subject: Optional[str] = None
     after_count = re.search(
         r"(?:几|多少)(?:次|回|场|趟)"
