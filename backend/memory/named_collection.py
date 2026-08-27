@@ -150,6 +150,19 @@ _QUESTIONISH_NAME_MARKERS = (
     "记不记得",
     "还记得",
 )
+_NON_NAME_FRAGMENT_MARKERS = (
+    "有没有",
+    "很可能",
+    "大概率",
+    "再看看",
+    "故事与配图",
+    "选珠顺序",
+    "顺序与特点",
+    "猫儿子动态",
+    "饰品名称",
+    "记录说明",
+    "列表标题",
+)
 _LOCAL_CONTEXT_RADIUS = 240
 
 # Public category aliases only.  They bridge ordinary wording without adding
@@ -374,9 +387,15 @@ class _NamedMention:
     extraction_kind: str
 
 
+def _clean_name(value: str) -> str:
+    return _normalize(value).strip(
+        "，,。！？!?；;：:‘’'\"“”《》()（）[]【】 *•·—-_"
+    )
+
+
 def _valid_name(value: str) -> bool:
-    name = _normalize(value).strip("，,。！？!?；;：:‘’'\"“”《》()（）[]【】 ")
-    if not 1 <= len(name) <= 48:
+    name = _clean_name(value)
+    if not 2 <= len(name) <= 16:
         return False
     if name in {
         "这个",
@@ -392,6 +411,10 @@ def _valid_name(value: str) -> bool:
     }:
         return False
     if any(marker in name for marker in _QUESTIONISH_NAME_MARKERS):
+        return False
+    if any(marker in name for marker in _NON_NAME_FRAGMENT_MARKERS):
+        return False
+    if name.endswith(("取的", "选的", "挑的", "配的", "叫的", "命名的")):
         return False
     if "?" in name or "？" in name:
         return False
@@ -460,7 +483,7 @@ def _extract_named_mentions(
             or (naming_distance is not None and naming_distance <= 64)
         ):
             continue
-        mentions.append(_NamedMention(_normalize(name), context, "quoted_near_subject"))
+        mentions.append(_NamedMention(_clean_name(name), context, "quoted_near_subject"))
 
     # Direct unquoted naming remains supported, but only beside the requested
     # item subject. Long transcript rows cannot donate an unrelated phrase.
@@ -487,7 +510,7 @@ def _extract_named_mentions(
                 or subject_distance > 48
             ):
                 continue
-            mentions.append(_NamedMention(_normalize(value), context, "direct_naming"))
+            mentions.append(_NamedMention(_clean_name(value), context, "direct_naming"))
 
     # Markdown tables and concise inventories often encode the item name as
     # ``subject: name`` or ``subject | name`` without quotes or a naming verb.
@@ -503,7 +526,9 @@ def _extract_named_mentions(
         value = match.group(1).strip(" *")
         context = _nearby_context(content, match.start(), match.end())
         if _valid_name(value) and _subject_matches(context, intent):
-            mentions.append(_NamedMention(_normalize(value), context, "subject_delimited_name"))
+            mentions.append(
+                _NamedMention(_clean_name(value), context, "subject_delimited_name")
+            )
 
     unique: List[_NamedMention] = []
     seen = set()
