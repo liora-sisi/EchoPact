@@ -224,6 +224,16 @@ do not increase it, and an exact archive total is never inferred.  The Chengdu
 source-message day is a conservative grouping proxy, not an asserted event
 time.  Full semantics are documented in `docs/EVENT_COLLECTION.md`.
 
+An explicitly plural inventory question such as "how many bracelets did we
+choose together, and what are their names?" may instead return
+`named_collection`. It is separate from repeated-event counting. The packet
+distinguishes confirmed named items from candidates, unresolved names, later retellings,
+evidence outside the requested relationship, and related-but-different item
+types. Repeated mentions of the same normalized name do not increase
+`named_item_count_lower_bound`. The count is always an `at_least` lower bound
+over the bounded evidence, never a claim that the archive is exhaustive. Full
+semantics are documented in `docs/NAMED_COLLECTION.md`.
+
 Queries that explicitly ask for original wording, original messages or
 verbatim evidence may perform one additional offline source-tracing pass. The
 pass extracts a bounded set of literal snippets from the first-pass evidence

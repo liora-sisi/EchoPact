@@ -287,6 +287,16 @@ Codex 的本地 STDIO 配置、输出边界与验证方法见
 不会被自动合并。完整边界见
 [`docs/EVENT_COLLECTION.md`](docs/EVENT_COLLECTION.md)。
 
+当问题问的是一组有名字的东西——例如“我们一起选过多少串手串，它们分别叫
+什么”——召回器不会把它误当成多次事件，而是在同一四轮预算内生成只读
+`named_collection`。它把已经明确命名、明确符合问题关系范围的项目，与候选名、
+名字已找到但本轮关系证据尚未闭合的项目、后来复述、独自选择和相近但不同的
+物件类型分开；同名复述不会重复计数。返回的
+`named_item_count_lower_bound` 仍只是当前有界证据支持的“至少”数量，不会冒充
+档案绝对总数。识别与分类规则只使用公开语言，不保存私人物件名称，也不依赖
+ChatGPT、渡房船或任何单一来源。完整边界见
+[`docs/NAMED_COLLECTION.md`](docs/NAMED_COLLECTION.md)。
+
 ### Room Ferry 完整备份适配器
 
 渡房船是第一个正式来源适配器，但 Echo Pact 核心仍保持来源无关。适配器

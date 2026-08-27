@@ -136,6 +136,8 @@ def test_recall_contract_routes_context_gaps_without_overcalling():
     assert "answering from a vague impression" in instructions
     assert "do not call merely because a past topic is mentioned" in instructions
     assert "pass only the semantic memory question" in instructions
+    assert "named_collection" in description
+    assert "confirmed items separate from candidates" in instructions
 
 
 def test_gateway_anchors_relative_time_to_local_server_clock(mcp_db, monkeypatch):

@@ -17,6 +17,7 @@ from backend.memory.adaptive_recall import (
 )
 from backend.memory.event_collection import detect_event_collection_intent
 from backend.memory.identity import register_agent
+from backend.memory.named_collection import detect_named_collection_intent
 from backend.memory.records_v1 import import_record_package
 
 
@@ -181,6 +182,46 @@ def _database(tmp_path: Path) -> Path:
             "manicure-may-retelling",
             "后来回忆五月那次美甲，我又提起当时是谁帮忙选的款式。",
             "2026-07-30T08:00:00Z",
+        ),
+        _record(
+            "bracelet-mist-confirmed",
+            "这串手串是我们一起挑的，收到后正式命名为《雾蓝回声》。",
+            "2026-04-10T08:00:00Z",
+        ),
+        _record(
+            "bracelet-amber-confirmed",
+            "第二串珠串由我们共同选定，名字最后定成《琥珀微光》。",
+            "2026-04-20T08:00:00Z",
+        ),
+        _record(
+            "bracelet-mist-retelling",
+            "后来又提起《雾蓝回声》，那串手串确实是我们一起选的。",
+            "2026-06-10T08:00:00Z",
+        ),
+        _record(
+            "bracelet-candidate",
+            "候选手串可以叫《星糖》，目前还没下单，也没有最终定名。",
+            "2026-04-21T08:00:00Z",
+        ),
+        _record(
+            "bracelet-solo",
+            "手串《独行花园》是我一个人选的，不属于我们一起挑选的那组。",
+            "2026-04-22T08:00:00Z",
+        ),
+        _record(
+            "bracelet-unresolved",
+            "手串《待核关系》已经正式命名，但这条记录没有说明是谁挑选的。",
+            "2026-04-22T09:00:00Z",
+        ),
+        _record(
+            "bracelet-related-bangle",
+            "银手镯《昼夜之环》是我们一起选珠并命名的，但它不是手串。",
+            "2026-04-23T08:00:00Z",
+        ),
+        _record(
+            "bracelet-related-necklace",
+            "项链《潮汐信号》也是我们一起选的，但不要算进手串数量。",
+            "2026-04-24T08:00:00Z",
         ),
         _record(
             "pattern-noise",
@@ -669,3 +710,73 @@ def test_event_collection_intent_requires_explicit_collection_language():
         assert intent.asks_count is True
         assert intent.asks_when is True
     assert detect_event_collection_intent("你喜欢这次美甲吗？") is None
+
+
+def test_named_collection_counts_confirmed_joint_items_without_candidates_or_noise(
+    tmp_path,
+):
+    db_path = _database(tmp_path)
+    query = "我们一起选过多少串手串，老公你还记得吗？你记得它们的名字吗？"
+    before = _hash(db_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {"query": query, "limit": 5}
+    )
+
+    passes = {item["pass"] for item in response["adaptive_recall"]["passes"]}
+    assert {
+        "named_collection_subject",
+        "named_collection_names",
+        "named_collection_relation",
+    } <= passes
+    collection = response["named_collection"]
+    assert collection["intent"]["subject"] == "手串"
+    assert collection["intent"]["relation_scope"] == "joint_selection"
+    assert collection["named_item_count_lower_bound"] == 2
+    assert collection["exact_total_status"] == "not_proven_by_bounded_recall"
+    assert {item["display_name"] for item in collection["confirmed_items"]} == {
+        "雾蓝回声",
+        "琥珀微光",
+    }
+    assert {item["display_name"] for item in collection["candidate_items"]} == {
+        "星糖"
+    }
+    assert {item["display_name"] for item in collection["unresolved_items"]} == {
+        "待核关系"
+    }
+    returned_names = {
+        item["display_name"]
+        for key in ("confirmed_items", "candidate_items")
+        for item in collection[key]
+    }
+    assert {
+        "独行花园",
+        "昼夜之环",
+        "潮汐信号",
+    }.isdisjoint(returned_names)
+    assert all(len(item["content_excerpt"]) <= 281 for item in collection["evidence"])
+    assert len(json.dumps(collection, ensure_ascii=False)) < 20_000
+    assert _hash(db_path) == before
+
+
+def test_named_collection_intent_requires_plural_inventory_language():
+    intent = detect_named_collection_intent(
+        "我们一起选过多少串手串，记得它们的名字吗？"
+    )
+    assert intent is not None
+    assert intent.subject == "手串"
+    assert intent.unit == "串"
+    assert intent.asks_count is True
+    assert intent.asks_names is True
+    assert intent.relation_scope == "joint_selection"
+
+    assert detect_named_collection_intent("你喜欢这串手串吗？") is None
+
+    generic = detect_named_collection_intent(
+        "我们共同选过多少本书，分别叫什么名字？"
+    )
+    assert generic is not None
+    assert generic.subject == "书"
+    assert generic.unit == "本"
+    assert generic.asks_count is True
+    assert generic.asks_names is True
+    assert generic.relation_scope == "joint_selection"

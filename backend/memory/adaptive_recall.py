@@ -29,6 +29,11 @@ from .event_timeline import (
     resolve_query_calendar_scope,
     suppress_event_timeline_for_coverage_gap,
 )
+from .named_collection import (
+    MAX_NAMED_COLLECTION_INTERNAL_RESULT_LIMIT,
+    build_named_collection,
+    plan_named_collection_passes,
+)
 from .recall_projection import recall_with_projection
 from .records_v1 import (
     _explicit_query_anchors,
@@ -480,6 +485,12 @@ def _follow_up_passes(
     if collection_intent is not None:
         return _unique_passes(collection_passes)
 
+    named_collection_intent, named_collection_passes = (
+        plan_named_collection_passes(normalized)
+    )
+    if named_collection_intent is not None:
+        return _unique_passes(named_collection_passes)
+
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
     meaning_subject = _meaning_subject(normalized)
@@ -875,6 +886,9 @@ def _merge_results(
     event_collection = build_event_collection(query, merged)
     if event_collection is not None:
         first["event_collection"] = event_collection
+    named_collection = build_named_collection(query, merged)
+    if named_collection is not None:
+        first["named_collection"] = named_collection
     return first
 
 
@@ -892,10 +906,14 @@ def adaptive_recall(
     """Return one bounded memory packet from a small internal recall plan."""
 
     collection_intent, _ = plan_event_collection_passes(query)
+    named_collection_intent, _ = plan_named_collection_passes(query)
     meaning_subject = _meaning_subject(query)
     if collection_intent is not None:
         internal_ceiling = MAX_COLLECTION_INTERNAL_RESULT_LIMIT
         internal_floor = MAX_COLLECTION_INTERNAL_RESULT_LIMIT
+    elif named_collection_intent is not None:
+        internal_ceiling = MAX_NAMED_COLLECTION_INTERNAL_RESULT_LIMIT
+        internal_floor = MAX_NAMED_COLLECTION_INTERNAL_RESULT_LIMIT
     elif meaning_subject is not None:
         internal_ceiling = MAX_MEANING_INTERNAL_RESULT_LIMIT
         internal_floor = MAX_MEANING_INTERNAL_RESULT_LIMIT

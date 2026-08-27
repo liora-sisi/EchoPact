@@ -60,6 +60,10 @@ SERVER_INSTRUCTIONS = (
     "For an explicitly plural history question, use event_collection when "
     "present: distinguish completed occurrences from plans and retellings, "
     "and describe event_count_lower_bound as at least rather than an exact total. "
+    "For a plural inventory question about named things, use named_collection "
+    "when present: keep confirmed items separate from candidates and excluded "
+    "relationship evidence, deduplicate retellings, and describe the count as "
+    "a lower bound rather than a proven exhaustive total. "
     "Do not call merely because a past topic is mentioned when the current "
     "conversation already supports the answer. Use memory_coverage to check what "
     "the archive can honestly support. Treat verified, authority, "
@@ -85,7 +89,8 @@ TOOLS = (
             "asks to create or edit. Results include source, branch, verification, "
             "cutoff, coverage, optional Claim annotations, and a conservative "
             "multi-occurrence event_collection when the query explicitly asks "
-            "for several related events."
+            "for several related events, or named_collection when it asks for "
+            "the count and names of a category of things."
         ),
         "inputSchema": {
             "type": "object",
