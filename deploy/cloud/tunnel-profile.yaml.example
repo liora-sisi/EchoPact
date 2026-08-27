@@ -1,0 +1,16 @@
+config_version: 1
+control_plane:
+  base_url: "https://api.openai.com"
+  tunnel_id: "tunnel_REPLACE_ME"
+  api_key: "${CONTROL_PLANE_API_KEY}"
+health:
+  listen_addr: "127.0.0.1:18765"
+admin_ui:
+  open_browser: false
+log:
+  level: info
+  format: json
+mcp:
+  commands:
+    - channel: main
+      command: "/opt/echo-pact/.venv/bin/python /opt/echo-pact/scripts/echo_pact_cloud_mcp.py"

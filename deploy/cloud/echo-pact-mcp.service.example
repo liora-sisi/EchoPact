@@ -1,0 +1,29 @@
+[Unit]
+Description=Echo Pact read-only MCP through OpenAI private tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=echo-pact
+Group=echo-pact
+WorkingDirectory=/opt/echo-pact
+EnvironmentFile=/etc/echo-pact/tunnel.env
+ExecStartPre=/opt/openai-tunnel/bin/tunnel-client doctor --profile echo-pact-cloud --profile-dir /etc/echo-pact/tunnel-profiles
+ExecStart=/opt/openai-tunnel/bin/tunnel-client run --profile echo-pact-cloud --profile-dir /etc/echo-pact/tunnel-profiles
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/opt/echo-pact /var/lib/echo-pact
+
+[Install]
+WantedBy=multi-user.target

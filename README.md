@@ -297,6 +297,23 @@ Codex 的本地 STDIO 配置、输出边界与验证方法见
 ChatGPT、渡房船或任何单一来源。完整边界见
 [`docs/NAMED_COLLECTION.md`](docs/NAMED_COLLECTION.md)。
 
+### 云端只读 MCP 快照
+
+Echo Pact 可以把本地权威库复制成经过哈希、完整性、schema 和 agent
+可见范围核验的版本化只读快照，再由远端 MCP 只读使用。切换只更新一个
+原子指针，并保留上一代指针用于快速回退；本地权威库不会被迁移或修改。
+快照工具只输出计数、时间、哈希和覆盖边界，不输出聊天正文。
+
+```bash
+python scripts/echo_pact_cloud_snapshot.py create --source-db SOURCE.sqlite3 --release-root RELEASES --agent-id AGENT
+python scripts/echo_pact_cloud_snapshot.py verify --release-dir RELEASE --agent-id AGENT
+python scripts/echo_pact_cloud_snapshot.py activate --release-dir RELEASE --pointer ACTIVE.json --agent-id AGENT
+```
+
+远端使用 `scripts/echo_pact_cloud_mcp.py` 从已验证的活动指针启动现有只读
+MCP。完整的数据边界、部署模板、更新顺序和回滚步骤见
+[`docs/CLOUD_READONLY.md`](docs/CLOUD_READONLY.md)。
+
 ### Room Ferry 完整备份适配器
 
 渡房船是第一个正式来源适配器，但 Echo Pact 核心仍保持来源无关。适配器
