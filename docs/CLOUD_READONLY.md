@@ -112,8 +112,13 @@ deployment is accepted only when:
 1. the active release verifies locally on the host;
 2. the private tunnel reports ready;
 3. `memory_coverage` matches the snapshot manifest;
-4. a bounded read returns no write capability and the database hash is unchanged;
-5. the prior pointer can be restored and verified.
+4. the same fixed synthetic query through the local gateway and cloud launcher
+   returns identical records, provenance, adaptive-recall metadata, event
+   timeline and coverage boundaries;
+5. an explicit query beyond imported coverage returns no older lexical match,
+   reports `coverage_gap`, and suppresses the event timeline on both paths;
+6. a bounded read returns no write capability and the database hash is unchanged;
+7. the prior pointer can be restored and verified.
 
 ## 6. Updating cloud data
 

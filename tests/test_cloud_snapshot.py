@@ -20,6 +20,7 @@ from backend.mcp.cloud_snapshot import (
     rollback_active,
     verify_release,
 )
+from backend.mcp.readonly_server import ReadonlyGateway
 from backend.memory.identity import register_agent
 from backend.memory.records_v1 import import_record_package
 
@@ -256,9 +257,23 @@ def test_failed_create_removes_only_its_build_directory(tmp_path):
     assert list(releases.iterdir()) == []
 
 
-def test_cloud_launcher_uses_verified_pointer_and_stays_readonly(tmp_path):
+def test_cloud_launcher_preserves_m6_recall_contract_and_stays_readonly(tmp_path):
     source = _source_database(tmp_path, "launcher")
     source_hash = _sha256(source)
+    direct_gateway = ReadonlyGateway(str(source), AGENT)
+    positive_arguments = {
+        "query": "SYNTHETIC-CLOUD-launcher-0",
+        "limit": 1,
+        "include_projection": True,
+    }
+    future_arguments = {
+        "query": "2026年9月1日，SYNTHETIC-CLOUD-launcher-0 是否存在？",
+        "limit": 1,
+        "as_of": "2026-09-01T12:00:00+08:00",
+        "include_projection": True,
+    }
+    expected_positive = direct_gateway.recall(positive_arguments)
+    expected_future_gap = direct_gateway.recall(future_arguments)
     created = create_snapshot(source, tmp_path / "releases", AGENT)
     pointer = tmp_path / "state" / "active.json"
     activated = activate_release(
@@ -312,6 +327,51 @@ def test_cloud_launcher_uses_verified_pointer_and_stays_readonly(tmp_path):
             },
         )
         assert coverage["result"]["structuredContent"]["visible_record_count"] == 1
+
+        positive = _exchange(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "recall_context",
+                    "arguments": positive_arguments,
+                },
+            },
+        )["result"]["structuredContent"]
+        assert positive == expected_positive
+        assert positive["memories"][0]["record_id"] == "launcher-0"
+        assert positive["memories"][0]["verified"] is False
+        assert positive["memories"][0]["authority"] == "synthetic-unverified"
+        assert positive["memories"][0]["source_ref"] == (
+            "synthetic://cloud/launcher-0"
+        )
+        assert "adaptive_recall" in positive
+        assert "event_timeline" in positive
+
+        future_gap = _exchange(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "recall_context",
+                    "arguments": future_arguments,
+                },
+            },
+        )["result"]["structuredContent"]
+        assert future_gap == expected_future_gap
+        assert future_gap["memories"] == []
+        assert future_gap["recall_mode"] == "sqlite_temporal_coverage_guard"
+        assert future_gap["coverage"]["coverage_gap"] is True
+        assert future_gap["temporal_coverage"]["status"] == (
+            "outside_imported_coverage"
+        )
+        assert future_gap["event_timeline"]["status"] == (
+            "suppressed_outside_imported_coverage"
+        )
     finally:
         process.stdin.close()
         process.wait(timeout=10)
