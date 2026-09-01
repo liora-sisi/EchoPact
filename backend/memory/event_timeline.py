@@ -396,7 +396,9 @@ def classify_mention_types(content: Any, role: Any = None) -> List[str]:
     normalized = _normalize_text(content)
     compact = re.sub(r"\s+", "", normalized)
     labels: List[str] = []
-    if any(marker in compact for marker in _RETELLING_MARKERS):
+    if any(marker in compact for marker in _RETELLING_MARKERS) or re.search(
+        r"后来.{0,4}(?:回忆|复盘|提起|提到|说起)", compact
+    ):
         labels.append("retelling_or_recollection")
     if any(marker in compact for marker in _HISTORICAL_REFERENCE_MARKERS):
         labels.append("historical_reference")

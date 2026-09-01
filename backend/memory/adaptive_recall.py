@@ -59,6 +59,14 @@ _EARLIEST_MARKERS = (
     "从什么时候开始",
     "什么时候开始",
 )
+_LATEST_MARKERS = (
+    "最近一次",
+    "最近那次",
+    "上一次",
+    "上一回",
+    "上次",
+    "前一次",
+)
 _MEANING_MARKERS = (
     "有什么意思",
     "是什么意思",
@@ -113,6 +121,13 @@ _RELATIVE_SCOPE_MARKERS = (
     "昨天",
     "昨晚",
     "今天",
+)
+_NEGATIVE_EXPERIENCE_MARKERS = (
+    "还没",
+    "没有",
+    "没一起",
+    "未曾",
+    "不曾",
 )
 
 # Source-neutral language used only to rank literal-subject evidence gathered
@@ -205,6 +220,37 @@ _EXPANSION_FAMILIES = (
     ),
 )
 
+# Public lexical equivalents that preserve the caller's complete sentence.
+# Unlike the broader evidence-language expansions above, these passes replace
+# one ordinary surface form with another so temporal and relationship wording
+# such as ``上次`` or ``我们一起`` remains intact.  No private entity, date,
+# place, or expected answer belongs here.
+_LEXICAL_EQUIVALENT_FAMILIES = (
+    _ExpansionFamily(
+        "barbecue_lexical_equivalent",
+        ("撸串", "烤串", "烧烤"),
+        ("烧烤", "烤串", "撸串"),
+    ),
+)
+
+_UNDERSPECIFIED_QUERY_SUBJECTS = {
+    "这个",
+    "那个",
+    "这件事",
+    "那件事",
+    "这个事",
+    "那个事",
+    "这件事情",
+    "那件事情",
+    "这个事情",
+    "那个事情",
+    "这次",
+    "那次",
+    "当时的事",
+    "之前那个事",
+    "之前那件事",
+}
+
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value)).strip()
@@ -227,6 +273,103 @@ def _unique_passes(passes: Sequence[tuple[str, str]]) -> List[tuple[str, str]]:
         if len(result) >= MAX_ADAPTIVE_QUERY_PASSES - 1:
             break
     return result
+
+
+def _lexical_equivalent_passes(query: str) -> List[tuple[str, str]]:
+    """Return a tiny set of caller-preserving public synonym retries."""
+
+    normalized = _normalize(query)
+    result: List[tuple[str, str]] = []
+    for family in _LEXICAL_EQUIVALENT_FAMILIES:
+        source = next(
+            (marker for marker in family.markers if marker in normalized),
+            None,
+        )
+        if source is None:
+            continue
+        for equivalent in family.terms:
+            if equivalent == source or equivalent in normalized:
+                continue
+            result.append(
+                (
+                    f"{family.name}_{equivalent}",
+                    normalized.replace(source, equivalent),
+                )
+            )
+    return _unique_passes(result)
+
+
+def _filter_lexical_equivalent_result(
+    original_query: str,
+    result: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Keep temporal intent when a public synonym supplied the lexical hit."""
+
+    filtered = copy.deepcopy(dict(result))
+    memories = list(filtered.get("memories") or [])
+    normalized = _normalize(original_query)
+    reverse = _contains_any(normalized, _LATEST_MARKERS)
+    earliest = _contains_any(normalized, _EARLIEST_MARKERS)
+    if not reverse and not earliest:
+        return filtered
+
+    def time_key(memory: Mapping[str, Any]) -> datetime:
+        return _parse_utc(memory.get("created_at")) or datetime.min.replace(
+            tzinfo=timezone.utc
+        )
+
+    memories.sort(key=time_key, reverse=reverse)
+    filtered["memories"] = memories
+    return filtered
+
+
+def _query_needs_clarification(query: str) -> bool:
+    """Reject a pronoun-only archive search instead of guessing its topic."""
+
+    value = _normalize(query)
+    value = re.sub(
+        r"^(?:(?:老公|老婆|宝贝|大宝贝)\s*[，,、。！？!?；;：:]?\s*)+",
+        "",
+        value,
+    )
+    value = re.sub(
+        r"^(?:你还记得|还记得|记不记得|你记不记得|你知道|知道)",
+        "",
+        value,
+    )
+    value = re.sub(
+        r"(?:是什么|怎么回事|怎么样|怎样|吗|嘛|呢|呀|啊|不|么)+$",
+        "",
+        value.strip("，,。！？!?；;：: "),
+    )
+    value = value.strip("，,。！？!?；;：: 的 ")
+    return value in _UNDERSPECIFIED_QUERY_SUBJECTS
+
+
+def _negative_meal_subject(query: str) -> Optional[str]:
+    """Return only the caller-written food object in a negative meal query."""
+
+    normalized = _normalize(query)
+    if not _contains_any(
+        normalized, _NEGATIVE_EXPERIENCE_MARKERS
+    ) or re.search(r"吃(?:过|了)?", normalized) is None:
+        return None
+    match = re.search(
+        r"(?:吃过|吃了|吃)(?P<subject>[0-9A-Za-z\u3400-\u9fff _-]{1,32})",
+        normalized,
+    )
+    if not match:
+        return None
+    subject = re.sub(
+        r"(?:是什么|什么|啥子|哪些|吗|嘛|么|呢|呀|啊|没有|没)+$",
+        "",
+        match.group("subject"),
+    ).strip()
+    if subject in {"东西", "饭", "食物"}:
+        return None
+    if len(re.findall(r"[0-9A-Za-z\u3400-\u9fff]", subject)) < 2:
+        return None
+    return subject
 
 
 def _explicit_subquestions(query: str) -> List[str]:
@@ -455,13 +598,23 @@ def _follow_up_passes(
     memories = list(first.get("memories") or [])
     event_recall = first.get("event_recall")
 
+    if _contains_any(
+        normalized, _NEGATIVE_EXPERIENCE_MARKERS
+    ) and re.search(r"吃(?:过|了)?", normalized):
+        # The first pass has already been restricted to the caller-written
+        # food object. A compact/category retry would erase that negated object
+        # and reintroduce unrelated positive meal history.
+        return []
+
     # Shared-event recall already performs a bounded candidate/window scan.
     # Generic retries are unsafe for negative controls such as landing on Mars.
     # Once the event window itself qualifies, one narrow pass may look for
     # explicit later retellings; an unsupported event still fails closed.
     if isinstance(event_recall, Mapping):
         passes: List[tuple[str, str]] = []
-        if _contains_any(normalized, _GENERIC_MEAL_QUERY_MARKERS):
+        if _contains_any(
+            normalized, _GENERIC_MEAL_QUERY_MARKERS
+        ) and not _contains_any(normalized, _NEGATIVE_EXPERIENCE_MARKERS):
             passes.append(("shared_event_food_trace", _GENERIC_MEAL_RESCUE_QUERY))
         if event_recall.get("status") not in {
             "partial_support",
@@ -493,6 +646,8 @@ def _follow_up_passes(
 
     passes: List[tuple[str, str]] = _subquestion_passes(normalized)
     literal_anchors = _explicit_query_anchors(normalized)
+    if not literal_anchors and not _contains_any(normalized, _ORIGINAL_MARKERS):
+        passes.extend(_lexical_equivalent_passes(normalized))
     meaning_subject = _meaning_subject(normalized)
     if meaning_subject:
         # The compact initial pass answers "what does it mean" well, but a
@@ -961,6 +1116,51 @@ def adaptive_recall(
         )
 
     first = run(query)
+    normalized_query = _normalize(query)
+    if _contains_any(
+        normalized_query, _NEGATIVE_EXPERIENCE_MARKERS
+    ) and re.search(r"吃(?:过|了)?", normalized_query):
+        # A negative meal question must not inherit broad positive category
+        # hits. Keep only caller-written item evidence; if the item is generic
+        # or absent, fail closed rather than turning "not X?" into "some Y".
+        subject = _negative_meal_subject(query)
+        first["memories"] = [
+            memory
+            for memory in first.get("memories") or []
+            if subject
+            and subject.casefold()
+            in _normalize(str(memory.get("content") or "")).casefold()
+        ]
+    if _query_needs_clarification(query):
+        first["memories"] = []
+        merged = _merge_results(
+            query,
+            limit,
+            [("initial", first)],
+            reference_instant=as_of,
+            reference_source=reference_time_source,
+            record_filtering_applied=scope_applied,
+        )
+        merged["recall_mode"] = "sqlite_query_clarification_required"
+        merged["query_clarification"] = {
+            "status": "required",
+            "reason": "missing_explicit_topic",
+            "suggested_action": (
+                "ask for one literal topic, name, date, object, or phrase"
+            ),
+            "guessed_topic": None,
+        }
+        merged["temporal_scope"] = {
+            **query_clock,
+            "primary_evidence_policy": (
+                "candidate rows suppressed without an explicit topic"
+            ),
+            "outside_scope_retellings_policy": (
+                "not expanded without an explicit topic"
+            ),
+            "outside_scope_retellings": [],
+        }
+        return _apply_temporal_coverage_guard(query, merged)
     pass_results: List[tuple[str, Mapping[str, Any]]] = [("initial", first)]
     follow_up_budget = MAX_ADAPTIVE_QUERY_PASSES - (1 if scope_applied else 0)
     for pass_name, pass_query in _follow_up_passes(query, first):
@@ -973,6 +1173,8 @@ def adaptive_recall(
             result = _filter_meaning_origin_trace(result)
         elif pass_name == "meaning_subject_mentions":
             result = _filter_meaning_subject_mentions(result)
+        elif pass_name.startswith("barbecue_lexical_equivalent_"):
+            result = _filter_lexical_equivalent_result(query, result)
         pass_results.append((pass_name, result))
     merged = _merge_results(
         query,

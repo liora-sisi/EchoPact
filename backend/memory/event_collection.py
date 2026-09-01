@@ -182,12 +182,35 @@ def detect_event_collection_intent(query: str) -> Optional[EventCollectionIntent
     )
     first_clause = re.split(r"[，,。！？!?；;：:]", semantic_query, maxsplit=1)[0]
     subject: Optional[str] = None
+    # Spoken Chinese commonly splits a verb-object topic around the counter:
+    # ``吵过几次架`` / ``吃过几次烧烤``. Rejoin only the caller-written pieces;
+    # do not infer an omitted object or use an archive-derived alias.
+    split_counter = re.search(
+        r"(?P<head>[0-9A-Za-z\u3400-\u9fff _-]{1,24}?)过"
+        r"(?:几|多少)(?:次|回|场|趟)"
+        r"(?P<tail>[0-9A-Za-z\u3400-\u9fff _-]{1,16})$",
+        first_clause,
+    )
+    if split_counter:
+        head = re.sub(
+            r"^(?:你还记不记得|你还记得|还记不记得|还记得|记不记得)",
+            "",
+            split_counter.group("head"),
+        )
+        head = re.sub(
+            r"^(?:你陪我|我陪你|我跟你|我和你|你跟我|你和我|"
+            r"我们|咱们|陪我|陪你)?(?:一共|总共|大概|约莫)?",
+            "",
+            head,
+        )
+        if head not in {"做", "去", "经历", "参加", "有", "完成"}:
+            subject = _clean_subject(head + split_counter.group("tail"))
     after_count = re.search(
         r"(?:几|多少)(?:次|回|场|趟)"
         r"(?P<subject>[0-9A-Za-z\u3400-\u9fff _-]{2,32})$",
         first_clause,
     )
-    if after_count:
+    if subject is None and after_count:
         subject = _clean_subject(after_count.group("subject"))
     if subject is None:
         before_count = re.search(
@@ -299,7 +322,35 @@ def _subject_matches(content: str, intent: EventCollectionIntent) -> bool:
     return any(_compact(term).casefold() in compact for term in _topic_terms(intent))
 
 
-def _labels(content: str) -> List[str]:
+def _has_explicit_subject_occurrence(
+    content: str,
+    intent: EventCollectionIntent,
+) -> bool:
+    compact = _compact(content)
+    if any(
+        marker in compact
+        for marker in ("如果", "假如", "要是", "万一", "也许", "可能")
+    ):
+        return False
+    for term in _topic_terms(intent):
+        topic = _compact(term)
+        if not topic:
+            continue
+        if re.search(
+            rf"(?:没|没有|未|不曾|别|不要).{{0,6}}{re.escape(topic)}"
+            rf"(?:过|了|后|之后|以后)",
+            compact,
+        ):
+            continue
+        if re.search(
+            rf"{re.escape(topic)}(?:过|了|后|之后|以后|结束)",
+            compact,
+        ):
+            return True
+    return False
+
+
+def _labels(content: str, intent: EventCollectionIntent) -> List[str]:
     compact = _compact(content)
     labels: List[str] = []
     is_question = (
@@ -316,7 +367,7 @@ def _labels(content: str) -> List[str]:
     if (
         any(marker in compact for marker in _COMPLETION_MARKERS)
         and not _NEGATED_COMPLETION_RE.search(compact)
-    ):
+    ) or _has_explicit_subject_occurrence(content, intent):
         labels.append("explicit_occurrence_or_completion")
     if any(marker in compact for marker in _ATTRIBUTION_MARKERS):
         labels.append("choice_or_advice_evidence")
@@ -362,7 +413,7 @@ def build_event_collection(
         content = str(row.get("content") or "")
         if not _subject_matches(content, intent):
             continue
-        evidence.append(_evidence_payload(row, _labels(content)))
+        evidence.append(_evidence_payload(row, _labels(content, intent)))
         if len(evidence) >= MAX_COLLECTION_EVIDENCE:
             break
 
@@ -372,6 +423,7 @@ def build_event_collection(
         if "explicit_occurrence_or_completion" in item["labels"]
         and "question_or_prompt" not in item["labels"]
         and "retelling_or_recollection" not in item["labels"]
+        and "plan_or_candidate" not in item["labels"]
     ]
     retellings = [
         item for item in evidence if "retelling_or_recollection" in item["labels"]

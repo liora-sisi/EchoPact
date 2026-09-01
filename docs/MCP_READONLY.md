@@ -213,6 +213,18 @@ never become primary in-range evidence. Timestamp membership is still not proof
 of the event's occurrence date.
 See `docs/EVENT_TIMELINE.md` for the clock and linkage contract.
 
+Pronoun-only prompts such as `那个事` fail closed with
+`query_clarification.status=required`; the caller should ask for one literal
+topic, name, date, object, or phrase instead of guessing from unrelated archive
+rows. Ordinary public-language equivalents may receive a tiny deterministic
+retry that preserves the rest of the question, including relationship direction
+and words such as `上次`. This layer must never contain a private answer map.
+
+Archived evaluations, jokes, and possible sarcasm prove only what was written;
+they do not let the retrieval layer adjudicate tone, intent, or truth. Likewise,
+an `[图片]` placeholder proves that a non-text item existed, but does not expose
+the image pixels or justify describing them.
+
 An explicitly plural question such as "how many times did we do this, when,
 and who chose the details?" may additionally return `event_collection`.  The
 gateway spends no more than the existing adaptive budget to collect the

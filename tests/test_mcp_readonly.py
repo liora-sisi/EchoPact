@@ -138,6 +138,9 @@ def test_recall_contract_routes_context_gaps_without_overcalling():
     assert "pass only the semantic memory question" in instructions
     assert "named_collection" in description
     assert "confirmed items separate from candidates" in instructions
+    assert "query_clarification" in instructions
+    assert "not an automatic ruling about tone, intent, or truth" in instructions
+    assert "never claim to see or describe image content" in instructions
 
 
 def test_gateway_anchors_relative_time_to_local_server_clock(mcp_db, monkeypatch):
