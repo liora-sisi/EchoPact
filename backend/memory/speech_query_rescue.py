@@ -12,10 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import unicodedata
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, MutableMapping, Sequence, Tuple
 
 
 SPEECH_QUERY_RESCUE_SCHEMA_VERSION = "echo-pact-speech-query-rescue-v1"
+SPEECH_QUERY_RESCUE_MATCH_SCHEMA_VERSION = (
+    "echo-pact-speech-query-rescue-match-v1"
+)
 MAX_SPEECH_QUERY_MAPPINGS = 64
 MAX_SPEECH_QUERY_CANDIDATES = 2
 
@@ -264,3 +267,40 @@ def complete_speech_query_rescue_trace(
                 )
     completed["selected_hits"] = selected_hits
     return completed
+
+
+def annotate_speech_query_rescue_matches(
+    trace: Mapping[str, Any],
+    selected_memories: Sequence[MutableMapping[str, Any]],
+) -> None:
+    """Label selected evidence that entered through a rescue candidate."""
+
+    candidates = {
+        str(candidate.get("pass")): candidate
+        for candidate in trace.get("candidates") or []
+        if isinstance(candidate, Mapping) and candidate.get("pass")
+    }
+    for memory in selected_memories:
+        matches = []
+        for pass_name in memory.get("adaptive_match_passes") or []:
+            candidate = candidates.get(str(pass_name))
+            if candidate is None:
+                continue
+            matches.append(
+                {
+                    "pass": str(pass_name),
+                    "observed": candidate.get("observed"),
+                    "intended": candidate.get("intended"),
+                    "candidate_query": candidate.get("candidate_query"),
+                }
+            )
+        if matches:
+            memory["speech_query_rescue_match"] = {
+                "schema_version": SPEECH_QUERY_RESCUE_MATCH_SCHEMA_VERSION,
+                "status": "candidate_query_hit",
+                "matches": matches,
+                "evidence_note": (
+                    "retrieval used a labelled candidate query; stored "
+                    "evidence content remains unchanged"
+                ),
+            }

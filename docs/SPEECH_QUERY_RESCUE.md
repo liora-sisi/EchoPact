@@ -33,6 +33,12 @@ matches, candidate query and mapping, executed pass result counts and record
 IDs, plus the candidate passes attached to final selected hits. This makes the
 retry inspectable rather than a hidden rewrite.
 
+Every selected memory that entered through a candidate pass also carries a
+`speech_query_rescue_match` annotation beside its unchanged `content`. The
+annotation names the observed form, intended retrieval form, candidate query
+and pass. Downstream readers can therefore distinguish a rescued hit from a
+direct literal hit without consulting only the packet-level audit trace.
+
 The trace can contain caller-supplied private vocabulary. Treat it like the
 query itself: return it only to the authorized local caller and do not copy it
 into public logs, reports or fixtures.

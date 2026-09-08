@@ -220,6 +220,22 @@ def test_gateway_rescues_weak_nonempty_hit_and_keeps_database_read_only(
     assert [item["record_id"] for item in response["memories"]] == [
         "blueberry-tart"
     ]
+    assert response["memories"][0]["speech_query_rescue_match"] == {
+        "schema_version": "echo-pact-speech-query-rescue-match-v1",
+        "status": "candidate_query_hit",
+        "matches": [
+            {
+                "pass": "speech_query_rescue_1",
+                "observed": "篮莓塔",
+                "intended": "蓝莓塔",
+                "candidate_query": "上次湖边吃的蓝莓塔",
+            }
+        ],
+        "evidence_note": (
+            "retrieval used a labelled candidate query; stored evidence "
+            "content remains unchanged"
+        ),
+    }
     assert {
         item["record_id"]
         for item in response["speech_query_rescue"]["selected_hits"]

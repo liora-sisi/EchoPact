@@ -42,6 +42,7 @@ from .records_v1 import (
 )
 from .speech_query_rescue import (
     SpeechQueryRescuePolicy,
+    annotate_speech_query_rescue_matches,
     complete_speech_query_rescue_trace,
     plan_speech_query_rescue,
 )
@@ -1229,6 +1230,10 @@ def adaptive_recall(
         record_filtering_applied=scope_applied,
     )
     if speech_trace is not None:
+        annotate_speech_query_rescue_matches(
+            speech_trace,
+            merged.get("memories") or [],
+        )
         merged["speech_query_rescue"] = complete_speech_query_rescue_trace(
             speech_trace,
             pass_results,
