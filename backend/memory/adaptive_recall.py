@@ -40,6 +40,11 @@ from .records_v1 import (
     _focused_query_segments,
     recall_records,
 )
+from .speech_query_rescue import (
+    SpeechQueryRescuePolicy,
+    complete_speech_query_rescue_trace,
+    plan_speech_query_rescue,
+)
 
 
 ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
@@ -946,10 +951,30 @@ def _merge_results(
     ) and not _contains_any(normalized, _RETELLING_MARKERS)
 
     ordered_passes = list(pass_results)
+    has_speech_rescue_pass = any(
+        name.startswith("speech_query_rescue_") for name, _ in ordered_passes
+    )
     has_subquestion_pass = any(
         name.startswith("subquestion_") for name, _ in ordered_passes
     )
-    if has_subquestion_pass:
+    if has_speech_rescue_pass:
+        # A rescue pass exists only because the initial rows did not support
+        # the observed term. Keep its anchored evidence visible even when the
+        # caller asks for a single result.
+        ordered_passes.sort(
+            key=lambda item: (
+                0
+                if item[0].startswith("speech_query_rescue_")
+                else 1
+                if item[0] == "original_evidence_trace"
+                else 2
+                if item[0].startswith("subquestion_")
+                else 3
+                if item[0] == "initial"
+                else 4
+            )
+        )
+    elif has_subquestion_pass:
         ordered_passes.sort(
             key=lambda item: (
                 0
@@ -1024,7 +1049,7 @@ def _merge_results(
         "budget_exhausted": len(pass_results) >= MAX_ADAPTIVE_QUERY_PASSES,
         "safety": (
             "deterministic read-only expansion; no network, model-generated "
-            "answers, private-fact dictionary, or database writes"
+            "answers, embedded private-fact dictionary, or database writes"
         ),
     }
     # This is a rebuildable response annotation over all evidence gathered by
@@ -1057,6 +1082,7 @@ def adaptive_recall(
     read_only: bool = False,
     include_projection: bool = True,
     reference_time_source: Optional[str] = None,
+    speech_query_policy: Optional[SpeechQueryRescuePolicy] = None,
 ) -> Dict[str, Any]:
     """Return one bounded memory packet from a small internal recall plan."""
 
@@ -1160,9 +1186,27 @@ def adaptive_recall(
             ),
             "outside_scope_retellings": [],
         }
+        if speech_query_policy is not None:
+            _, speech_trace = plan_speech_query_rescue(
+                query, first, speech_query_policy
+            )
+            speech_trace["triggered"] = False
+            speech_trace["trigger_reason"] = "query_clarification_required"
+            speech_trace["candidates"] = []
+            merged["speech_query_rescue"] = speech_trace
         return _apply_temporal_coverage_guard(query, merged)
     pass_results: List[tuple[str, Mapping[str, Any]]] = [("initial", first)]
     follow_up_budget = MAX_ADAPTIVE_QUERY_PASSES - (1 if scope_applied else 0)
+    speech_trace: Optional[Dict[str, Any]] = None
+    speech_passes: List[tuple[str, str]] = []
+    if speech_query_policy is not None:
+        speech_passes, speech_trace = plan_speech_query_rescue(
+            query, first, speech_query_policy
+        )
+    for pass_name, pass_query in speech_passes:
+        if len(pass_results) >= follow_up_budget:
+            break
+        pass_results.append((pass_name, run(pass_query)))
     for pass_name, pass_query in _follow_up_passes(query, first):
         if len(pass_results) >= follow_up_budget:
             break
@@ -1184,6 +1228,12 @@ def adaptive_recall(
         reference_source=reference_time_source,
         record_filtering_applied=scope_applied,
     )
+    if speech_trace is not None:
+        merged["speech_query_rescue"] = complete_speech_query_rescue_trace(
+            speech_trace,
+            pass_results,
+            merged.get("memories") or [],
+        )
     outside_retellings: List[Dict[str, Any]] = []
     if scope_applied and len(pass_results) < MAX_ADAPTIVE_QUERY_PASSES:
         retelling_query = _temporal_retelling_query(query)

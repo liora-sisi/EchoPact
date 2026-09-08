@@ -220,6 +220,15 @@ rows. Ordinary public-language equivalents may receive a tiny deterministic
 retry that preserves the rest of the question, including relationship direction
 and words such as `上次`. This layer must never contain a private answer map.
 
+An embedding application may also inject a bounded, rebuildable
+speech-to-text query overlay. It is consulted only after the initial result is
+empty or unanchored to the observed form; exact protected terms and evidence
+that already supports the observed or intended form block correction. Candidate queries run under
+the same visibility, time and read-only constraints and appear in a separate
+`speech_query_rescue` trace. The public MCP arguments cannot supply or replace
+the policy, and the environment-backed server does not load one automatically.
+See `docs/SPEECH_QUERY_RESCUE.md` for the first-cut contract and synthetic gate.
+
 Archived evaluations, jokes, and possible sarcasm prove only what was written;
 they do not let the retrieval layer adjudicate tone, intent, or truth. Likewise,
 an `[图片]` placeholder proves that a non-text item existed, but does not expose

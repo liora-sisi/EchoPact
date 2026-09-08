@@ -22,6 +22,7 @@ from backend.memory.event_timeline import (
 )
 from backend.memory.identity import visible_coverage
 from backend.memory.records_v1 import _connect_readonly
+from backend.memory.speech_query_rescue import SpeechQueryRescuePolicy
 
 
 _CHENGDU_TIMEZONE = timezone(timedelta(hours=8), CHENGDU_TIMEZONE_NAME)
@@ -219,6 +220,7 @@ def _bounded_result(result: Mapping[str, Any]) -> Dict[str, Any]:
 class ReadonlyGateway:
     db_path: str
     agent_id: str
+    speech_query_policy: Optional[SpeechQueryRescuePolicy] = None
 
     @classmethod
     def from_environment(cls) -> "ReadonlyGateway":
@@ -278,6 +280,7 @@ class ReadonlyGateway:
             read_only=True,
             include_projection=include_projection,
             reference_time_source=reference_time_source,
+            speech_query_policy=self.speech_query_policy,
         )
         return _bounded_result(result)
 
