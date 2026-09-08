@@ -556,6 +556,15 @@ def test_question_mark_inside_quote_is_not_a_subquestion_boundary():
     ) == ["“这是真的吗?”是什么意思", "后来怎么解释"]
 
 
+def test_subquestions_do_not_guess_boundaries_from_commas_or_periods():
+    assert _explicit_subquestions(
+        "风铃桥是什么，后来什么时候修好的"
+    ) == []
+    assert _explicit_subquestions(
+        "风铃桥是什么。后来什么时候修好的。"
+    ) == []
+
+
 def test_subject_hint_removes_generic_version_scaffolding():
     assert _subquestion_subject_hint(
         "星轨木盒的几个版本最后怎么选定"

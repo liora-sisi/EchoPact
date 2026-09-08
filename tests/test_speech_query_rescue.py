@@ -6,6 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from backend.mcp.readonly_server import ReadonlyGateway
 from backend.memory.identity import register_agent
 from backend.memory.records_v1 import import_record_package
@@ -41,6 +43,15 @@ POLICY = SpeechQueryRescuePolicy(
     mappings=RESCUE_MAPPINGS + PROTECTED_MAPPINGS,
     protected_terms=PROTECTED_TERMS,
 )
+
+
+@pytest.mark.parametrize(
+    ("observed", "intended"),
+    (("甲", "乙乙"), ("甲甲", "乙")),
+)
+def test_mapping_rejects_single_character_terms(observed, intended):
+    with pytest.raises(ValueError, match="at least two characters"):
+        SpeechQueryMapping(observed, intended)
 
 
 def _hash(path: Path) -> str:
