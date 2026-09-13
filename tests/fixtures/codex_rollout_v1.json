@@ -1,0 +1,111 @@
+{
+  "format": "echo-pact-codex-rollout",
+  "formatVersion": 1,
+  "capturedAt": "2026-09-14T00:00:00+08:00",
+  "codexCliVersion": "0.153.4",
+  "sourceMethod": "thread/read",
+  "checksumAlgorithm": "SHA-256",
+  "checksum": "42940436e76465074ffad770589097ea531f9dae7778dcfd6e6c9b3a507a183c",
+  "threads": [
+    {
+      "id": "01900000-0000-7000-8000-000000000731",
+      "sessionId": "01900000-0000-7000-8000-000000000731",
+      "name": "纯合成 Codex 房间",
+      "preview": "合成事实",
+      "cliVersion": "0.153.4",
+      "modelProvider": "openai",
+      "createdAt": 1700400000,
+      "updatedAt": 1700400010,
+      "cwd": "C:\\Synthetic\\EchoPact",
+      "ephemeral": false,
+      "source": {"appServer": {}},
+      "status": {"type": "notLoaded"},
+      "gitInfo": {
+        "sha": "0000000000000000000000000000000000000000",
+        "branch": "synthetic",
+        "originUrl": null
+      },
+      "turns": [
+        {
+          "id": "01900000-0001-7000-8000-000000000731",
+          "status": "completed",
+          "startedAt": 1700400001,
+          "completedAt": 1700400003,
+          "durationMs": 2000,
+          "itemsView": "full",
+          "items": [
+            {
+              "type": "userMessage",
+              "id": "01900000-0002-7000-8000-000000000731",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "合成事实：CODEX-ROLL-731 停靠在月光码头。\n换行与 Unicode 🌙 均需保留。"
+                },
+                {
+                  "type": "localImage",
+                  "path": "C:\\Synthetic\\private-image.png",
+                  "detail": null
+                }
+              ]
+            },
+            {
+              "type": "reasoning",
+              "id": "01900000-0003-7000-8000-000000000731",
+              "summary": ["合成推理，不应导入"],
+              "content": []
+            },
+            {
+              "type": "commandExecution",
+              "id": "01900000-0004-7000-8000-000000000731",
+              "command": "synthetic-command --secret-placeholder",
+              "cwd": "C:\\Synthetic\\private",
+              "status": "completed",
+              "commandActions": [],
+              "aggregatedOutput": "合成工具输出，不应导入",
+              "exitCode": 0,
+              "durationMs": 1
+            },
+            {
+              "type": "agentMessage",
+              "id": "01900000-0005-7000-8000-000000000731",
+              "text": "合成进度：我正在核对月光码头。",
+              "phase": "commentary"
+            },
+            {
+              "type": "agentMessage",
+              "id": "01900000-0006-7000-8000-000000000731",
+              "text": "合成确认：CODEX-ROLL-731 已经安全停靠。",
+              "phase": "final_answer"
+            }
+          ]
+        },
+        {
+          "id": "01900000-0007-7000-8000-000000000731",
+          "status": "completed",
+          "startedAt": 1700400005,
+          "completedAt": 1700400007,
+          "itemsView": "full",
+          "items": [
+            {
+              "type": "userMessage",
+              "id": "01900000-0008-7000-8000-000000000731",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "合成追问：现在能离线召回了吗？"
+                }
+              ]
+            },
+            {
+              "type": "agentMessage",
+              "id": "01900000-0009-7000-8000-000000000731",
+              "text": "合成回答：可以，且没有读取真实私人数据。",
+              "phase": "final_answer"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

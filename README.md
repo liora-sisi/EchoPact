@@ -364,6 +364,26 @@ dry-run 校验格式、版本、schema、`SHA-256(JSON.stringify(data))`、分�
 详细协议证据、分支派生规则和安全拒绝条件见
 [`docs/ROOM_FERRY_V1_ADAPTER.md`](docs/ROOM_FERRY_V1_ADAPTER.md)。
 
+### Codex 本地对话适配器
+
+`codex-rollout-v1` 通过 Codex 官方 app-server 的只读 `thread/read` 路径，
+把明确选定的本地 Codex 房间封装成带校验和的私人快照，再转换为现有
+`echo-pact-records-v2`。它不直接扒内部 SQLite/JSONL，不恢复房间、不启动
+新回合，也不默认扫描全部历史：
+
+```bash
+python scripts/capture_codex_rollout.py --thread-id EXACT_THREAD_ID --output PRIVATE_SNAPSHOT.json
+python scripts/adapt_codex_rollout.py PRIVATE_SNAPSHOT.json --dry-run
+python scripts/adapt_codex_rollout.py PRIVATE_SNAPSHOT.json --output RECORDS_V2.json
+```
+
+适配器只收录可见的 user/assistant 对话；推理、命令、工具输出和文件改动不进
+Echo，图片/音频及其他本地路径只留下类型占位，不复制地址。dry-run 只报告
+计数、哈希和安全边界；缺时间、校验失败、回合仍在运行、内容未完整加载或出现
+未经审查的新输入类型时默认拒绝。当前阶段只用合成数据和临时数据库验收，
+不读取真实房间，也不写真实 Echo 数据库。完整说明见
+[`docs/CODEX_ROLLOUT_V1_ADAPTER.md`](docs/CODEX_ROLLOUT_V1_ADAPTER.md)。
+
 真实私人档案进入转换与导入前，可先运行只读、脱敏、拒绝覆盖的 A1 验收巡检；
 它只生成汇总证据，不生成正式记录包，也不写数据库。详见
 [`docs/REAL_DATA_ACCEPTANCE.md`](docs/REAL_DATA_ACCEPTANCE.md)。
