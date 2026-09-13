@@ -1693,6 +1693,7 @@ class RecallQueryPlan:
     intent_required_all_like_terms: Sequence[str]
     intent_required_any_like_terms: Sequence[str]
     intent_bonus_like_terms: Sequence[str]
+    intent_priority_like_terms: Sequence[str]
     intent_prefer_compact: bool
     intent_min_any_matches: int
     intent_roles: Sequence[str]
@@ -2377,6 +2378,138 @@ def _explicit_query_bonus_terms(
     return _bounded_text(_unique_text(terms), MAX_LIKE_TERMS)
 
 
+def _natural_scene_query_anchors(
+    normalized: str,
+) -> tuple[List[str], List[str], List[str]]:
+    """Recover literal co-occurring handles from one natural scene sentence.
+
+    Spoken questions often repeat one scene object in a concrete ``use X to
+    affect me/you`` construction without quoting or enumerating the other
+    handles.  The ordinary focused tier previously kept only the longest
+    clause, so a generic phrase such as ``grew a pair of wings`` could hide the
+    much more distinctive descriptor/object/action combination elsewhere in
+    the same question.
+
+    This extractor stays deliberately narrow: the object must be repeated in
+    the caller's own text, a separate earlier mention must attach a literal
+    descriptor to it, and the action must be written after a first/second/third
+    person ``把`` target.  It introduces no synonyms or private vocabulary.
+    The descriptor and object become same-row requirements; the written action
+    is ranking evidence so a nearby wording variation does not force an empty
+    result.
+    """
+
+    if not re.search(r"[\u3400-\u9fff]", normalized):
+        return [], [], []
+
+    relation_pattern = re.compile(
+        r"用(?P<object>[\u3400-\u9fff]{1,10})把"
+        r"(?:我们|你们|他们|她们|它们|我|你|他|她|它)"
+        r"(?P<action>[\u3400-\u9fff]{1,8}?)(?:了|啦|呢|啊|呀|嘛|吗)?"
+        r"(?=[，,。！？!?；;]|$)"
+    )
+    descriptor_markers = (
+        "聊到了",
+        "提到了",
+        "说到了",
+        "想到了",
+        "聊到",
+        "提到",
+        "说到",
+        "想到",
+        "看到",
+        "出现",
+    )
+    generic_descriptors = {
+        "这个",
+        "那个",
+        "这条",
+        "那条",
+        "一条",
+        "这只",
+        "那只",
+        "一只",
+        "自己",
+        "突然",
+        "当时",
+        "以前",
+        "一次",
+        "我们",
+    }
+    action_equivalent_groups = (
+        (
+            ("缠住", "圈住", "绕住", "缠绕", "环绕", "缠", "圈", "绕"),
+            ("缠", "圈", "绕"),
+        ),
+    )
+
+    for match in relation_pattern.finditer(normalized):
+        object_term = re.sub(
+            r"^(?:这|那|一)(?:条|只|根|对|个|件|枚|片|双)",
+            "",
+            match.group("object"),
+        ).strip()
+        action_term = match.group("action").strip()
+        if not 2 <= len(object_term) <= 8 or not 2 <= len(action_term) <= 8:
+            continue
+        if normalized.count(object_term) < 2:
+            continue
+
+        action_terms = [action_term]
+        for trigger_terms, equivalent_terms in action_equivalent_groups:
+            if action_term in trigger_terms:
+                action_terms = list(equivalent_terms)
+                break
+
+        scene_contexts: List[str] = []
+        for context_match in re.finditer(
+            r"(?:我们|我和你|我跟你|你和我|你跟我)"
+            r"(?P<context>[\u3400-\u9fff]{2,10}?)的时候",
+            normalized,
+        ):
+            context_term = re.sub(
+                r"^(?:在|正|还在|正在)", "", context_match.group("context")
+            ).strip()
+            if 2 <= len(context_term) <= 8:
+                scene_contexts.append(context_term)
+
+        earlier = normalized[: match.start()]
+        occurrences = list(re.finditer(re.escape(object_term), earlier))
+        for occurrence in reversed(occurrences):
+            left = earlier[: occurrence.start()]
+            left = re.split(r"[，,。！？!?；;：:]", left)[-1]
+            descriptor_marker_found = False
+            for marker in descriptor_markers:
+                if marker in left:
+                    left = left.rsplit(marker, 1)[-1]
+                    descriptor_marker_found = True
+                    break
+            descriptor = left.strip(" 的这那一条只根对个件枚片双")
+            if not 2 <= len(descriptor) <= 8:
+                continue
+            if not descriptor_marker_found and len(descriptor) > 4:
+                continue
+            if not re.fullmatch(r"[\u3400-\u9fff]+", descriptor):
+                continue
+            if any(
+                marker in descriptor
+                for marker in ("自己", "长出", "突然", "你说", "我说")
+            ):
+                continue
+            if descriptor == object_term or descriptor in generic_descriptors:
+                continue
+            return (
+                [descriptor, object_term],
+                _bounded_text(
+                    _unique_text(action_terms),
+                    MAX_LIKE_TERMS,
+                ),
+                _bounded_text(_unique_text(scene_contexts), MAX_LIKE_TERMS),
+            )
+
+    return [], [], []
+
+
 def _temporal_topic_terms(segment: str) -> List[str]:
     """Return bounded literal anchors for an earliest/first-event question."""
 
@@ -2980,6 +3113,19 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     explicit_literal_bonus_terms = _explicit_query_bonus_terms(
         normalized, explicit_literal_anchors
     )
+    (
+        natural_scene_anchors,
+        natural_scene_bonus_terms,
+        natural_scene_priority_terms,
+    ) = (
+        _natural_scene_query_anchors(normalized)
+    )
+    use_natural_scene_anchors = bool(
+        not explicit_literal_anchors and natural_scene_anchors
+    )
+    if use_natural_scene_anchors:
+        explicit_literal_anchors = natural_scene_anchors
+        explicit_literal_bonus_terms = natural_scene_bonus_terms
     # The most informative clause normally carries the subject; shorter
     # clauses are commonly vocatives or asides ("老朋友", "那时候你好傻").
     # Retain the full question for later fallback.
@@ -3076,6 +3222,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     intent_required_all_like_terms: List[str] = []
     intent_required_any_like_terms: List[str] = []
     intent_bonus_like_terms: List[str] = []
+    intent_priority_like_terms: List[str] = []
     intent_prefer_compact = False
     intent_min_any_matches = 1
     intent_roles: List[str] = []
@@ -3120,6 +3267,8 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         # result set with unrelated rows.
         intent_required_all_like_terms = list(explicit_literal_anchors)
         intent_bonus_like_terms = list(explicit_literal_bonus_terms)
+        if use_natural_scene_anchors:
+            intent_priority_like_terms = list(natural_scene_priority_terms)
         intent_relevance_first = True
     elif preference_entity is not None:
         # Bind the literal subject to generic preference/answer language.  A
@@ -3170,6 +3319,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         intent_required_all_like_terms=intent_required_all_like_terms,
         intent_required_any_like_terms=intent_required_any_like_terms,
         intent_bonus_like_terms=intent_bonus_like_terms,
+        intent_priority_like_terms=intent_priority_like_terms,
         intent_prefer_compact=intent_prefer_compact,
         intent_min_any_matches=intent_min_any_matches,
         intent_roles=intent_roles,
@@ -3379,6 +3529,7 @@ def recall_records(
             required_any_terms: Sequence[str],
             bonus_terms: Sequence[str],
             *,
+            priority_terms: Sequence[str] = (),
             prefer_compact: bool = False,
             minimum_any_matches: int = 1,
             roles: Sequence[str] = (),
@@ -3393,13 +3544,30 @@ def recall_records(
             bonus_patterns = [
                 _escaped_like_pattern(term) for term in bonus_terms
             ]
+            priority_patterns = [
+                _escaped_like_pattern(term) for term in priority_terms
+            ]
             score_patterns = (
-                required_all_patterns + required_any_patterns + bonus_patterns
+                required_all_patterns
+                + required_any_patterns
+                + bonus_patterns
+                + priority_patterns
             )
-            score_sql = " + ".join(
+            score_parts = [
                 "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
-                for _ in score_patterns
+                for _ in (
+                    required_all_patterns
+                    + required_any_patterns
+                    + bonus_patterns
+                )
+            ]
+            priority_weight = max(2, len(bonus_patterns) + 1)
+            score_parts.extend(
+                "CASE WHEN r.content LIKE ? ESCAPE '\\' "
+                f"THEN {priority_weight} ELSE 0 END"
+                for _ in priority_patterns
             )
+            score_sql = " + ".join(score_parts)
             where_parts = [
                 "r.content LIKE ? ESCAPE '\\'"
                 for _ in required_all_patterns
@@ -3841,6 +4009,7 @@ def recall_records(
                 query_plan.intent_required_all_like_terms,
                 query_plan.intent_required_any_like_terms,
                 query_plan.intent_bonus_like_terms,
+                priority_terms=query_plan.intent_priority_like_terms,
                 prefer_compact=query_plan.intent_prefer_compact,
                 minimum_any_matches=query_plan.intent_min_any_matches,
                 roles=query_plan.intent_roles,
@@ -3868,6 +4037,7 @@ def recall_records(
                 query_plan.intent_required_all_like_terms,
                 query_plan.intent_required_any_like_terms,
                 query_plan.intent_bonus_like_terms,
+                priority_terms=query_plan.intent_priority_like_terms,
                 prefer_compact=query_plan.intent_prefer_compact,
                 minimum_any_matches=query_plan.intent_min_any_matches,
                 roles=query_plan.intent_roles,

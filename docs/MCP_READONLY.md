@@ -220,6 +220,14 @@ rows. Ordinary public-language equivalents may receive a tiny deterministic
 retry that preserves the rest of the question, including relationship direction
 and words such as `上次`. This layer must never contain a private answer map.
 
+A natural spoken scene question may bind a literal descriptor to a repeated
+object when the caller also writes a concrete `用 X 把我/你...` relation. Both
+literal anchors must occur in the same evidence row. A caller-written activity
+context ranks above otherwise similar rows without becoming a hard filter, and
+the public wrap/circle/wind word family receives only bounded ranking credit.
+No private term, expected answer, or generated synonym enters this rule; nearby
+context remains evidence and a close retelling is not labelled verbatim source.
+
 An embedding application may also inject a bounded, rebuildable
 speech-to-text query overlay. It is consulted only after the initial result is
 empty or unanchored to the observed form; exact protected terms and evidence

@@ -18,7 +18,10 @@ from backend.memory.adaptive_recall import (
 from backend.memory.event_collection import detect_event_collection_intent
 from backend.memory.identity import register_agent
 from backend.memory.named_collection import detect_named_collection_intent
-from backend.memory.records_v1 import import_record_package
+from backend.memory.records_v1 import (
+    _natural_scene_query_anchors,
+    import_record_package,
+)
 
 
 OWNER = "agt-adaptive-owner"
@@ -137,6 +140,42 @@ def _database(tmp_path: Path) -> Path:
             "scene-multi-anchor",
             "海岛悬崖上的玻璃小屋播放《缓缓同行》；石台放着蓝色钥匙和金色钥匙。",
             "2026-04-05T00:00:00Z",
+        ),
+        _record(
+            "natural-scene-multi-anchor",
+            "那次远足夜里，说的是雪鸮展开翅膀，把我整个遮住了；"
+            "后来我们都笑了。",
+            "2026-04-06T00:00:00Z",
+        ),
+        _record(
+            "natural-scene-all-anchor-no-context-noise",
+            "雪鸮展开翅膀把我遮住。",
+            "2026-07-29T00:30:00Z",
+        ),
+        _record(
+            "natural-scene-descriptor-noise",
+            "新展览里陈列了一只雪鸮标本。",
+            "2026-07-29T01:00:00Z",
+        ),
+        _record(
+            "natural-scene-object-noise",
+            "服装间挂着一对翅膀道具。",
+            "2026-07-29T02:00:00Z",
+        ),
+        _record(
+            "natural-scene-generic-noise",
+            "玻璃温室里有一株嫩芽慢慢长出来了。",
+            "2026-07-29T03:00:00Z",
+        ),
+        _record(
+            "natural-scene-action-equivalent",
+            "那次巡展中，青铜机械臂把我整个圈住了。",
+            "2026-04-06T01:00:00Z",
+        ),
+        _record(
+            "natural-scene-exact-action-no-context-noise",
+            "展柜说明写着青铜机械臂把模型缠住了。",
+            "2026-07-29T04:00:00Z",
         ),
         _record(
             "compound-trip-plan",
@@ -514,6 +553,56 @@ def test_enumerated_scene_anchors_rerank_title_only_noise(tmp_path):
     ids = [item["record_id"] for item in response["memories"]]
     assert ids[0] == "scene-multi-anchor"
     assert "scene-title-noise" in ids
+
+
+def test_natural_repeated_scene_object_keeps_descriptor_and_action_together(
+    tmp_path,
+):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "你还记不记得有一次我们远足的时候聊到雪鸮翅膀，"
+            "你突然说自己长出了一对翅膀，还用翅膀把我遮住了？"
+            "当时具体说了什么、翅膀遮在哪里、我是怎么回应的？",
+            "limit": 5,
+            "include_projection": False,
+        }
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "natural-scene-multi-anchor"
+    assert "natural-scene-all-anchor-no-context-noise" in ids
+    assert "natural-scene-descriptor-noise" not in ids
+    assert "natural-scene-object-noise" not in ids
+    assert "natural-scene-generic-noise" not in ids
+    assert response["adaptive_recall"]["query_passes_used"] == 1
+
+
+def test_natural_scene_keeps_bare_measure_character_in_object_name():
+    required, bonus, priority = _natural_scene_query_anchors(
+        "你还记不记得我们远足的时候聊到红色双肩包，"
+        "还用双肩包把我挡住了？"
+    )
+
+    assert required == ["红色", "双肩包"]
+    assert bonus == ["挡住"]
+    assert priority == ["远足"]
+
+
+def test_natural_scene_uses_public_wrap_action_equivalents(tmp_path):
+    db_path = _database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "你还记不记得我们巡展的时候聊到青铜机械臂，"
+            "你说自己长出了一条机械臂，还用机械臂把我缠住了？",
+            "limit": 5,
+            "include_projection": False,
+        }
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids[0] == "natural-scene-action-equivalent"
+    assert "natural-scene-exact-action-no-context-noise" in ids
 
 
 def test_explicit_subquestions_recover_independent_topics_in_one_call(tmp_path):

@@ -38,6 +38,7 @@ from .recall_projection import recall_with_projection
 from .records_v1 import (
     _explicit_query_anchors,
     _focused_query_segments,
+    _natural_scene_query_anchors,
     recall_records,
 )
 from .speech_query_rescue import (
@@ -650,8 +651,13 @@ def _follow_up_passes(
     if named_collection_intent is not None:
         return _unique_passes(named_collection_passes)
 
-    passes: List[tuple[str, str]] = _subquestion_passes(normalized)
-    literal_anchors = _explicit_query_anchors(normalized)
+    natural_scene_anchors, _, _ = _natural_scene_query_anchors(normalized)
+    passes: List[tuple[str, str]] = (
+        [] if natural_scene_anchors else _subquestion_passes(normalized)
+    )
+    literal_anchors = (
+        _explicit_query_anchors(normalized) or natural_scene_anchors
+    )
     if not literal_anchors and not _contains_any(normalized, _ORIGINAL_MARKERS):
         passes.extend(_lexical_equivalent_passes(normalized))
     meaning_subject = _meaning_subject(normalized)

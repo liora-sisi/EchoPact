@@ -179,6 +179,12 @@ This prevents the legacy longest-clause heuristic from dropping the object of a
 preference or one half of a composite event. Neither rule contains private
 answers or domain-specific synonyms; nearby turns remain provenance-bearing
 context rather than generated conclusions.
+Natural scene questions may also bind a literal descriptor to an object that
+the caller repeats in a concrete `use X to affect me/you` construction. The
+descriptor and object must coexist in one source row; a literal activity from
+the same question is a stronger ranking signal, not a hard filter. Only a
+bounded public wrap/circle/wind action family is treated as equivalent, and no
+private vocabulary or expected answer is stored in the planner.
 For a latest composite event, conversational wording such as "what did you say
 then" does not start a database-wide original-wording trace: event identity
 remains constrained by all literal subjects and the bounded branch context
