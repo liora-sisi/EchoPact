@@ -4,9 +4,14 @@
 
 `codex-app-server-v1` is Echo Pact's source adapter for local Codex task
 history. It uses Codex's documented app-server protocol rather than reading or
-reverse-engineering the internal SQLite/JSONL stores. The official contract
-used by this milestone is [`thread/read` with `includeTurns=true`](https://learn.chatgpt.com/docs/app-server),
-which reads a stored thread without resuming it.
+reverse-engineering the internal SQLite/JSONL stores. The collector first uses
+[`thread/read`](https://developers.openai.com/codex/app-server) for the exact
+stored thread metadata. Legacy histories are then read with
+`includeTurns=true`; paginated histories are hydrated in ascending, bounded
+`thread/turns/list` pages with `itemsView=full`. Neither path resumes the
+thread. The paginated method currently requires the app-server's explicitly
+negotiated `experimentalApi` capability; the collector opts into that
+capability but still calls only the reviewed read methods listed below.
 
 The v1 path has two explicit stages:
 
@@ -20,10 +25,12 @@ agent-authored memory or annotation channel.
 
 ## Acquisition boundary
 
-The collector calls only `initialize`, `initialized`, and `thread/read` for
-the exact thread ids supplied on the command line. It does not call
-`thread/list`, does not resume a thread, and does not start a turn. One capture
-is limited to 50 explicitly reviewed ids.
+The collector calls only `initialize`, `initialized`, `thread/read`, and when
+required `thread/turns/list`, for the exact thread ids supplied on the command
+line. It does not call `thread/list`, does not resume a thread, and does not
+start a turn. One capture is limited to 50 explicitly reviewed ids, 10,000
+turns per thread, and 1,000 turn pages per thread. Repeated cursors, malformed
+pages, or a thread changing during pagination fail closed.
 
 The private snapshot contains the complete returned thread objects so source
 evidence remains available for local audit. It can therefore contain message
@@ -53,6 +60,7 @@ The collector writes one strict UTF-8 JSON object:
   "capturedAt": "2026-09-13T16:00:00.000Z",
   "codexCliVersion": "codex-cli 0.153.4",
   "sourceMethod": "thread/read",
+  "acquisitionMethods": ["thread/read", "thread/turns/list"],
   "checksumAlgorithm": "SHA-256",
   "checksum": "sha256-of-canonical-threads-array",
   "threads": []
@@ -79,10 +87,14 @@ file changes, tool calls, web searches, and other operational items are not
 imported or indexed. A future user-input type fails closed until reviewed;
 ordinary non-conversation item types are counted and ignored.
 
-User messages use the turn's original `startedAt`. Assistant messages use the
-turn's original `completedAt`. The adapter never substitutes capture time for
-a missing message time. In-progress turns and turns whose items are not fully
-loaded fail the dry-run.
+User messages use the turn's original `startedAt`. Assistant messages normally
+use the turn's original `completedAt`. One narrow historical exception is
+allowed: when an interrupted turn preserved visible assistant commentary but
+has no `completedAt`, the adapter uses that same turn's original `startedAt` as
+a conservative lower-bound time, emits `assistant-time-fallback`, and marks the
+record source reference with `timeBasis=interrupted-turn-start`. It never
+substitutes capture time for a missing message time. Other missing times,
+in-progress turns, and turns whose items are not fully loaded fail the dry-run.
 
 ## Stable identity and forks
 

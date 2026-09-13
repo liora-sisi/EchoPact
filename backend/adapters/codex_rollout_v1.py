@@ -1,7 +1,8 @@
 """Codex app-server thread snapshot adapter for Echo Pact.
 
 The adapter is deliberately source-specific.  It accepts a checksummed,
-offline snapshot made from ``thread/read(includeTurns=true)`` responses,
+offline snapshot made from bounded ``thread/read`` responses and, for
+paginated histories, ``thread/turns/list`` pages,
 keeps only the visible user/assistant conversation, and emits the
 source-neutral compact records package consumed by the existing importer.
 
@@ -34,6 +35,7 @@ TOP_LEVEL_FIELDS = {
     "capturedAt",
     "codexCliVersion",
     "sourceMethod",
+    "acquisitionMethods",
     "checksumAlgorithm",
     "checksum",
     "threads",
@@ -90,6 +92,7 @@ class CodexMessage:
     branch_id: str
     position: int
     phase: Optional[str] = None
+    time_basis: Optional[str] = None
 
 
 @dataclass
@@ -167,6 +170,7 @@ def _blank_report(input_sha256: Optional[str] = None) -> Dict[str, Any]:
         "captured_at": None,
         "codex_cli_version": None,
         "source_method": None,
+        "acquisition_methods": None,
         "checksum": {
             "algorithm": None,
             "declared": None,
@@ -327,6 +331,8 @@ def inspect_codex_rollout(path: str) -> CodexRolloutInspection:
     report["format_version"] = root.get("formatVersion")
     report["codex_cli_version"] = root.get("codexCliVersion")
     report["source_method"] = root.get("sourceMethod")
+    acquisition_methods = root.get("acquisitionMethods", [root.get("sourceMethod")])
+    report["acquisition_methods"] = acquisition_methods
     report["checksum"]["algorithm"] = root.get("checksumAlgorithm")
     report["checksum"]["declared"] = root.get("checksum")
 
@@ -343,6 +349,21 @@ def inspect_codex_rollout(path: str) -> CodexRolloutInspection:
         issues.fail(
             "unsupported-source-method",
             "Only thread/read snapshots are supported",
+        )
+    if (
+        not isinstance(acquisition_methods, list)
+        or not acquisition_methods
+        or any(
+            not isinstance(method, str) or not method.strip()
+            for method in acquisition_methods
+        )
+        or len(set(acquisition_methods)) != len(acquisition_methods)
+        or set(acquisition_methods) - {SOURCE_METHOD, "thread/turns/list"}
+        or SOURCE_METHOD not in acquisition_methods
+    ):
+        issues.fail(
+            "invalid-acquisition-methods",
+            "acquisitionMethods must contain thread/read and only reviewed methods",
         )
 
     captured_at = _normalized_timestamp(root.get("capturedAt"))
@@ -483,14 +504,26 @@ def inspect_codex_rollout(path: str) -> CodexRolloutInspection:
                     role = "user"
                     created_at = started_at
                     phase = None
+                    time_basis = None
                 else:
                     report["counts"]["agent_messages"] += 1
                     if completed_at is None:
-                        issues.fail(
-                            "missing-agent-message-time",
-                            "An agentMessage requires the turn's original completedAt",
-                        )
-                        continue
+                        if status == "interrupted" and started_at is not None:
+                            created_at = started_at
+                            time_basis = "interrupted-turn-start"
+                            issues.warning(
+                                "assistant-time-fallback",
+                                "An interrupted turn used its original startedAt as a conservative assistant-message time",
+                            )
+                        else:
+                            issues.fail(
+                                "missing-agent-message-time",
+                                "An agentMessage requires the turn's original completedAt",
+                            )
+                            continue
+                    else:
+                        created_at = completed_at
+                        time_basis = None
                     text = item.get("text")
                     if not isinstance(text, str):
                         issues.fail(
@@ -507,7 +540,6 @@ def inspect_codex_rollout(path: str) -> CodexRolloutInspection:
                         continue
                     content = text
                     role = "assistant"
-                    created_at = completed_at
 
                 if content is None:
                     continue
@@ -529,6 +561,7 @@ def inspect_codex_rollout(path: str) -> CodexRolloutInspection:
                         branch_id=branch_id,
                         position=position,
                         phase=phase,
+                        time_basis=time_basis,
                     )
                 )
                 position += 1
@@ -549,8 +582,13 @@ def _source_ref(message: CodexMessage) -> str:
         f"/turn/{quote(message.turn_id, safe='')}"
         f"/item/{quote(message.item_id, safe='')}"
     )
+    query = {}
     if message.phase is not None:
-        result += "?" + urlencode({"phase": message.phase})
+        query["phase"] = message.phase
+    if message.time_basis is not None:
+        query["timeBasis"] = message.time_basis
+    if query:
+        result += "?" + urlencode(query)
     return result
 
 
@@ -610,6 +648,7 @@ def convert_codex_rollout(path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
             "format_version": payload["formatVersion"],
             "codex_cli_version": payload["codexCliVersion"],
             "source_method": payload["sourceMethod"],
+            "acquisition_methods": report["acquisition_methods"],
             "captured_at": source_cutoff_at,
             "verification": "unverified-local-archive",
         },

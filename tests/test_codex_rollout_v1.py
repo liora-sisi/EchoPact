@@ -73,7 +73,21 @@ def test_capture_envelope_builder_matches_adapter_checksum():
     assert snapshot["format"] == "echo-pact-codex-rollout"
     assert snapshot["formatVersion"] == 1
     assert snapshot["sourceMethod"] == "thread/read"
+    assert snapshot["acquisitionMethods"] == ["thread/read"]
     assert snapshot["checksum"] == codex_rollout_checksum(snapshot["threads"])
+
+
+def test_app_server_initialization_opts_into_reviewed_pagination_api():
+    client = object.__new__(capture_module.AppServerClient)
+    calls = []
+    client.request = lambda method, params: calls.append(("request", method, params))
+    client.notify = lambda method, params: calls.append(("notify", method, params))
+
+    client.initialize()
+
+    assert calls[0][0:2] == ("request", "initialize")
+    assert calls[0][2]["capabilities"]["experimentalApi"] is True
+    assert calls[1] == ("notify", "initialized", {})
 
 
 def test_capture_reads_only_explicit_thread_ids(monkeypatch):
@@ -108,8 +122,113 @@ def test_capture_reads_only_explicit_thread_ids(monkeypatch):
     snapshot = capture_codex_threads([thread["id"]])
 
     assert snapshot["threads"] == [thread]
-    assert ("request", "thread/read", {"threadId": thread["id"], "includeTurns": True}) in calls
+    assert (
+        "request",
+        "thread/read",
+        {"threadId": thread["id"], "includeTurns": False},
+    ) in calls
+    assert (
+        "request",
+        "thread/read",
+        {"threadId": thread["id"], "includeTurns": True},
+    ) in calls
     assert not any(call[0] == "request" and call[1] == "thread/list" for call in calls)
+
+
+def test_capture_hydrates_paginated_threads_without_enumerating(monkeypatch):
+    payload = _load_fixture()
+    source_thread = payload["threads"][0]
+    metadata = dict(source_thread, historyMode="paginated", turns=[])
+    pages = {
+        None: {"data": [source_thread["turns"][0]], "nextCursor": "next-page"},
+        "next-page": {"data": [source_thread["turns"][1]], "nextCursor": None},
+    }
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            pass
+
+        def initialize(self):
+            pass
+
+        def request(self, method, params):
+            calls.append((method, params))
+            if method == "thread/read":
+                assert params["includeTurns"] is False
+                return {"thread": metadata}
+            if method == "thread/turns/list":
+                return pages[params.get("cursor")]
+            raise AssertionError(f"unexpected method: {method}")
+
+    monkeypatch.setattr(capture_module, "AppServerClient", FakeClient)
+    monkeypatch.setattr(
+        capture_module,
+        "_read_codex_version",
+        lambda executable, timeout: "codex-cli synthetic",
+    )
+
+    snapshot = capture_codex_threads([source_thread["id"]])
+
+    assert snapshot["threads"][0]["turns"] == source_thread["turns"]
+    assert snapshot["acquisitionMethods"] == ["thread/read", "thread/turns/list"]
+    turn_calls = [params for method, params in calls if method == "thread/turns/list"]
+    assert turn_calls == [
+        {
+            "threadId": source_thread["id"],
+            "limit": 100,
+            "sortDirection": "asc",
+            "itemsView": "full",
+        },
+        {
+            "threadId": source_thread["id"],
+            "limit": 100,
+            "sortDirection": "asc",
+            "itemsView": "full",
+            "cursor": "next-page",
+        },
+    ]
+    assert not any(method == "thread/list" for method, _ in calls)
+
+
+def test_capture_rejects_repeated_paginated_cursor(monkeypatch):
+    payload = _load_fixture()
+    source_thread = payload["threads"][0]
+    metadata = dict(source_thread, historyMode="paginated", turns=[])
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            pass
+
+        def initialize(self):
+            pass
+
+        def request(self, method, params):
+            if method == "thread/read":
+                return {"thread": metadata}
+            return {"data": [], "nextCursor": "stuck"}
+
+    monkeypatch.setattr(capture_module, "AppServerClient", FakeClient)
+    monkeypatch.setattr(
+        capture_module,
+        "_read_codex_version",
+        lambda executable, timeout: "codex-cli synthetic",
+    )
+
+    with pytest.raises(CodexCaptureError, match="repeated a pagination cursor"):
+        capture_codex_threads([source_thread["id"]])
 
 
 def test_capture_refuses_unbounded_or_duplicate_selection():
@@ -240,6 +359,33 @@ def test_missing_original_turn_times_are_not_replaced_by_capture_time(tmp_path):
 
     assert "missing-user-message-time" in _issue_codes(user_report, "fatal")
     assert "missing-agent-message-time" in _issue_codes(agent_report, "fatal")
+
+
+def test_interrupted_turn_uses_original_start_as_flagged_assistant_time(tmp_path):
+    payload = _load_fixture()
+    turn = payload["threads"][0]["turns"][0]
+    turn["status"] = "interrupted"
+    turn["completedAt"] = None
+    input_path = _write_snapshot(tmp_path / "interrupted.json", payload)
+
+    package, report = convert_codex_rollout(str(input_path))
+    affected = [
+        record
+        for record in package["records"]
+        if f"/turn/{turn['id']}/" in record["source_ref"]
+        and record["role"] == "assistant"
+    ]
+
+    assert report["can_convert"] is True
+    assert "assistant-time-fallback" in _issue_codes(report, "warnings")
+    assert affected
+    assert all(
+        record["created_at"] == "2023-11-19T13:20:01Z" for record in affected
+    )
+    assert all(
+        "timeBasis=interrupted-turn-start" in record["source_ref"]
+        for record in affected
+    )
 
 
 @pytest.mark.parametrize(

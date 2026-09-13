@@ -27,6 +27,9 @@ from backend.adapters.codex_rollout_v1 import (
 
 
 MAX_THREADS_PER_CAPTURE = 50
+TURN_PAGE_SIZE = 100
+MAX_TURN_PAGES_PER_THREAD = 1_000
+MAX_TURNS_PER_THREAD = 10_000
 
 
 class CodexCaptureError(RuntimeError):
@@ -64,23 +67,127 @@ def build_codex_rollout_snapshot(
     *,
     codex_cli_version: str,
     captured_at: Optional[str] = None,
+    acquisition_methods: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     """Wrap complete thread/read results in the adapter's checksummed envelope."""
 
     if not isinstance(codex_cli_version, str) or not codex_cli_version.strip():
         raise CodexCaptureError("Codex CLI version is required")
     thread_list = [dict(thread) for thread in threads]
+    methods = list(
+        [SOURCE_METHOD] if acquisition_methods is None else acquisition_methods
+    )
+    if (
+        not methods
+        or any(not isinstance(method, str) or not method.strip() for method in methods)
+        or len(set(methods)) != len(methods)
+    ):
+        raise CodexCaptureError("acquisition methods must be unique non-empty strings")
     snapshot = {
         "format": CODEX_ROLLOUT_FORMAT,
         "formatVersion": CODEX_ROLLOUT_FORMAT_VERSION,
         "capturedAt": captured_at or _utc_now(),
         "codexCliVersion": codex_cli_version.strip(),
         "sourceMethod": SOURCE_METHOD,
+        "acquisitionMethods": methods,
         "checksumAlgorithm": "SHA-256",
         "checksum": codex_rollout_checksum(thread_list),
         "threads": thread_list,
     }
     return snapshot
+
+
+def _thread_from_result(result: Mapping[str, Any], thread_id: str) -> Dict[str, Any]:
+    thread = result.get("thread")
+    if not isinstance(thread, dict):
+        raise CodexCaptureError("thread/read returned no thread object")
+    if thread.get("id") != thread_id:
+        raise CodexCaptureError("thread/read returned a different thread id")
+    return dict(thread)
+
+
+def _read_paginated_turns(
+    client: "AppServerClient", thread_id: str
+) -> List[Mapping[str, Any]]:
+    turns: List[Mapping[str, Any]] = []
+    cursor: Optional[str] = None
+    seen_cursors: set[str] = set()
+
+    for _ in range(MAX_TURN_PAGES_PER_THREAD):
+        params: Dict[str, Any] = {
+            "threadId": thread_id,
+            "limit": TURN_PAGE_SIZE,
+            "sortDirection": "asc",
+            "itemsView": "full",
+        }
+        if cursor is not None:
+            params["cursor"] = cursor
+        result = client.request("thread/turns/list", params)
+        page = result.get("data")
+        if not isinstance(page, list) or any(
+            not isinstance(turn, dict) for turn in page
+        ):
+            raise CodexCaptureError("thread/turns/list returned an invalid turn page")
+        turns.extend(page)
+        if len(turns) > MAX_TURNS_PER_THREAD:
+            raise CodexCaptureError(
+                f"one thread capture is limited to {MAX_TURNS_PER_THREAD} turns"
+            )
+
+        next_cursor = result.get("nextCursor")
+        if next_cursor is None:
+            return turns
+        if not isinstance(next_cursor, str) or not next_cursor.strip():
+            raise CodexCaptureError("thread/turns/list returned an invalid next cursor")
+        if next_cursor in seen_cursors:
+            raise CodexCaptureError("thread/turns/list repeated a pagination cursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    raise CodexCaptureError(
+        f"one thread capture is limited to {MAX_TURN_PAGES_PER_THREAD} turn pages"
+    )
+
+
+def _capture_one_thread(
+    client: "AppServerClient", thread_id: str
+) -> tuple[Dict[str, Any], set[str]]:
+    metadata = _thread_from_result(
+        client.request("thread/read", {"threadId": thread_id, "includeTurns": False}),
+        thread_id,
+    )
+    history_mode = metadata.get("historyMode", "legacy")
+    if history_mode == "legacy":
+        thread = _thread_from_result(
+            client.request(
+                "thread/read", {"threadId": thread_id, "includeTurns": True}
+            ),
+            thread_id,
+        )
+        if thread.get("historyMode", "legacy") != "legacy":
+            raise CodexCaptureError("thread history mode changed during capture")
+        if thread.get("updatedAt") != metadata.get("updatedAt"):
+            raise CodexCaptureError(
+                "thread changed during capture; retry from a new snapshot"
+            )
+        return thread, {SOURCE_METHOD}
+
+    if history_mode != "paginated":
+        raise CodexCaptureError("thread/read returned an unsupported history mode")
+
+    turns = _read_paginated_turns(client, thread_id)
+    final_metadata = _thread_from_result(
+        client.request("thread/read", {"threadId": thread_id, "includeTurns": False}),
+        thread_id,
+    )
+    if final_metadata.get("historyMode", "legacy") != "paginated":
+        raise CodexCaptureError("thread history mode changed during capture")
+    if final_metadata.get("updatedAt") != metadata.get("updatedAt"):
+        raise CodexCaptureError(
+            "thread changed during capture; retry from a new snapshot"
+        )
+    final_metadata["turns"] = turns
+    return final_metadata, {SOURCE_METHOD, "thread/turns/list"}
 
 
 def serialize_codex_rollout_snapshot(snapshot: Mapping[str, Any]) -> bytes:
@@ -226,6 +333,7 @@ class AppServerClient:
                     "version": "1.0.0",
                 },
                 "capabilities": {
+                    "experimentalApi": True,
                     "optOutNotificationMethods": [
                         "thread/started",
                         "item/agentMessage/delta",
@@ -293,23 +401,22 @@ def capture_codex_threads(
         raise CodexCaptureError("timeout_seconds must be between 1 and 300")
     version = _read_codex_version(codex_executable, timeout_seconds)
     threads: List[Mapping[str, Any]] = []
+    acquisition_methods: set[str] = set()
     with AppServerClient(
         codex_executable,
         timeout_seconds=timeout_seconds,
     ) as client:
         client.initialize()
         for thread_id in reviewed_ids:
-            result = client.request(
-                "thread/read",
-                {"threadId": thread_id, "includeTurns": True},
-            )
-            thread = result.get("thread")
-            if not isinstance(thread, dict):
-                raise CodexCaptureError("thread/read returned no thread object")
-            if thread.get("id") != thread_id:
-                raise CodexCaptureError("thread/read returned a different thread id")
+            thread, methods = _capture_one_thread(client, thread_id)
             threads.append(thread)
+            acquisition_methods.update(methods)
     return build_codex_rollout_snapshot(
         threads,
         codex_cli_version=version,
+        acquisition_methods=[
+            method
+            for method in (SOURCE_METHOD, "thread/turns/list")
+            if method in acquisition_methods
+        ],
     )
