@@ -182,6 +182,10 @@ The redacted acceptance evidence was:
 - read-only recall: a reviewed phrase matched records from
   `codex-app-server-v1` with authority
   `codex-local-unverified-archive`; recalled message text was not printed.
+- full content audit: all 1,955 projected records matched their source message
+  text, role, and assistant phase exactly, with no missing or unconverted
+  visible messages; this included 1,242 commentary messages and 348 final
+  answers, and the audit reported only counts plus an aggregate digest.
 
 The private snapshot, converted package, and sandbox database remain outside
 the repository. This acceptance proves the bounded path can carry one selected
