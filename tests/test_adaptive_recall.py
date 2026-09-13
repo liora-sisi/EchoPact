@@ -20,6 +20,7 @@ from backend.memory.identity import register_agent
 from backend.memory.named_collection import detect_named_collection_intent
 from backend.memory.records_v1 import (
     _natural_scene_query_anchors,
+    _procedure_query_subject,
     import_record_package,
 )
 
@@ -369,6 +370,109 @@ def _temporal_database(tmp_path: Path) -> Path:
         actor="test",
     )
     return db_path
+
+
+def _procedure_database(tmp_path: Path) -> Path:
+    db_path = tmp_path / "procedure.sqlite3"
+    package_path = tmp_path / "procedure-records.json"
+    records = [
+        _record(
+            "procedure-rules",
+            "《星砂手册》的制作规则已经定稳：封面保留日期，正文按双页整理，"
+            "插图与文字分别排版。",
+            "2026-02-01T00:00:00Z",
+            "assistant",
+        ),
+        _record(
+            "procedure-style",
+            "星砂手册的固定样式采用暖色纸张；每次设计都保留统一页眉。",
+            "2026-02-02T00:00:00Z",
+            "assistant",
+        ),
+        _record(
+            "procedure-topic-only-noise",
+            "今天只是把星砂手册从桌面搬进新柜子。",
+            "2026-07-30T00:00:00Z",
+        ),
+        _record(
+            "procedure-collaboration-noise",
+            "我们以前一起讨论过很多事情，也共同做过不少选择。",
+            "2026-07-31T00:00:00Z",
+        ),
+        _record(
+            "procedure-thought-summary-noise",
+            "【思考摘要：整理星砂手册资料】",
+            "2026-07-31T01:00:00Z",
+        ),
+        _record(
+            "procedure-omnibus-noise",
+            "这份总览提到星砂手册，也列出了晨光相册的规则、流程、格式、"
+            "样式、步骤、要求和原则。",
+            "2026-07-31T02:00:00Z",
+        ),
+        _record(
+            "procedure-other-subject",
+            "晨光相册的制作规则是按月份分册，与另一份手册无关。",
+            "2026-08-01T00:00:00Z",
+        ),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": "echo-pact-records-v1", "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    register_agent(OWNER, "Procedure owner", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(package_path),
+        db_path=str(db_path),
+        owner_agent_id=OWNER,
+        actor="test",
+    )
+    return db_path
+
+
+def test_procedure_subject_stays_bound_to_caller_written_artifact():
+    assert _procedure_query_subject(
+        "我们以前一起讨论怎么做星砂手册时，定过哪些稳定的制作规则？"
+    ) == "星砂手册"
+    assert _procedure_query_subject("星砂手册应该怎么整理？") == "星砂手册"
+    assert _procedure_query_subject(
+        "以前关于怎么做星砂手册的记录里，我们定过哪些规则？"
+    ) == "星砂手册"
+    assert _procedure_query_subject(
+        "星砂手册的页面尺寸和装订规则是什么？"
+    ) == "星砂手册"
+    assert _procedure_query_subject("我们以前一起讨论过星砂手册规则吗？") == "星砂手册"
+    assert _procedure_query_subject("星砂手册有哪些规则？") == "星砂手册"
+    assert _procedure_query_subject("我们以前一起讨论过很多事情。") is None
+    assert _procedure_query_subject("我们以前定过哪些规则？") is None
+    assert _procedure_query_subject("我们有什么规则？") is None
+
+
+def test_natural_procedure_question_keeps_subject_and_rule_language_together(
+    tmp_path,
+):
+    db_path = _procedure_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "我们以前一起讨论怎么做星砂手册时，"
+            "定过哪些稳定的制作规则？",
+            "limit": 5,
+            "include_projection": False,
+        }
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert set(ids[:2]) == {"procedure-rules", "procedure-style"}
+    assert "procedure-topic-only-noise" not in ids
+    assert "procedure-collaboration-noise" not in ids
+    assert ids.index("procedure-thought-summary-noise") >= 2
+    assert ids.index("procedure-omnibus-noise") >= 2
+    assert "procedure-other-subject" not in ids
+    assert response["recall_mode"] == "sqlite_like_intent_focused"
+    assert response["adaptive_recall"]["query_passes_used"] == 1
 
 
 def test_one_gateway_call_traces_first_gift_to_original_evidence(tmp_path):

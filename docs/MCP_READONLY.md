@@ -228,6 +228,15 @@ the public wrap/circle/wind word family receives only bounded ranking credit.
 No private term, expected answer, or generated synonym enters this rule; nearby
 context remains evidence and a close retelling is not labelled verbatim source.
 
+A natural how-to or rules question keeps the caller-written subject attached to
+source-neutral procedure language such as rule, process, format, style, method,
+or step. Records with compact subject-plus-procedure wording rank ahead of a
+short thought-summary mention or a long omnibus document that merely repeats
+many generic procedure words. Each generic language group scores once, so word
+volume alone cannot multiply relevance. This tier succeeds in one read-only
+SQLite pass and contains no private subject, expected answer, or source-specific
+dictionary.
+
 An embedding application may also inject a bounded, rebuildable
 speech-to-text query overlay. It is consulted only after the initial result is
 empty or unanchored to the observed form; exact protected terms and evidence

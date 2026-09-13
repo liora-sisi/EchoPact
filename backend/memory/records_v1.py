@@ -1698,6 +1698,9 @@ class RecallQueryPlan:
     intent_min_any_matches: int
     intent_roles: Sequence[str]
     intent_relevance_first: bool
+    intent_score_any_as_group: bool
+    intent_score_priority_as_group: bool
+    intent_priority_weight: Optional[int]
     explicit_literal_anchors: Sequence[str]
     shared_event_intent: bool
     shared_event_fts_terms: Sequence[str]
@@ -1852,6 +1855,81 @@ _PREFERENCE_BONUS_TERMS = (
     "我的选择",
     "回答",
 )
+
+_PROCEDURE_QUERY_MARKERS = (
+    "怎么做",
+    "怎样做",
+    "如何做",
+    "怎么制作",
+    "怎样制作",
+    "如何制作",
+    "做法",
+    "制作规则",
+    "使用规则",
+    "规则",
+    "规范",
+    "流程",
+    "格式",
+    "样式",
+    "步骤",
+    "要求",
+    "标准",
+    "约定",
+    "原则",
+)
+_PROCEDURE_CONTEXT_TERMS = (
+    "规则",
+    "规范",
+    "流程",
+    "格式",
+    "样式",
+    "做法",
+    "方法",
+    "步骤",
+    "要求",
+    "标准",
+    "约定",
+    "原则",
+    "制作",
+    "整理",
+    "设计",
+    "排版",
+    "使用",
+    "设置",
+    "配置",
+)
+_PROCEDURE_BONUS_TERMS: tuple[str, ...] = ()
+_PROCEDURE_PRIORITY_TERMS = (
+    "规则",
+    "流程",
+    "格式",
+    "样式",
+    "做法",
+    "步骤",
+    "要求",
+    "原则",
+)
+_PROCEDURE_GENERIC_SUBJECTS = {
+    "事情",
+    "东西",
+    "这个",
+    "那个",
+    "这些",
+    "那些",
+    "规则",
+    "流程",
+    "格式",
+    "样式",
+    "做法",
+    "方法",
+    "步骤",
+    "要求",
+    "什么",
+    "哪些",
+    "有什么",
+    "有哪些",
+    "定过哪些",
+}
 
 _LATEST_QUERY_MARKERS = (
     "最近一次",
@@ -2578,6 +2656,138 @@ def _preference_query_entity(normalized: str) -> Optional[str]:
     return None
 
 
+def _procedure_query_subject(normalized: str) -> Optional[str]:
+    """Extract the caller-written subject of a how-to or rules question.
+
+    Natural questions often wrap a concrete subject in relationship and time
+    scaffolding (for example, "what rules did we agree on for making X?").
+    Relaxing that whole clause into trigrams lets generic words such as
+    ``以前`` and ``一起讨论`` crowd the literal subject out of a small result
+    set.  This helper keeps only a nearby subject already written by the caller
+    and binds it to source-neutral procedure language.  It adds neither a
+    domain synonym nor an expected answer.
+    """
+
+    action_question = re.search(
+        r"(?:怎么|怎样|如何)"
+        r"(?:做|制作|整理|设计|排版|使用|设置|配置|编写|撰写|写|画)",
+        normalized,
+    )
+    if not (
+        any(marker in normalized for marker in _PROCEDURE_QUERY_MARKERS)
+        or action_question
+    ):
+        return None
+
+    compact = re.sub(r"\s+", "", normalized)
+    explicit = _explicit_query_anchors(compact)
+    candidates: List[str] = list(explicit[:1])
+    action = (
+        r"(?:做|制作|整理|设计|排版|使用|设置|配置|编写|撰写|写|画)"
+    )
+    procedure = (
+        r"(?:制作规则|使用规则|规则|规范|流程|格式|样式|做法|方法|"
+        r"步骤|要求|标准|约定|原则)"
+    )
+    patterns = (
+        # ``怎么做星砂手册`` / ``讨论做星砂手册时``.
+        rf"(?:(?:怎么|怎样|如何))?{action}"
+        rf"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{{2,20}}?)"
+        rf"(?:的时候|时|有哪些|有什么|的(?:记录|资料|内容|东西)|"
+        rf"的{procedure}|[，,。！？!?；;：:]|$)",
+        # ``星砂手册应该怎么整理``.
+        rf"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{{2,20}}?)"
+        rf"(?:应该|应当|需要|要|该)?(?:怎么|怎样|如何){action}",
+        # ``讨论过星砂手册规则`` / ``星砂手册有哪些规则``.
+        rf"(?:讨论|商量|约定)(?:过)?"
+        rf"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{{2,20}}?)(?:的)?{procedure}",
+        rf"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{{2,20}}?)"
+        rf"(?:有(?:哪些|什么)?|采用|遵循|定过(?:哪些|什么)?)(?:的)?{procedure}",
+        # ``星砂手册的页面尺寸和装订规则`` keeps the leading artefact as
+        # subject rather than mistaking the final list item for it.
+        rf"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{{2,20}}?)的"
+        rf"(?:页面|内容|版式|制作|整理|设计|使用).{{0,40}}?{procedure}",
+        # Compact forms such as ``星砂手册制作规则``.
+        rf"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{{2,20}}?)(?:的)?{procedure}",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, compact)
+        if match:
+            candidates.append(match.group("subject"))
+
+    prefix_shells = (
+        "我们以前一起讨论",
+        "我们以前一起商量",
+        "我们以前讨论",
+        "我们以前商量",
+        "以前一起讨论",
+        "以前一起商量",
+        "关于",
+        "我们",
+        "咱们",
+        "以前",
+        "之前",
+        "过去",
+        "一起",
+        "讨论",
+        "讨论过",
+        "商量",
+        "商量过",
+        "定过哪些",
+        "定过什么",
+        "有什么",
+        "有哪些",
+    )
+    for raw in candidates:
+        subject = raw.strip("的，,。！？!?；;：:‘’'\"“”《》()（）[]【】")
+        changed = True
+        while subject and changed:
+            changed = False
+            for shell in prefix_shells:
+                if subject.startswith(shell):
+                    subject = subject[len(shell) :].strip()
+                    changed = True
+                    break
+        subject = re.sub(r"(?:的时候|时候|时|相关|这件事|这些东西|那些东西)$", "", subject)
+        subject = subject.strip("的")
+        if (
+            2 <= len(subject) <= 20
+            and subject not in _PROCEDURE_GENERIC_SUBJECTS
+            and re.fullmatch(r"[0-9A-Za-z\u3400-\u9fff_-]+", subject)
+        ):
+            return subject
+    return None
+
+
+def _procedure_priority_terms(subject: str) -> List[str]:
+    """Prefer records where the literal subject is attached to rule language."""
+
+    combined: List[str] = []
+    for term in _PROCEDURE_PRIORITY_TERMS:
+        if term == "规则":
+            combined.extend(
+                (f"{subject}》的制作规则", f"{subject}的制作规则")
+            )
+        elif term == "样式":
+            combined.extend(
+                (f"{subject}》的固定样式", f"{subject}的固定样式")
+            )
+        combined.extend(
+            (f"{subject}的{term}", f"{subject}{term}", f"{subject}》的{term}")
+        )
+        if term == "规则":
+            combined.extend(
+                (
+                    f"{subject}制作规则",
+                    f"{subject}的使用规则",
+                )
+            )
+        elif term == "样式":
+            combined.append(f"{subject}固定样式")
+        combined.append(f"{subject}室{term}")
+    return _bounded_text(_unique_text(combined), MAX_RELAXED_TERMS_PER_GROUP)
+
+
 def _latest_composite_topic_terms(normalized: str) -> List[str]:
     """Keep multiple literal subjects from a latest-event question.
 
@@ -3199,6 +3409,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     )
     prefer_latest = any(marker in normalized for marker in _LATEST_QUERY_MARKERS)
     preference_entity = _preference_query_entity(normalized)
+    procedure_subject = _procedure_query_subject(normalized)
     latest_composite_terms = _latest_composite_topic_terms(normalized)
     directional_relation = _directional_relation_query(normalized)
     shared_event_intent = prefer_oldest and (
@@ -3227,6 +3438,9 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     intent_min_any_matches = 1
     intent_roles: List[str] = []
     intent_relevance_first = False
+    intent_score_any_as_group = False
+    intent_score_priority_as_group = False
+    intent_priority_weight: Optional[int] = None
     if any(marker in normalized for marker in _MEANING_QUERY_MARKERS):
         intent_required_all_like_terms = [
             segment for segment in primary_focused_segments if len(segment) >= 2
@@ -3236,6 +3450,21 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         # compact explanatory record over a long keyword dossier.
         intent_required_any_like_terms = list(_MEANING_CONTEXT_TERMS)
         intent_prefer_compact = True
+    elif procedure_subject is not None:
+        # Keep the literal thing being made/used in every result, then require
+        # actual how-to/rule language.  This prevents broad relationship/time
+        # scaffolding from filling a small result set with unrelated history.
+        intent_required_all_like_terms = [procedure_subject]
+        intent_required_any_like_terms = list(_PROCEDURE_CONTEXT_TERMS)
+        intent_bonus_like_terms = list(_PROCEDURE_BONUS_TERMS)
+        intent_priority_like_terms = _procedure_priority_terms(procedure_subject)
+        intent_relevance_first = True
+        # A long omnibus document should not outrank a compact procedure card
+        # merely because it repeats many generic words.  Score each public
+        # language group once and let compactness break equal evidence.
+        intent_score_any_as_group = True
+        intent_score_priority_as_group = True
+        intent_priority_weight = 4
     elif prefer_oldest and any(
         marker in normalized for marker in _GIFT_QUERY_MARKERS
     ):
@@ -3324,6 +3553,9 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         intent_min_any_matches=intent_min_any_matches,
         intent_roles=intent_roles,
         intent_relevance_first=intent_relevance_first,
+        intent_score_any_as_group=intent_score_any_as_group,
+        intent_score_priority_as_group=intent_score_priority_as_group,
+        intent_priority_weight=intent_priority_weight,
         explicit_literal_anchors=explicit_literal_anchors,
         shared_event_intent=shared_event_intent,
         shared_event_fts_terms=shared_event_fts_terms,
@@ -3534,6 +3766,9 @@ def recall_records(
             minimum_any_matches: int = 1,
             roles: Sequence[str] = (),
             relevance_first: bool = False,
+            score_any_as_group: bool = False,
+            score_priority_as_group: bool = False,
+            priority_weight_override: Optional[int] = None,
         ) -> List[sqlite3.Row]:
             required_all_patterns = [
                 _escaped_like_pattern(term) for term in required_all_terms
@@ -3555,18 +3790,39 @@ def recall_records(
             )
             score_parts = [
                 "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
-                for _ in (
-                    required_all_patterns
-                    + required_any_patterns
-                    + bonus_patterns
-                )
+                for _ in required_all_patterns
             ]
-            priority_weight = max(2, len(bonus_patterns) + 1)
+            if required_any_patterns and score_any_as_group:
+                any_match_sql = " OR ".join(
+                    "r.content LIKE ? ESCAPE '\\'" for _ in required_any_patterns
+                )
+                score_parts.append(f"CASE WHEN ({any_match_sql}) THEN 1 ELSE 0 END")
+            else:
+                score_parts.extend(
+                    "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
+                    for _ in required_any_patterns
+                )
             score_parts.extend(
-                "CASE WHEN r.content LIKE ? ESCAPE '\\' "
-                f"THEN {priority_weight} ELSE 0 END"
-                for _ in priority_patterns
+                "CASE WHEN r.content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END"
+                for _ in bonus_patterns
             )
+            priority_weight = priority_weight_override or max(
+                2, len(bonus_patterns) + 1
+            )
+            if priority_patterns and score_priority_as_group:
+                priority_match_sql = " OR ".join(
+                    "r.content LIKE ? ESCAPE '\\'" for _ in priority_patterns
+                )
+                score_parts.append(
+                    f"CASE WHEN ({priority_match_sql}) "
+                    f"THEN {priority_weight} ELSE 0 END"
+                )
+            else:
+                score_parts.extend(
+                    "CASE WHEN r.content LIKE ? ESCAPE '\\' "
+                    f"THEN {priority_weight} ELSE 0 END"
+                    for _ in priority_patterns
+                )
             score_sql = " + ".join(score_parts)
             where_parts = [
                 "r.content LIKE ? ESCAPE '\\'"
@@ -4014,6 +4270,9 @@ def recall_records(
                 minimum_any_matches=query_plan.intent_min_any_matches,
                 roles=query_plan.intent_roles,
                 relevance_first=query_plan.intent_relevance_first,
+                score_any_as_group=query_plan.intent_score_any_as_group,
+                score_priority_as_group=query_plan.intent_score_priority_as_group,
+                priority_weight_override=query_plan.intent_priority_weight,
             )
         allow_generic_fallback = not (prioritize_literal_anchors and not rows)
 
@@ -4042,6 +4301,9 @@ def recall_records(
                 minimum_any_matches=query_plan.intent_min_any_matches,
                 roles=query_plan.intent_roles,
                 relevance_first=query_plan.intent_relevance_first,
+                score_any_as_group=query_plan.intent_score_any_as_group,
+                score_priority_as_group=query_plan.intent_score_priority_as_group,
+                priority_weight_override=query_plan.intent_priority_weight,
             )
 
         if (
