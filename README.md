@@ -380,8 +380,9 @@ python scripts/adapt_codex_rollout.py PRIVATE_SNAPSHOT.json --output RECORDS_V2.
 适配器只收录可见的 user/assistant 对话；推理、命令、工具输出和文件改动不进
 Echo，图片/音频及其他本地路径只留下类型占位，不复制地址。dry-run 只报告
 计数、哈希和安全边界；缺时间、校验失败、回合仍在运行、内容未完整加载或出现
-未经审查的新输入类型时默认拒绝。当前阶段只用合成数据和临时数据库验收，
-不读取真实房间，也不写真实 Echo 数据库。完整说明见
+未经审查的新输入类型时默认拒绝。自动化测试只使用合成数据；2026-09-14 已对
+一间明确选定的真实本地 Codex 房间完成私密快照、转换、临时数据库导入、重复
+导入和离线召回验收。真实 Echo 数据库仍未写入。完整说明见
 [`docs/CODEX_ROLLOUT_V1_ADAPTER.md`](docs/CODEX_ROLLOUT_V1_ADAPTER.md)。
 
 真实私人档案进入转换与导入前，可先运行只读、脱敏、拒绝覆盖的 A1 验收巡检；

@@ -157,3 +157,33 @@ synthetic. Tests cover redacted dry-run, bounded exact-id capture, checksum
 failure, schema drift refusal, media-path stripping, deterministic conversion,
 idempotent import, offline recall, and index consistency without opening any
 real Codex task or private Echo Pact database.
+
+## Private real-thread acceptance (2026-09-14)
+
+After the synthetic suite passed, one explicitly reviewed local Codex thread
+was captured through the bounded app-server path and exercised entirely inside
+an isolated private acceptance directory. No account-wide enumeration was
+performed, no thread was resumed, and the active Echo Pact database was not a
+write target.
+
+The redacted acceptance evidence was:
+
+- targeted test suite: 23 passed;
+- capture: 1 thread, 350 turns, 4,730 items, 59,362,690 bytes;
+- projection: 365 user messages and 1,590 assistant messages became 1,955
+  records; 2,775 operational items were excluded;
+- safety report: 0 fatal issues, 6 `assistant-time-fallback` warnings, valid
+  snapshot checksum, and no message text or media locations reported;
+- converted package: 1,955 records, 2,908,993 bytes;
+- isolated import: 1,955 added and 0 failed;
+- identical replay: 0 added and 1,955 skipped as an idempotent replay;
+- index audit: 1,955 records, state rows, FTS documents, and branch membership
+  records with no missing, orphaned, or stale entries;
+- read-only recall: a reviewed phrase matched records from
+  `codex-app-server-v1` with authority
+  `codex-local-unverified-archive`; recalled message text was not printed.
+
+The private snapshot, converted package, and sandbox database remain outside
+the repository. This acceptance proves the bounded path can carry one selected
+real thread into an isolated Echo Pact generation; it does not authorize
+automatic synchronization or import into the active private database.
