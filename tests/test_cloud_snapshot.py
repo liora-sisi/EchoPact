@@ -36,19 +36,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _record(record_id: str, content: str, created_at: str):
+def _record(
+    record_id: str,
+    content: str,
+    created_at: str,
+    *,
+    source_kind: str = "synthetic_cloud_test",
+    conversation_id: str = "synthetic-cloud-conversation",
+    authority: str = "synthetic-unverified",
+):
     return {
         "record_id": record_id,
-        "source_kind": "synthetic_cloud_test",
+        "source_kind": source_kind,
         "source_ref": f"synthetic://cloud/{record_id}",
-        "conversation_id": "synthetic-cloud-conversation",
+        "conversation_id": conversation_id,
         "branch_id": "main",
         "message_id": f"message-{record_id}",
         "role": "user",
         "content": content,
         "created_at": created_at,
         "verified": False,
-        "authority": "synthetic-unverified",
+        "authority": authority,
         "source_cutoff_at": "2026-08-01T00:00:00Z",
         "conflict_group_id": None,
     }
@@ -364,6 +372,8 @@ def test_cloud_launcher_preserves_m6_recall_contract_and_stays_readonly(tmp_path
         )["result"]["structuredContent"]
         assert future_gap == expected_future_gap
         assert future_gap["memories"] == []
+        assert future_gap["source_provenance"]["status"] == "no_evidence"
+        assert future_gap["source_provenance"]["sources"] == []
         assert future_gap["recall_mode"] == "sqlite_temporal_coverage_guard"
         assert future_gap["coverage"]["coverage_gap"] is True
         assert future_gap["temporal_coverage"]["status"] == (
@@ -379,6 +389,123 @@ def test_cloud_launcher_preserves_m6_recall_contract_and_stays_readonly(tmp_path
         process.stderr.close()
 
     assert process.returncode == 0
+    assert _sha256(source) == source_hash
+    assert _sha256(active_db) == active_hash
+
+
+def test_cloud_launcher_preserves_m12_cross_source_provenance(tmp_path):
+    source = tmp_path / "m12-cross-source.sqlite3"
+    package_path = tmp_path / "m12-cross-source.json"
+    mirror_content = (
+        "M12-CLOUD-MIRROR-4402：把两边档案分开保管，召回时一起寻找，并保留来源。"
+    )
+    records = [
+        _record(
+            "m12-chatgpt",
+            mirror_content,
+            "2026-09-01T02:03:04Z",
+            source_kind="room-ferry-backup-v1",
+            conversation_id="room-ferry-conversation",
+            authority="room-ferry-unverified-backup",
+        ),
+        _record(
+            "m12-codex",
+            mirror_content,
+            "2026-09-01T02:03:04Z",
+            source_kind="codex-app-server-v1",
+            conversation_id="codex-local-conversation",
+            authority="codex-local-unverified-archive",
+        ),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": "echo-pact-records-v1", "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    register_agent(AGENT, "Synthetic cloud agent", actor="test", db_path=str(source))
+    imported = import_record_package(
+        str(package_path),
+        db_path=str(source),
+        owner_agent_id=AGENT,
+        actor="test",
+    )
+    assert imported["added"] == 2
+    source_hash = _sha256(source)
+    arguments = {
+        "query": "M12-CLOUD-MIRROR-4402",
+        "limit": 5,
+        "include_projection": False,
+    }
+    expected = ReadonlyGateway(str(source), AGENT).recall(arguments)
+    created = create_snapshot(source, tmp_path / "m12-releases", AGENT)
+    pointer = tmp_path / "m12-state" / "active.json"
+    activated = activate_release(
+        created["release_dir"], pointer, expected_agent_id=AGENT
+    )
+    active_db = Path(activated["database_path"])
+    active_hash = _sha256(active_db)
+
+    repo = Path(__file__).resolve().parents[1]
+    launcher = repo / "scripts" / "echo_pact_cloud_mcp.py"
+    env = os.environ.copy()
+    env.update(
+        {
+            "ECHO_PACT_MCP_SNAPSHOT_POINTER": str(pointer),
+            "ECHO_PACT_MCP_AGENT_ID": AGENT,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    process = subprocess.Popen(
+        [sys.executable, str(launcher)],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        _exchange(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "pytest", "version": "1"},
+                },
+            },
+        )
+        actual = _exchange(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "recall_context", "arguments": arguments},
+            },
+        )["result"]["structuredContent"]
+    finally:
+        process.stdin.close()
+        process.wait(timeout=10)
+        process.stdout.close()
+        process.stderr.close()
+
+    assert process.returncode == 0
+    assert actual == expected
+    assert actual["source_provenance"]["source_channels"] == [
+        "chatgpt",
+        "codex_local",
+    ]
+    mirrors = actual["source_provenance"]["exact_cross_source_mirror_groups"]
+    assert len(mirrors) == 1
+    assert mirrors[0]["record_ids"] == ["m12-chatgpt", "m12-codex"]
+    assert mirrors[0]["independent_support_units"] == 1
     assert _sha256(source) == source_hash
     assert _sha256(active_db) == active_hash
 

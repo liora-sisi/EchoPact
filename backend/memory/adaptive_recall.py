@@ -47,6 +47,7 @@ from .speech_query_rescue import (
     complete_speech_query_rescue_trace,
     plan_speech_query_rescue,
 )
+from .source_provenance import build_source_provenance
 
 
 ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
@@ -927,6 +928,7 @@ def _apply_temporal_coverage_guard(
         # support a later dated event.  Returning none is safer than inviting
         # the caller to mistake lexical similarity for evidence.
         response["memories"] = []
+        response["source_provenance"] = build_source_provenance([])
         response["recall_mode"] = "sqlite_temporal_coverage_guard"
         timeline = response.get("event_timeline")
         if isinstance(timeline, Mapping):
@@ -1040,6 +1042,7 @@ def _merge_results(
 
     first["query"] = query
     first["memories"] = merged[:limit]
+    first["source_provenance"] = build_source_provenance(first["memories"])
     first["recall_mode"] = (
         "sqlite_adaptive_bounded"
         if len(pass_results) > 1

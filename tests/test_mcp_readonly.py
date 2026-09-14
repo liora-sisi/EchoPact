@@ -137,10 +137,39 @@ def test_recall_contract_routes_context_gaps_without_overcalling():
     assert "do not call merely because a past topic is mentioned" in instructions
     assert "pass only the semantic memory question" in instructions
     assert "named_collection" in description
+    assert "source_provenance" in description
     assert "confirmed items separate from candidates" in instructions
     assert "query_clarification" in instructions
     assert "not an automatic ruling about tone, intent, or truth" in instructions
     assert "never claim to see or describe image content" in instructions
+    assert "one support unit, not independent corroboration" in instructions
+    assert "does not by itself prove real-world event identity or truth" in instructions
+
+
+def test_bounded_result_preserves_source_provenance_without_record_content():
+    provenance = {
+        "schema_version": "echo-pact-source-provenance-v1",
+        "sources": [
+            {
+                "source_kind": "room-ferry-backup-v1",
+                "source_channel": "chatgpt",
+                "record_ids": ["record-a"],
+            }
+        ],
+        "exact_cross_source_mirror_groups": [],
+    }
+
+    bounded = _bounded_result(
+        {
+            "memories": [{"record_id": "record-a", "content": "private text"}],
+            "source_provenance": provenance,
+        }
+    )
+
+    assert bounded["source_provenance"] == provenance
+    assert "private text" not in json.dumps(
+        bounded["source_provenance"], ensure_ascii=False
+    )
 
 
 def test_gateway_anchors_relative_time_to_local_server_clock(mcp_db, monkeypatch):

@@ -15,6 +15,9 @@ server.  It is an adapter, not a second memory database.
   supported schema version is rejected without alteration.
 - Results retain source, branch, verification, authority, conflict and cutoff
   metadata.  Long text is bounded per result and explicitly marked truncated.
+- Mixed-source results include a query-time `source_provenance` packet. Source
+  records stay separate, and exact cross-source mirrors are not counted as
+  independent corroboration.
 - No embedding API or other network request is used.
 
 ## Required local configuration
@@ -133,6 +136,15 @@ and anchors supported relative phrases. When a relative phrase is present and
 the caller omits `as_of`, the local MCP gateway supplies its own trustworthy
 `Asia/Shanghai` server clock; it never derives the reference from a recalled
 message timestamp.
+
+Every adaptive response includes `source_provenance` over the returned
+`memories`. Room Ferry and Codex rows retain their original source, authority,
+verification, conversation, and record IDs. Only distinctive, same-role,
+same-time, normalized-identical messages from those two known adapters can form
+an `exact_cross_source_message_mirror` candidate. A group is one support unit;
+it does not assert event identity or truth. Similar wording, same-day records,
+and later retellings remain unresolved and are never auto-merged. See
+`docs/CROSS_SOURCE_PROVENANCE.md` for the exact bounded contract.
 
 One public call may contain a bounded adaptive plan. Exact anchors keep the
 single-pass fast path. Meaning questions require an entity and explanatory

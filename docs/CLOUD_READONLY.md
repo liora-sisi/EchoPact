@@ -115,6 +115,8 @@ deployment is accepted only when:
 4. the same fixed synthetic query through the local gateway and cloud launcher
    returns identical records, provenance, adaptive-recall metadata, event
    timeline and coverage boundaries;
+   for a mixed Room Ferry/Codex fixture this also includes identical
+   `source_provenance` and exact-mirror support-unit treatment;
 5. an explicit query beyond imported coverage returns no older lexical match,
    reports `coverage_gap`, and suppresses the event timeline on both paths;
 6. a bounded read returns no write capability and the database hash is unchanged;
@@ -135,3 +137,9 @@ Updates are generation-based rather than live two-way sync:
 This keeps the phone-visible archive fresh without letting a remote process edit
 the local authority. Scheduling and retention can be added after one manual real
 snapshot has completed an approved restore/rollback rehearsal.
+
+When one approved database generation contains both Room Ferry and Codex
+records, both source kinds are searchable through this same cloud gateway. The
+records do not lose their source labels, and query-time mirror candidates do not
+become independent corroboration. See `docs/CROSS_SOURCE_PROVENANCE.md`. This
+does not add live synchronization or authorize importing a real Codex package.

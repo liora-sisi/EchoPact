@@ -36,7 +36,7 @@ SUPPORTED_PROTOCOL_VERSIONS = {
     "2024-11-05",
     "2024-10-07",
 }
-SERVER_VERSION = "0.1.1"
+SERVER_VERSION = "0.1.2"
 MAX_QUERY_CHARS = 2_000
 MAX_RESULT_LIMIT = 10
 MAX_CONTENT_CHARS = 4_000
@@ -72,6 +72,11 @@ SERVER_INSTRUCTIONS = (
     "and leave an unsupported interpretation open. An image placeholder proves "
     "only that a non-text item existed. Never claim to see or describe image "
     "content that the archive does not contain. "
+    "When source_provenance is present, keep ChatGPT and Codex source channels "
+    "visible. Members of one exact cross-source mirror group are one support "
+    "unit, not independent corroboration. A mirror candidate does not by itself "
+    "prove real-world event identity or truth, and ungrouped semantic similarity "
+    "must not be auto-merged. "
     "Do not call merely because a past topic is mentioned when the current "
     "conversation already supports the answer. Use memory_coverage to check what "
     "the archive can honestly support. Treat verified, authority, "
@@ -95,7 +100,8 @@ TOOLS = (
             "once if the archive could help, even when words such as image, "
             "drawing, photo, song, or gift appear, unless the user explicitly "
             "asks to create or edit. Results include source, branch, verification, "
-            "cutoff, coverage, optional Claim annotations, and a conservative "
+            "cutoff, coverage, source_provenance for mixed ChatGPT/Codex "
+            "evidence, optional Claim annotations, and a conservative "
             "multi-occurrence event_collection when the query explicitly asks "
             "for several related events, or named_collection when it asks for "
             "the count and names of a category of things."
