@@ -47,13 +47,16 @@ from .speech_query_rescue import (
     complete_speech_query_rescue_trace,
     plan_speech_query_rescue,
 )
-from .source_provenance import build_source_provenance
+from .source_provenance import select_public_memories_by_support_unit
 
 
 ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
 TEMPORAL_COVERAGE_SCHEMA_VERSION = "echo-pact-query-time-coverage-v1"
 MAX_ADAPTIVE_QUERY_PASSES = 4
-MAX_INTERNAL_RESULT_LIMIT = 10
+# The public MCP limit is at most ten support units. The ordinary path reads at
+# most two raw candidates per requested unit so one ChatGPT/Codex mirror pair
+# cannot exhaust the candidate window before support-unit compaction.
+MAX_INTERNAL_RESULT_LIMIT = 20
 MAX_MEANING_INTERNAL_RESULT_LIMIT = 32
 MAX_EXPLICIT_SUBQUESTIONS = 3
 
@@ -928,7 +931,11 @@ def _apply_temporal_coverage_guard(
         # support a later dated event.  Returning none is safer than inviting
         # the caller to mistake lexical similarity for evidence.
         response["memories"] = []
-        response["source_provenance"] = build_source_provenance([])
+        result_limit = response.get("adaptive_recall", {}).get("result_limit", 1)
+        _, response["source_provenance"] = select_public_memories_by_support_unit(
+            [],
+            limit=result_limit if isinstance(result_limit, int) else 1,
+        )
         response["recall_mode"] = "sqlite_temporal_coverage_guard"
         timeline = response.get("event_timeline")
         if isinstance(timeline, Mapping):
@@ -1041,8 +1048,12 @@ def _merge_results(
             break
 
     first["query"] = query
-    first["memories"] = merged[:limit]
-    first["source_provenance"] = build_source_provenance(first["memories"])
+    public_memories, source_provenance = select_public_memories_by_support_unit(
+        merged,
+        limit=limit,
+    )
+    first["memories"] = public_memories
+    first["source_provenance"] = source_provenance
     first["recall_mode"] = (
         "sqlite_adaptive_bounded"
         if len(pass_results) > 1
@@ -1055,7 +1066,14 @@ def _merge_results(
         "query_pass_budget": MAX_ADAPTIVE_QUERY_PASSES,
         "passes": pass_modes,
         "result_count_before_limit": len(merged),
+        "support_unit_count_before_limit": source_provenance["selection"][
+            "candidate_support_unit_count"
+        ],
         "result_limit": limit,
+        "result_limit_semantics": "distinct_support_units",
+        "mirror_records_compacted": len(
+            source_provenance["selection"]["compacted_mirror_record_ids"]
+        ),
         "budget_exhausted": len(pass_results) >= MAX_ADAPTIVE_QUERY_PASSES,
         "safety": (
             "deterministic read-only expansion; no network, model-generated "
@@ -1111,7 +1129,16 @@ def adaptive_recall(
     else:
         internal_ceiling = MAX_INTERNAL_RESULT_LIMIT
         internal_floor = 8
-    internal_limit = min(internal_ceiling, max(limit, internal_floor))
+    ordinary_recall = (
+        collection_intent is None
+        and named_collection_intent is None
+        and meaning_subject is None
+    )
+    requested_candidate_limit = limit * 2 if ordinary_recall else limit
+    internal_limit = min(
+        internal_ceiling,
+        max(requested_candidate_limit, internal_floor),
+    )
     query_clock = resolve_query_calendar_scope(
         query,
         as_of,

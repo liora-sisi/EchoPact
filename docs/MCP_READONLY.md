@@ -143,8 +143,15 @@ verification, conversation, and record IDs. Only distinctive, same-role,
 same-time, normalized-identical messages from those two known adapters can form
 an `exact_cross_source_message_mirror` candidate. A group is one support unit;
 it does not assert event identity or truth. Similar wording, same-day records,
-and later retellings remain unresolved and are never auto-merged. See
+and later retellings remain unresolved and are never auto-merged. The caller's
+result `limit` counts distinct support units, so a compacted mirror counterpart
+cannot evict unrelated evidence; its content-free source metadata remains in
+`source_provenance.evidence_records`. `memory_coverage` still counts raw visible
+records, and adaptive query budgets still count searches actually executed. See
 `docs/CROSS_SOURCE_PROVENANCE.md` for the exact bounded contract.
+The ordinary path considers at most two raw candidates per requested public
+support unit before compaction; this remains a fixed local bound rather than an
+unbounded retry.
 
 One public call may contain a bounded adaptive plan. Exact anchors keep the
 single-pass fast path. Meaning questions require an entity and explanatory

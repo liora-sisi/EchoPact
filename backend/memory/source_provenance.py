@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import hashlib
 import re
 import unicodedata
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 
 SOURCE_PROVENANCE_SCHEMA_VERSION = "echo-pact-source-provenance-v1"
@@ -103,6 +103,30 @@ def _source_summaries(memories: Sequence[Mapping[str, Any]]) -> list[Dict[str, A
                 "conversation_ids": sorted(summary["conversation_ids"]),
             }
         )
+    return rendered
+
+
+def _evidence_records(memories: Sequence[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+    rendered = []
+    for memory in memories:
+        record_id = str(memory.get("record_id") or "")
+        if not record_id:
+            continue
+        source_kind = str(memory.get("source_kind") or "unknown")
+        rendered.append(
+            {
+                "record_id": record_id,
+                "source_kind": source_kind,
+                "source_channel": _source_channel(source_kind),
+                "source_ref": memory.get("source_ref"),
+                "conversation_id": memory.get("conversation_id"),
+                "role": memory.get("role"),
+                "created_at": memory.get("created_at"),
+                "verified": bool(memory.get("verified")),
+                "authority": memory.get("authority"),
+            }
+        )
+    rendered.sort(key=lambda record: record["record_id"])
     return rendered
 
 
@@ -198,6 +222,10 @@ def build_source_provenance(
             if memory.get("record_id")
         }
     )
+    mirror_companion_count = sum(
+        max(0, len(group.get("record_ids", [])) - 1) for group in mirror_groups
+    )
+    support_unit_count = len(returned_record_ids) - mirror_companion_count
     if not returned_record_ids:
         status = "no_evidence"
     elif len(source_channels) <= 1:
@@ -214,17 +242,129 @@ def build_source_provenance(
         "source_group_count": len(sources),
         "source_channels": sorted(source_channels),
         "sources": sources,
+        "evidence_records": _evidence_records(safe_memories),
         "exact_cross_source_mirror_groups": mirror_groups,
         "unresolved_record_ids": [
             record_id
             for record_id in returned_record_ids
             if record_id not in mirrored_record_ids
         ],
+        "selection": {
+            "candidate_record_count": len(returned_record_ids),
+            "candidate_support_unit_count": support_unit_count,
+            "result_limit": None,
+            "returned_memory_count": len(returned_record_ids),
+            "returned_support_unit_count": support_unit_count,
+            "returned_record_ids": returned_record_ids,
+            "compacted_mirror_record_ids": [],
+            "limit_semantics": "not_applied",
+        },
         "policy": {
             "raw_records_remain_separate": True,
             "query_time_annotation_only": True,
             "exact_mirror_is_one_support_unit": True,
+            "archive_coverage_counts_raw_records": True,
+            "query_pass_budget_counts_search_passes": True,
             "semantic_similarity_is_not_message_or_event_identity": True,
             "authority_does_not_auto_choose_truth": True,
         },
     }
+
+
+def select_public_memories_by_support_unit(
+    memories: Sequence[Mapping[str, Any]],
+    *,
+    limit: int,
+) -> Tuple[list[Dict[str, Any]], Dict[str, Any]]:
+    """Select public results without letting exact mirrors consume two slots."""
+
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    candidates = [memory for memory in memories if isinstance(memory, Mapping)]
+    all_mirror_groups = _exact_mirror_groups(candidates)
+    mirror_by_record_id = {
+        record_id: group["mirror_group_id"]
+        for group in all_mirror_groups
+        for record_id in group.get("record_ids", [])
+    }
+    selected: list[Dict[str, Any]] = []
+    selected_support_keys: set[str] = set()
+    selected_group_ids: set[str] = set()
+    for index, memory in enumerate(candidates):
+        record_id = str(memory.get("record_id") or "")
+        group_id = mirror_by_record_id.get(record_id)
+        support_key = group_id or f"record:{record_id or index}"
+        if support_key in selected_support_keys:
+            continue
+        selected_support_keys.add(support_key)
+        if group_id:
+            selected_group_ids.add(group_id)
+        selected.append(dict(memory))
+        if len(selected) >= limit:
+            break
+
+    selected_record_ids = {
+        str(memory.get("record_id") or "")
+        for memory in selected
+        if memory.get("record_id")
+    }
+    provenance_memories = []
+    seen_provenance_ids: set[str] = set()
+    for index, memory in enumerate(candidates):
+        record_id = str(memory.get("record_id") or "")
+        group_id = mirror_by_record_id.get(record_id)
+        include = record_id in selected_record_ids or group_id in selected_group_ids
+        if not include:
+            continue
+        dedup_key = record_id or f"anonymous:{index}"
+        if dedup_key in seen_provenance_ids:
+            continue
+        seen_provenance_ids.add(dedup_key)
+        provenance_memories.append(memory)
+
+    provenance = build_source_provenance(provenance_memories)
+    compacted_record_ids = sorted(
+        {
+            record_id
+            for group in provenance.get("exact_cross_source_mirror_groups", [])
+            for record_id in group.get("record_ids", [])
+            if record_id not in selected_record_ids
+        }
+    )
+    for group in provenance.get("exact_cross_source_mirror_groups", []):
+        representative = next(
+            (
+                record_id
+                for record_id in group.get("record_ids", [])
+                if record_id in selected_record_ids
+            ),
+            None,
+        )
+        group["representative_record_id"] = representative
+        group["compacted_record_ids"] = [
+            record_id
+            for record_id in group.get("record_ids", [])
+            if record_id != representative
+        ]
+
+    candidate_record_ids = {
+        str(memory.get("record_id") or "")
+        for memory in candidates
+        if memory.get("record_id")
+    }
+    candidate_support_unit_count = len(candidate_record_ids) - sum(
+        max(0, len(group.get("record_ids", [])) - 1)
+        for group in all_mirror_groups
+    )
+    provenance["scope"] = "returned_support_units_with_selected_mirror_metadata"
+    provenance["selection"] = {
+        "candidate_record_count": len(candidate_record_ids),
+        "candidate_support_unit_count": candidate_support_unit_count,
+        "result_limit": limit,
+        "returned_memory_count": len(selected),
+        "returned_support_unit_count": len(selected_support_keys),
+        "returned_record_ids": sorted(selected_record_ids),
+        "compacted_mirror_record_ids": compacted_record_ids,
+        "limit_semantics": "distinct_support_units",
+    }
+    return selected, provenance

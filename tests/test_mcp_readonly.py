@@ -144,6 +144,8 @@ def test_recall_contract_routes_context_gaps_without_overcalling():
     assert "never claim to see or describe image content" in instructions
     assert "one support unit, not independent corroboration" in instructions
     assert "does not by itself prove real-world event identity or truth" in instructions
+    assert "result limit counts distinct support units" in instructions
+    assert "coverage continues to count immutable raw records" in instructions
 
 
 def test_bounded_result_preserves_source_provenance_without_record_content():

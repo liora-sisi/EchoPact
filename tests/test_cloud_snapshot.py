@@ -374,6 +374,7 @@ def test_cloud_launcher_preserves_m6_recall_contract_and_stays_readonly(tmp_path
         assert future_gap["memories"] == []
         assert future_gap["source_provenance"]["status"] == "no_evidence"
         assert future_gap["source_provenance"]["sources"] == []
+        assert future_gap["source_provenance"]["selection"]["result_limit"] == 1
         assert future_gap["recall_mode"] == "sqlite_temporal_coverage_guard"
         assert future_gap["coverage"]["coverage_gap"] is True
         assert future_gap["temporal_coverage"]["status"] == (
@@ -506,6 +507,21 @@ def test_cloud_launcher_preserves_m12_cross_source_provenance(tmp_path):
     assert len(mirrors) == 1
     assert mirrors[0]["record_ids"] == ["m12-chatgpt", "m12-codex"]
     assert mirrors[0]["independent_support_units"] == 1
+    selection = actual["source_provenance"]["selection"]
+    assert selection["candidate_record_count"] == 2
+    assert selection["candidate_support_unit_count"] == 1
+    assert selection["returned_memory_count"] == 1
+    assert selection["returned_support_unit_count"] == 1
+    assert len(selection["compacted_mirror_record_ids"]) == 1
+    assert len(actual["memories"]) == 1
+    evidence_record_ids = {
+        record["record_id"]
+        for record in actual["source_provenance"]["evidence_records"]
+    }
+    assert evidence_record_ids == {
+        "m12-chatgpt",
+        "m12-codex",
+    }
     assert _sha256(source) == source_hash
     assert _sha256(active_db) == active_hash
 

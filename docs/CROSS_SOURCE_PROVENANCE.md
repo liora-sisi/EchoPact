@@ -11,13 +11,25 @@ Every adaptive recall response contains `source_provenance` with:
 
 - one source summary per `source_kind + authority + verified` boundary;
 - the source channel (`chatgpt`, `codex_local`, or an unclassified `other`);
-- record and conversation IDs for audit without repeating message content;
+- record, source-reference, conversation, time, authority, and verification
+  metadata for audit without repeating message content;
 - zero or more high-precision exact cross-source mirror candidates;
 - returned records that were not assigned to a mirror candidate;
 - explicit policies preventing semantic auto-merge or automatic truth choice.
 
-The annotation covers only the public `memories` returned after the caller's
-limit. It does not claim to inventory every matching row in the database.
+The public result limit counts distinct support units. One highest-ranked raw
+record represents a selected mirror group in `memories`; metadata for its
+compacted counterpart remains in `evidence_records` and the mirror group. This
+prevents two archive copies from crowding an unrelated support unit out of a
+small result limit without deleting or rewriting either raw record.
+
+`selection` reports candidate raw-record and support-unit counts, returned
+counts, the applied limit, representative record IDs, and compacted mirror
+record IDs. The annotation covers selected support units and their mirror
+metadata. It does not claim to inventory every matching row in the database.
+The ordinary recall path also reads at most two bounded raw candidates per
+requested public support unit before compaction, so mirror pairs near the top
+cannot consume the entire internal candidate window.
 
 ## Exact mirror candidate
 
@@ -43,6 +55,11 @@ words never create a mirror group. Such records remain separate and appear in
 `unresolved_record_ids`; higher-level event logic must continue to describe
 them as bounded evidence rather than silently merging them.
 
+The one-second window and 32-character floor are intentionally precision-first:
+an identical message captured later than the window and a short generic reply
+remain separate. A future source adapter must receive an explicit mirror-policy
+review before being added to the known-source allowlist.
+
 ## Source separation and shared recall
 
 Room Ferry and Codex adapters continue to emit different `source_kind`,
@@ -59,6 +76,13 @@ There is no automatic live synchronization and no remote-to-local write path.
 A real Codex package still requires a separate, explicit import decision, and a
 cloud update still requires creation, verification, transfer, and activation of
 a new immutable snapshot generation.
+
+`memory_coverage.visible_record_count` continues to count immutable visible raw
+records, because archive inventory is not evidence-unit accounting. Adaptive
+query-pass budgets likewise count searches actually executed. The separate
+`selection.candidate_support_unit_count` and
+`adaptive_recall.support_unit_count_before_limit` fields report evidence-unit
+accounting without corrupting either operational metric.
 
 ## Privacy and verification
 
