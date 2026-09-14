@@ -231,6 +231,13 @@ def test_failed_batch_resume_and_completed_replay(setup_db, tmp_path):
     assert resumed["skipped"] == 2
     assert resumed["idempotent_replay"] is False
     assert _batch_status(setup_db, "imp-crash") == "completed"
+    with sqlite3.connect(setup_db) as conn:
+        batch_counts = conn.execute(
+            "SELECT record_count, membership_count, grant_count "
+            "FROM import_batches WHERE batch_id = ?",
+            ("imp-crash",),
+        ).fetchone()
+    assert batch_counts == (4, 4, 4)
     # 完成后再重放：直接返回既有 summary，记录一行不动
     replay = import_record_package(
         pkg, db_path=setup_db, owner_agent_id="agt-a",

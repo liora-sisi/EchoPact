@@ -1483,7 +1483,7 @@ def import_record_package(
                             )
                     conn.execute(
                         "UPDATE import_batches SET record_count = ?, "
-                        "membership_count = ?, grant_count = grant_count + ? "
+                        "membership_count = ?, grant_count = ? "
                         "WHERE batch_id = ?",
                         (resumed_counts["record_count"]
                          + summary["added"] + batch_added,
