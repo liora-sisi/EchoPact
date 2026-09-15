@@ -94,3 +94,9 @@ different long-polling service.
 bounded to 1..10. `ECHO_LLM_MAX_EVIDENCE_ITEMS` separately controls how many of
 those records may be included in the external model request and is also bounded
 to 1..10; the reviewed private rollout keeps it at 5.
+
+For the always-on private host, the hardened systemd template lives at
+`deploy/cloud/echo-pact-telegram.service.example`. Its environment file is a
+root-only deployment secret and must point at one verified immutable snapshot.
+The service can write only its separate bad-case directory; the Echo snapshot
+and code trees remain read-only.

@@ -1,0 +1,38 @@
+[Unit]
+Description=Echo Pact private Telegram read-only bot
+After=network-online.target echo-pact-cloud.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=echo-pact
+Group=echo-pact
+WorkingDirectory=/opt/echo-pact-cloud/current
+EnvironmentFile=/etc/echo-pact-telegram/bot.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/echo-pact-telegram/venv/bin/python /opt/echo-pact-cloud/current/scripts/echo_pact_telegram_bot.py
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/opt/echo-pact-cloud /var/lib/echo-pact-cloud
+ReadWritePaths=/var/lib/echo-pact-telegram
+
+[Install]
+WantedBy=multi-user.target
