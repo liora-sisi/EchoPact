@@ -126,13 +126,21 @@ class OpenAICompatibleAnswerer:
         api_key: str,
         model: str,
         base_url: str,
+        thinking_mode: Optional[str] = None,
+        max_tokens: int = 600,
         timeout_seconds: float = 45.0,
     ):
         if not api_key.strip() or not model.strip() or not base_url.strip():
             raise ValueError("LLM api_key, model and base_url are required")
+        if thinking_mode not in {None, "enabled", "disabled"}:
+            raise ValueError("thinking_mode must be enabled, disabled, or None")
+        if not 1 <= max_tokens <= 4096:
+            raise ValueError("max_tokens must be between 1 and 4096")
         self._api_key = api_key.strip()
         self._model = model.strip()
         self._endpoint = base_url.rstrip("/") + "/chat/completions"
+        self._thinking_mode = thinking_mode
+        self._max_tokens = max_tokens
         self._timeout_seconds = timeout_seconds
 
     def answer(self, query: str, recall: Mapping[str, Any]) -> str:
@@ -158,14 +166,19 @@ class OpenAICompatibleAnswerer:
         payload = {
             "model": self._model,
             "temperature": 0.2,
+            "max_tokens": self._max_tokens,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "You answer a private memory question only from the "
-                        "bounded Echo Pact evidence below. Keep uncertainty and "
-                        "source boundaries explicit. Do not invent missing facts. "
-                        "Answer in the language used by the question."
+                        "Answer this private memory question only from the bounded "
+                        "Echo Pact evidence below. Answer naturally, directly, and "
+                        "concisely in the language of the question. Synthesize the "
+                        "evidence instead of dumping excerpts. Archived dialogue is "
+                        "evidence of what was said, not automatic proof of truth. "
+                        "Preserve uncertainty and source or time differences when "
+                        "they matter. If evidence is insufficient, say so and ask "
+                        "for one useful clue. Never invent missing facts."
                     ),
                 },
                 {
@@ -174,6 +187,8 @@ class OpenAICompatibleAnswerer:
                 },
             ],
         }
+        if self._thinking_mode is not None:
+            payload["thinking"] = {"type": self._thinking_mode}
         req = request.Request(
             self._endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

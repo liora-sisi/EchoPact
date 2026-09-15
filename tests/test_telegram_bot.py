@@ -20,6 +20,7 @@ from backend.telegram_bot.runtime import (
     BadCaseStore,
     EchoTelegramBot,
     LocalRecallClient,
+    OpenAICompatibleAnswerer,
     TelegramBotApi,
 )
 
@@ -338,3 +339,60 @@ def test_telegram_transport_error_does_not_retain_token_url(monkeypatch):
 
     assert "secret-bot-token" not in str(caught.value)
     assert caught.value.__cause__ is None
+
+
+def test_answerer_bounds_evidence_and_can_disable_thinking(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {"choices": [{"message": {"content": "自然整理后的回答"}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr(bot_runtime.request, "urlopen", fake_urlopen)
+    long_evidence = "甲" * 1200 + "不应发送"
+    answerer = OpenAICompatibleAnswerer(
+        api_key="synthetic-deepseek-key",
+        model="deepseek-flash",
+        base_url="https://api.deepseek.com",
+        thinking_mode="disabled",
+        max_tokens=600,
+    )
+
+    answer = answerer.answer(
+        "我们以前怎么做手账？",
+        {
+            "memories": [
+                {
+                    "record_id": "gpt-a",
+                    "content": long_evidence,
+                    "created_at": "2026-09-01T00:00:00Z",
+                    "verified": False,
+                }
+            ],
+            "recall_debug": {
+                "top_k": [{"record_id": "gpt-a", "source_channel": "chatgpt"}]
+            },
+        },
+    )
+
+    assert answer == "自然整理后的回答"
+    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    payload = captured["payload"]
+    assert payload["model"] == "deepseek-flash"
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["max_tokens"] == 600
+    assert "甲" * 1200 in payload["messages"][1]["content"]
+    assert "不应发送" not in payload["messages"][1]["content"]

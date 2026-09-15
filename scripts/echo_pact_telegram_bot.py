@@ -48,10 +48,14 @@ def _optional_answerer() -> OpenAICompatibleAnswerer | None:
             "ECHO_LLM_API_KEY, ECHO_LLM_MODEL and ECHO_LLM_BASE_URL "
             "must be configured together"
         )
+    thinking_mode = os.getenv("ECHO_LLM_THINKING_MODE", "").strip().lower() or None
+    max_tokens = int(os.getenv("ECHO_LLM_MAX_TOKENS", "600"))
     return OpenAICompatibleAnswerer(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        thinking_mode=thinking_mode,
+        max_tokens=max_tokens,
     )
 
 

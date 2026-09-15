@@ -46,6 +46,12 @@ When the model is missing or fails, the bot does not hide the failure. It
 returns compact A/B evidence followed by `但嘴被捂住了`. A local recall failure
 is reported separately and never converted into an invented answer.
 
+For providers that expose thinking control, `ECHO_LLM_THINKING_MODE` can be
+`enabled` or `disabled`; leaving it empty omits the provider-specific field.
+`ECHO_LLM_MAX_TOKENS` defaults to 600 and is capped at 4096. The private
+DeepSeek rollout uses the current `deepseek-flash` model with thinking disabled
+for short, low-cost phone answers.
+
 Every ordinary reply ends with a compact local diagnostic footer: source
 channel counts, whether M8 candidate expansion ran, and how many bounded
 records were hidden by Top-K or exact-mirror compaction. This keeps everyday
