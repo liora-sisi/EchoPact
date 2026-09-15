@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import subprocess
 import sys
 
@@ -250,6 +251,24 @@ def test_failed_activation_does_not_replace_current_pointer(tmp_path):
     with pytest.raises(CloudSnapshotError):
         activate_release(bad_release, pointer, expected_agent_id=AGENT)
     assert pointer.read_bytes() == before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode semantics")
+def test_activation_preserves_existing_pointer_mode(tmp_path):
+    source = _source_database(tmp_path, "stable")
+    first = create_snapshot(source, tmp_path / "releases", AGENT)
+    pointer = tmp_path / "state" / "active.json"
+    activate_release(first["release_dir"], pointer, expected_agent_id=AGENT)
+    pointer.chmod(0o440)
+
+    second_source = _source_database(tmp_path, "newer")
+    second = create_snapshot(second_source, tmp_path / "releases-2", AGENT)
+    activate_release(second["release_dir"], pointer, expected_agent_id=AGENT)
+
+    assert stat.S_IMODE(pointer.stat().st_mode) == 0o440
+    assert stat.S_IMODE(
+        pointer.with_name(pointer.name + ".previous").stat().st_mode
+    ) == 0o440
 
 
 def test_failed_create_removes_only_its_build_directory(tmp_path):

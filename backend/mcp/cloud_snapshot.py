@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
 import tempfile
 from typing import Any, Dict, Mapping, Optional
 
@@ -87,8 +88,19 @@ def _write_json_exclusive(path: Path, payload: Mapping[str, Any]) -> None:
         raise CloudSnapshotError(f"refusing to overwrite {path.name}") from exc
 
 
-def _atomic_replace_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _atomic_replace_json(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    preserve_metadata_from: Optional[Path] = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_source = path if path.exists() else preserve_metadata_from
+    existing_stat = (
+        metadata_source.stat()
+        if metadata_source is not None and metadata_source.exists()
+        else None
+    )
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temp_path = Path(temp_name)
     try:
@@ -96,6 +108,12 @@ def _atomic_replace_json(path: Path, payload: Mapping[str, Any]) -> None:
             handle.write(_canonical_json(payload))
             handle.flush()
             os.fsync(handle.fileno())
+            if existing_stat is not None:
+                os.fchmod(handle.fileno(), stat.S_IMODE(existing_stat.st_mode))
+                if hasattr(os, "fchown"):
+                    os.fchown(
+                        handle.fileno(), existing_stat.st_uid, existing_stat.st_gid
+                    )
         os.replace(temp_path, path)
     except Exception:
         temp_path.unlink(missing_ok=True)
@@ -290,7 +308,7 @@ def activate_release(
         )["pointer"]
     new_payload = _pointer_payload(verified)
     if old_payload is not None:
-        _atomic_replace_json(previous, old_payload)
+        _atomic_replace_json(previous, old_payload, preserve_metadata_from=pointer)
     _atomic_replace_json(pointer, new_payload)
     resolved = resolve_active_snapshot(pointer, expected_agent_id=expected_agent_id)
     return {
