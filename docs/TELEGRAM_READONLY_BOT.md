@@ -1,8 +1,8 @@
 # Telegram read-only bot
 
-M15 provides a text-only phone loop for exercising Echo Pact against an
-isolated Codex archive before any real ChatGPT/Codex cross-source acceptance.
-It intentionally adds no voice recognition, proactive messaging, Web UI, or
+M15 provides a text-only phone loop for exercising Echo Pact against the
+read-only ChatGPT + Codex generation used for real-life recall testing. It
+intentionally adds no voice recognition, proactive messaging, Web UI, or
 database write route.
 
 ## Boundary
@@ -20,11 +20,14 @@ Telegram Bot API
 ```
 
 Before starting, the API inspects the database through the read-only
-connector. The B-only phase refuses to start unless every stored record maps
-to the `codex_local` source channel. The current combined A+B generation is
-therefore not an accidental fallback. Each process also creates an ephemeral
-high-entropy token for the loopback recall route; it is kept only in memory and
-is never written to configuration or logs.
+connector. The real-life acceptance phase refuses to start unless the database
+contains exactly the approved `chatgpt` and `codex_local` source channels. A
+Codex-only, GPT-only, or unclassified database therefore cannot accidentally
+stand in for the intended two-source test. The raw records keep their distinct
+source kinds and visibility metadata; only one bounded recall reads across
+both. Each process also creates an ephemeral high-entropy token for the
+loopback recall route; it is kept only in memory and is never written to
+configuration or logs.
 
 Only the configured Telegram user ID is accepted, and only when the message
 comes from that user's private chat. Unauthorized or group messages are

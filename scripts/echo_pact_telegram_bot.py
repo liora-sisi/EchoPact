@@ -73,7 +73,7 @@ def main() -> int:
             db_path=db_path,
             agent_id=agent_id,
             result_limit=5,
-            expected_source_channel="codex_local",
+            expected_source_channels=("chatgpt", "codex_local"),
             speech_query_policy=policy,
             local_access_token=local_access_token,
         )

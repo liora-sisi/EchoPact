@@ -108,8 +108,8 @@ class FakeRecall:
             "recall_mode": "sqlite_fts5_trigram",
             "memories": [
                 {
-                    "record_id": "codex-a",
-                    "content": "第一条 Codex 记忆",
+                    "record_id": "chatgpt-a",
+                    "content": "第一条 GPT 记忆",
                     "created_at": "2026-09-15T00:00:00Z",
                     "verified": False,
                 },
@@ -122,7 +122,7 @@ class FakeRecall:
             ],
             "recall_debug": {
                 "top_k": [
-                    {"record_id": "codex-a", "source_channel": "codex_local"},
+                    {"record_id": "chatgpt-a", "source_channel": "chatgpt"},
                     {"record_id": "codex-b", "source_channel": "codex_local"},
                 ]
             },
@@ -136,7 +136,7 @@ class FakeAnswerer:
     def answer(self, query: str, recall) -> str:
         if self.fail:
             raise RuntimeError("synthetic model failure")
-        return "这是只根据两条 Codex 证据整理的回答。"
+        return "这是只根据 GPT 与 Codex 两条证据整理的回答。"
 
 
 def _bot(tmp_path: Path, *, answerer=None):
@@ -173,18 +173,22 @@ def test_allowed_text_gets_model_answer_and_model_failure_is_explicit(tmp_path):
     bot, telegram, recall, _ = _bot(tmp_path, answerer=FakeAnswerer())
     assert bot.handle_update(_update("我最近手腕怎么样")) == "answered"
     assert recall.queries == ["我最近手腕怎么样"]
-    assert telegram.sent[-1][1].startswith("这是只根据两条 Codex 证据整理的回答。")
-    assert "【召回说明】Codex库2条｜原问直接查" in telegram.sent[-1][1]
+    assert telegram.sent[-1][1].startswith(
+        "这是只根据 GPT 与 Codex 两条证据整理的回答。"
+    )
+    assert "【召回说明】GPT库1条、Codex库1条｜原问直接查" in (
+        telegram.sent[-1][1]
+    )
 
     failed_bot, failed_telegram, _, _ = _bot(
         tmp_path / "failed", answerer=FakeAnswerer(fail=True)
     )
     assert failed_bot.handle_update(_update("再问一次")) == "answered"
-    assert "记忆召回了A「第一条 Codex 记忆」和B「第二条 Codex 记忆」" in (
+    assert "记忆召回了A「第一条 GPT 记忆」和B「第二条 Codex 记忆」" in (
         failed_telegram.sent[-1][1]
     )
     assert "嘴被捂住了" in failed_telegram.sent[-1][1]
-    assert "Codex库2条" in failed_telegram.sent[-1][1]
+    assert "GPT库1条、Codex库1条" in failed_telegram.sent[-1][1]
 
 
 def test_badcase_command_saves_last_dialogue_and_debug_packet(tmp_path):
@@ -203,7 +207,7 @@ def test_badcase_command_saves_last_dialogue_and_debug_packet(tmp_path):
     assert packet["dialogue"][0]["content"] == "这条为什么召回错了"
     assert packet["recall"]["recall_debug"]["top_k"][0][
         "source_channel"
-    ] == "codex_local"
+    ] == "chatgpt"
     assert "已经收进本地" in telegram.sent[-1][1]
     assert not list(bad_cases.root.glob("*.tmp"))
 
@@ -220,7 +224,9 @@ def test_badcase_store_refuses_repository_path(tmp_path):
         )
 
 
-def test_loopback_api_accepts_codex_only_db_and_never_writes_it(tmp_path):
+def test_loopback_api_can_accept_explicit_codex_only_scope_and_never_writes_it(
+    tmp_path,
+):
     db_path = _database(
         tmp_path,
         [_record("codex-only", "codex-app-server-v1", "M15-ONLY-8811 只读证据")],
@@ -231,6 +237,7 @@ def test_loopback_api_accepts_codex_only_db_and_never_writes_it(tmp_path):
             db_path=str(db_path),
             agent_id=OWNER,
             result_limit=3,
+            expected_source_channels=("codex_local",),
             local_access_token="synthetic-local-token-123456789",
         )
     )
@@ -254,7 +261,7 @@ def test_loopback_api_accepts_codex_only_db_and_never_writes_it(tmp_path):
     assert _hash(db_path) == before
 
 
-def test_loopback_api_rejects_mixed_database_for_b_only_phase(tmp_path):
+def test_loopback_api_accepts_required_gpt_and_codex_sources(tmp_path):
     db_path = _database(
         tmp_path,
         [
@@ -263,7 +270,26 @@ def test_loopback_api_rejects_mixed_database_for_b_only_phase(tmp_path):
         ],
     )
 
-    with pytest.raises(RuntimeError, match="isolated source scope"):
+    app = create_readonly_app(
+        ReadonlyApiConfig(db_path=str(db_path), agent_id=OWNER)
+    )
+
+    with TestClient(app) as client:
+        health = client.get("/health")
+
+    assert health.status_code == 200
+    assert health.json()["source_channels"] == ["chatgpt", "codex_local"]
+
+
+def test_loopback_api_rejects_codex_only_db_when_both_sources_are_required(
+    tmp_path,
+):
+    db_path = _database(
+        tmp_path,
+        [_record("codex", "codex-app-server-v1", "M15-SCOPE-6601 Codex")],
+    )
+
+    with pytest.raises(RuntimeError, match="required source scope"):
         create_readonly_app(
             ReadonlyApiConfig(db_path=str(db_path), agent_id=OWNER)
         )

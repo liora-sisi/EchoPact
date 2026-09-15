@@ -300,7 +300,9 @@ def _diagnostic_footer(recall: Mapping[str, Any]) -> str:
         label = labels.get(channel, "其他来源")
         counts[label] = counts.get(label, 0) + 1
     source_summary = "、".join(
-        f"{label}{count}条" for label, count in sorted(counts.items())
+        f"{label}{counts[label]}条"
+        for label in ("GPT库", "Codex库", "其他来源")
+        if label in counts
     ) or "没有结果"
     speech = recall.get("speech_query_rescue") or {}
     candidates = (

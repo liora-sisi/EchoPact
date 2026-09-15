@@ -23,7 +23,7 @@ class ReadonlyApiConfig:
     db_path: str
     agent_id: str
     result_limit: int = 5
-    expected_source_channel: Optional[str] = "codex_local"
+    expected_source_channels: tuple[str, ...] = ("chatgpt", "codex_local")
     speech_query_policy: Optional[SpeechQueryRescuePolicy] = None
     local_access_token: Optional[str] = None
 
@@ -61,10 +61,12 @@ def database_source_channels(db_path: str) -> list[str]:
 
 def validate_database_source_scope(config: ReadonlyApiConfig) -> list[str]:
     channels = database_source_channels(config.db_path)
-    expected = config.expected_source_channel
-    if expected is not None and channels != [expected]:
+    expected = sorted(set(config.expected_source_channels))
+    if not expected:
+        raise RuntimeError("at least one required source channel must be configured")
+    if channels != expected:
         raise RuntimeError(
-            "configured database does not match the required isolated source scope"
+            "configured database does not match the required source scope"
         )
     return channels
 
