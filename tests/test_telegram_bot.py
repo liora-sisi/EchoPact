@@ -396,3 +396,50 @@ def test_answerer_bounds_evidence_and_can_disable_thinking(monkeypatch):
     assert payload["max_tokens"] == 600
     assert "甲" * 1200 in payload["messages"][1]["content"]
     assert "不应发送" not in payload["messages"][1]["content"]
+
+
+def test_answerer_limits_external_evidence_items(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {"choices": [{"message": {"content": "合成回答"}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(req, timeout):
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr(bot_runtime.request, "urlopen", fake_urlopen)
+    answerer = OpenAICompatibleAnswerer(
+        api_key="synthetic-deepseek-key",
+        model="deepseek-flash",
+        base_url="https://api.deepseek.com",
+        max_evidence_items=2,
+    )
+
+    answerer.answer(
+        "哪两条有关？",
+        {
+            "memories": [
+                {"record_id": "a", "content": "第一条"},
+                {"record_id": "b", "content": "第二条"},
+                {"record_id": "c", "content": "不应外送的第三条"},
+            ]
+        },
+    )
+
+    evidence = captured["payload"]["messages"][1]["content"]
+    assert "第一条" in evidence
+    assert "第二条" in evidence
+    assert "不应外送的第三条" not in evidence
+    assert "explicit user corrections" in captured["payload"]["messages"][0][
+        "content"
+    ]

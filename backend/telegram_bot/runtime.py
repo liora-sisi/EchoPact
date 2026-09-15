@@ -128,6 +128,7 @@ class OpenAICompatibleAnswerer:
         base_url: str,
         thinking_mode: Optional[str] = None,
         max_tokens: int = 600,
+        max_evidence_items: int = 5,
         timeout_seconds: float = 45.0,
     ):
         if not api_key.strip() or not model.strip() or not base_url.strip():
@@ -136,11 +137,14 @@ class OpenAICompatibleAnswerer:
             raise ValueError("thinking_mode must be enabled, disabled, or None")
         if not 1 <= max_tokens <= 4096:
             raise ValueError("max_tokens must be between 1 and 4096")
+        if not 1 <= max_evidence_items <= 10:
+            raise ValueError("max_evidence_items must be between 1 and 10")
         self._api_key = api_key.strip()
         self._model = model.strip()
         self._endpoint = base_url.rstrip("/") + "/chat/completions"
         self._thinking_mode = thinking_mode
         self._max_tokens = max_tokens
+        self._max_evidence_items = max_evidence_items
         self._timeout_seconds = timeout_seconds
 
     def answer(self, query: str, recall: Mapping[str, Any]) -> str:
@@ -150,9 +154,12 @@ class OpenAICompatibleAnswerer:
             for item in (recall.get("recall_debug") or {}).get("top_k") or []
             if isinstance(item, Mapping)
         }
-        for index, memory in enumerate(recall.get("memories") or [], start=1):
-            if not isinstance(memory, Mapping):
-                continue
+        memories = [
+            item
+            for item in recall.get("memories") or []
+            if isinstance(item, Mapping)
+        ][: self._max_evidence_items]
+        for index, memory in enumerate(memories, start=1):
             record_id = str(memory.get("record_id") or "")
             source = (debug_items.get(record_id) or {}).get(
                 "source_channel", "other"
@@ -176,6 +183,10 @@ class OpenAICompatibleAnswerer:
                         "concisely in the language of the question. Synthesize the "
                         "evidence instead of dumping excerpts. Archived dialogue is "
                         "evidence of what was said, not automatic proof of truth. "
+                        "Treat explicit user corrections and later clarifications "
+                        "as stronger evidence than earlier assistant guesses. Do "
+                        "not merge similarly named people, objects, or events unless "
+                        "the evidence explicitly links them. "
                         "Preserve uncertainty and source or time differences when "
                         "they matter. If evidence is insufficient, say so and ask "
                         "for one useful clue. Never invent missing facts."

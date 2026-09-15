@@ -36,8 +36,11 @@ text are not logged by the launcher.
 
 ## Answers and model failure
 
-The optional model receives only the current question and bounded Top-K
-evidence, never the database or full debug packet. It must answer from that
+The optional model receives only the current question and a separately bounded
+subset of Top-K evidence, never the database or full debug packet. The private
+recall/debug window and external model evidence window are configured
+independently: the real-life rollout may inspect up to 10 records locally while
+sending at most 5 excerpts to the model provider. It must answer from that
 evidence and preserve uncertainty. This still transmits the bounded question
 and excerpts to the configured provider, so enabling a model is an explicit
 private configuration choice.
@@ -86,3 +89,8 @@ The process binds no public listener. Stopping it ends both long polling and
 the loopback API. The first real rollout requires a dedicated Bot token and the
 allowed private Telegram user ID; do not reuse a token already consumed by a
 different long-polling service.
+
+`ECHO_TELEGRAM_RESULT_LIMIT` controls the private recall/debug window and is
+bounded to 1..10. `ECHO_LLM_MAX_EVIDENCE_ITEMS` separately controls how many of
+those records may be included in the external model request and is also bounded
+to 1..10; the reviewed private rollout keeps it at 5.

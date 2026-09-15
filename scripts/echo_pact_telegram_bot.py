@@ -36,6 +36,17 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError(f"{name} must be an integer") from None
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
 def _optional_answerer() -> OpenAICompatibleAnswerer | None:
     api_key = os.getenv("ECHO_LLM_API_KEY", "").strip()
     model = os.getenv("ECHO_LLM_MODEL", "").strip()
@@ -49,13 +60,19 @@ def _optional_answerer() -> OpenAICompatibleAnswerer | None:
             "must be configured together"
         )
     thinking_mode = os.getenv("ECHO_LLM_THINKING_MODE", "").strip().lower() or None
-    max_tokens = int(os.getenv("ECHO_LLM_MAX_TOKENS", "600"))
+    max_tokens = _bounded_int_env(
+        "ECHO_LLM_MAX_TOKENS", 600, minimum=1, maximum=4096
+    )
+    max_evidence_items = _bounded_int_env(
+        "ECHO_LLM_MAX_EVIDENCE_ITEMS", 5, minimum=1, maximum=10
+    )
     return OpenAICompatibleAnswerer(
         api_key=api_key,
         model=model,
         base_url=base_url,
         thinking_mode=thinking_mode,
         max_tokens=max_tokens,
+        max_evidence_items=max_evidence_items,
     )
 
 
@@ -65,6 +82,9 @@ def main() -> int:
     bot_token = _required_env("ECHO_TELEGRAM_BOT_TOKEN")
     allowed_user_id = int(_required_env("ECHO_TELEGRAM_ALLOWED_USER_ID"))
     bad_case_dir = _required_env("ECHO_TELEGRAM_BAD_CASE_DIR")
+    result_limit = _bounded_int_env(
+        "ECHO_TELEGRAM_RESULT_LIMIT", 10, minimum=1, maximum=10
+    )
     port = int(os.getenv("ECHO_TELEGRAM_LOCAL_API_PORT", "8765"))
     if not 1024 <= port <= 65535:
         raise RuntimeError("ECHO_TELEGRAM_LOCAL_API_PORT must be 1024..65535")
@@ -76,7 +96,7 @@ def main() -> int:
         ReadonlyApiConfig(
             db_path=db_path,
             agent_id=agent_id,
-            result_limit=5,
+            result_limit=result_limit,
             expected_source_channels=("chatgpt", "codex_local"),
             speech_query_policy=policy,
             local_access_token=local_access_token,
