@@ -1710,6 +1710,51 @@ class RecallQueryPlan:
     directional_relation: Optional[DirectionalRelationIntent]
 
 
+def _query_plan_debug_payload(plan: RecallQueryPlan) -> Dict[str, Any]:
+    """Render the caller-derived plan without adding private vocabulary."""
+
+    directional_relation = None
+    if plan.directional_relation is not None:
+        directional_relation = {
+            "relation": plan.directional_relation.relation,
+            "query_speaker_role": plan.directional_relation.query_speaker_role,
+        }
+    return {
+        "normalized_query": plan.normalized_query,
+        "exact_expressions": list(plan.exact_expressions),
+        "focused_expression": plan.focused_expression,
+        "focused_relaxed_expression": plan.focused_relaxed_expression,
+        "focused_like_terms": list(plan.focused_like_terms),
+        "relaxed_expression": plan.relaxed_expression,
+        "like_terms": list(plan.like_terms),
+        "prefer_oldest": plan.prefer_oldest,
+        "prefer_latest": plan.prefer_latest,
+        "intent_required_all_like_terms": list(
+            plan.intent_required_all_like_terms
+        ),
+        "intent_required_any_like_terms": list(
+            plan.intent_required_any_like_terms
+        ),
+        "intent_bonus_like_terms": list(plan.intent_bonus_like_terms),
+        "intent_priority_like_terms": list(plan.intent_priority_like_terms),
+        "intent_prefer_compact": plan.intent_prefer_compact,
+        "intent_min_any_matches": plan.intent_min_any_matches,
+        "intent_roles": list(plan.intent_roles),
+        "intent_relevance_first": plan.intent_relevance_first,
+        "explicit_literal_anchors": list(plan.explicit_literal_anchors),
+        "shared_event_intent": plan.shared_event_intent,
+        "shared_event_fts_terms": list(plan.shared_event_fts_terms),
+        "shared_event_like_terms": list(plan.shared_event_like_terms),
+        "shared_event_anchor_fts_terms": list(
+            plan.shared_event_anchor_fts_terms
+        ),
+        "shared_event_anchor_like_terms": list(
+            plan.shared_event_anchor_like_terms
+        ),
+        "directional_relation": directional_relation,
+    }
+
+
 @dataclass(frozen=True)
 class SharedEventMatch:
     """One bounded same-branch window supporting a shared event candidate."""
@@ -3619,6 +3664,7 @@ def _row_to_recall_result(
     branch_memberships: Sequence[Mapping[str, Any]],
     conversation_context: Sequence[Mapping[str, Any]] = (),
     event_annotation: Optional[Mapping[str, Any]] = None,
+    retrieval_debug: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     confidence, confidence_basis = _confidence(row, query)
     result = {
@@ -3644,6 +3690,8 @@ def _row_to_recall_result(
     }
     if event_annotation:
         result.update(dict(event_annotation))
+    if retrieval_debug:
+        result["retrieval_debug"] = dict(retrieval_debug)
     return result
 
 
@@ -3657,6 +3705,7 @@ def recall_records(
     db_path: Optional[str] = None,
     agent_id: Optional[str] = None,
     read_only: bool = False,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     """Recall V1 records using only local SQLite FTS5 data.
 
@@ -4588,6 +4637,59 @@ def recall_records(
                         ],
                     }
                 )
+        def retrieval_debug_for_row(
+            row: sqlite3.Row, position: int
+        ) -> Optional[Dict[str, Any]]:
+            if not debug:
+                return None
+            lexical_rank = (
+                row["lexical_rank"] if "lexical_rank" in row.keys() else None
+            )
+            if recall_mode.startswith("sqlite_fts5"):
+                rank_semantics = "sqlite_bm25_lower_is_better"
+            elif recall_mode in {
+                "sqlite_like_intent_focused",
+                "sqlite_like_terms_focused",
+                "sqlite_like_terms_fallback",
+                "sqlite_like_fallback",
+                "sqlite_original_wording_trace",
+            }:
+                rank_semantics = "matched_term_score_higher_is_better"
+            elif recall_mode == "sqlite_shared_event_window":
+                rank_semantics = "bounded_event_evidence_order"
+            else:
+                rank_semantics = "mode_specific_order"
+            return {
+                "position_in_pass": position,
+                "selection_order_note": (
+                    "final pass order is mode-specific; no unified scalar "
+                    "weight is used"
+                ),
+                "lexical_rank": lexical_rank,
+                "rank_semantics": rank_semantics,
+                "recall_mode": recall_mode,
+                "final_weight": None,
+                "final_weight_note": (
+                    "records_v1 does not use the legacy semantic/emotion/"
+                    "importance/decay/saga weighted formula"
+                ),
+            }
+
+        rendered_memories = [
+            _row_to_recall_result(
+                row,
+                query,
+                recall_mode,
+                memberships_by_rowid.get(
+                    row["id"],
+                    [{"branch_id": row["branch_id"], "position": None}],
+                ),
+                context_by_rowid.get(row["id"], []),
+                event_annotations_by_rowid.get(row["id"]),
+                retrieval_debug_for_row(row, position),
+            )
+            for position, row in enumerate(rows, start=1)
+        ]
         response = {
             "schema_version": RECALL_SCHEMA_VERSION,
             "query": query,
@@ -4609,21 +4711,23 @@ def recall_records(
                     "kept as labelled local context"
                 ),
             },
-            "memories": [
-                _row_to_recall_result(
-                    row,
-                    query,
-                    recall_mode,
-                    memberships_by_rowid.get(
-                        row["id"],
-                        [{"branch_id": row["branch_id"], "position": None}],
-                    ),
-                    context_by_rowid.get(row["id"], []),
-                    event_annotations_by_rowid.get(row["id"]),
-                )
-                for row in rows
-            ],
+            "memories": rendered_memories,
         }
+        if debug:
+            response["recall_debug_pass"] = {
+                "schema_version": "echo-pact-recall-debug-pass-v1",
+                "query": query,
+                "query_plan": _query_plan_debug_payload(query_plan),
+                "recall_mode": recall_mode,
+                "candidate_count": len(rendered_memories),
+                "candidate_limit": limit,
+                "record_time_filter": dict(response["record_time_filter"]),
+                "agent_visibility_filter": {
+                    "applied": agent_id is not None,
+                    "agent_id": agent_id,
+                    "hidden_record_details_exposed": False,
+                },
+            }
         if event_recall is not None:
             response["event_recall"] = event_recall
         return response

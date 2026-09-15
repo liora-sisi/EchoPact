@@ -326,6 +326,13 @@ ChatGPT 记录与本地 Codex 记录始终保留各自的来源、会话、可�
 自动合并。完整边界见
 [`docs/CROSS_SOURCE_PROVENANCE.md`](docs/CROSS_SOURCE_PROVENANCE.md)。
 
+M14 增加本地只读的召回调试面板。它直接复用上述 records-v1 自适应召回，显示
+原始问题、可选的 M8 错字候补、各轮实际查询与召回路径、GPT/Codex 来源门牌、
+Top-K 证据依据、M12 镜像收敛和榜外候选原因；正常 MCP 返回不增加调试内脏。
+当前引擎不使用旧版 `semantic / emotion / importance / decay / saga` 加权公式，
+面板只展示真实参与排序的 SQLite 词面/意图信息。完整用法与只读边界见
+[`docs/RECALL_DEBUG_CLI.md`](docs/RECALL_DEBUG_CLI.md)。
+
 M6.3 对普通口语换词只做小规模、公开语言的确定性替换，并保留原问句中的
 时间与关系方向；例如“撸串 / 烤串 / 烧烤”可以互相补一次有界检索，但不会
 在规则里保存私人店名、日期或答案。只有“那个事 / 那件事”而没有任何字面主题

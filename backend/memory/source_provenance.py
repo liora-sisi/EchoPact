@@ -32,6 +32,12 @@ def _source_channel(source_kind: str) -> str:
     return _SOURCE_CHANNELS.get(source_kind, "other")
 
 
+def source_channel_for_kind(source_kind: object) -> str:
+    """Return the stable public channel label for one source adapter."""
+
+    return _source_channel(str(source_kind or "unknown"))
+
+
 def _normalized_content(value: object) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value or ""))).strip()
 

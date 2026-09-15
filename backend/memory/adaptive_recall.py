@@ -47,10 +47,14 @@ from .speech_query_rescue import (
     complete_speech_query_rescue_trace,
     plan_speech_query_rescue,
 )
-from .source_provenance import select_public_memories_by_support_unit
+from .source_provenance import (
+    select_public_memories_by_support_unit,
+    source_channel_for_kind,
+)
 
 
 ADAPTIVE_RECALL_SCHEMA_VERSION = "echo-pact-adaptive-recall-v1"
+RECALL_DEBUG_SCHEMA_VERSION = "echo-pact-recall-debug-v1"
 TEMPORAL_COVERAGE_SCHEMA_VERSION = "echo-pact-query-time-coverage-v1"
 MAX_ADAPTIVE_QUERY_PASSES = 4
 # The public MCP limit is at most ten support units. The ordinary path reads at
@@ -937,6 +941,21 @@ def _apply_temporal_coverage_guard(
             limit=result_limit if isinstance(result_limit, int) else 1,
         )
         response["recall_mode"] = "sqlite_temporal_coverage_guard"
+        recall_debug = response.get("recall_debug")
+        if isinstance(recall_debug, dict):
+            prior_top_k = list(recall_debug.get("top_k") or [])
+            recall_debug["top_k"] = []
+            for item in prior_top_k:
+                excluded = dict(item)
+                excluded.pop("position", None)
+                excluded.update(
+                    {
+                        "reason_code": "temporal_coverage_guard",
+                        "reason": "查询日期超出当前已导入数据范围",
+                        "merged_into_record_id": None,
+                    }
+                )
+                recall_debug.setdefault("exclusions", []).append(excluded)
         timeline = response.get("event_timeline")
         if isinstance(timeline, Mapping):
             response["event_timeline"] = suppress_event_timeline_for_coverage_gap(
@@ -946,6 +965,137 @@ def _apply_temporal_coverage_guard(
             coverage["coverage_gap"] = True
             coverage["coverage_status"] = "outside_imported_coverage"
     return response
+
+
+def _debug_memory_summary(memory: Mapping[str, Any]) -> Dict[str, Any]:
+    content = str(memory.get("content") or "")
+    preview = content if len(content) <= 240 else content[:237] + "..."
+    return {
+        "record_id": str(memory.get("record_id") or ""),
+        "source_kind": memory.get("source_kind"),
+        "source_channel": source_channel_for_kind(memory.get("source_kind")),
+        "conversation_id": memory.get("conversation_id"),
+        "role": memory.get("role"),
+        "created_at": memory.get("created_at"),
+        "confidence": memory.get("confidence"),
+        "confidence_basis": list(memory.get("confidence_basis") or []),
+        "adaptive_match_passes": list(
+            memory.get("adaptive_match_passes") or []
+        ),
+        "retrieval_debug": copy.deepcopy(memory.get("retrieval_debug") or {}),
+        "content_preview": preview,
+    }
+
+
+def _attach_recall_debug(
+    response: Dict[str, Any],
+    *,
+    query: str,
+    pass_results: Sequence[tuple[str, Mapping[str, Any]]],
+    merged_candidates: Sequence[Mapping[str, Any]],
+    duplicate_occurrences: Sequence[Mapping[str, Any]],
+) -> None:
+    """Attach a local-only explanation of the real records-v1 pipeline."""
+
+    if not any(result.get("recall_debug_pass") for _, result in pass_results):
+        return
+    selected_memories = [
+        memory
+        for memory in response.get("memories") or []
+        if isinstance(memory, Mapping)
+    ]
+    selected_ids = {
+        str(memory.get("record_id") or "") for memory in selected_memories
+    }
+    selected_position_by_id = {
+        str(memory.get("record_id") or ""): position
+        for position, memory in enumerate(selected_memories, start=1)
+    }
+    provenance = response.get("source_provenance") or {}
+    selection = provenance.get("selection") or {}
+    compacted_ids = {
+        str(record_id)
+        for record_id in selection.get("compacted_mirror_record_ids") or []
+    }
+    representative_by_compacted: Dict[str, Optional[str]] = {}
+    for group in provenance.get("exact_cross_source_mirror_groups") or []:
+        representative = group.get("representative_record_id")
+        for record_id in group.get("compacted_record_ids") or []:
+            representative_by_compacted[str(record_id)] = (
+                str(representative) if representative else None
+            )
+
+    exclusions: List[Dict[str, Any]] = []
+    for memory in merged_candidates:
+        record_id = str(memory.get("record_id") or "")
+        if record_id in selected_ids:
+            continue
+        summary = _debug_memory_summary(memory)
+        if record_id in compacted_ids:
+            summary.update(
+                {
+                    "reason_code": "exact_mirror_compacted",
+                    "reason": "同一条跨来源镜像已收敛到代表结果",
+                    "merged_into_record_id": representative_by_compacted.get(
+                        record_id
+                    ),
+                    "merged_into_position": selected_position_by_id.get(
+                        str(representative_by_compacted.get(record_id) or "")
+                    ),
+                }
+            )
+        else:
+            summary.update(
+                {
+                    "reason_code": "result_limit",
+                    "reason": "候选进入了召回池，但排在本次 Top-K 之外",
+                    "merged_into_record_id": None,
+                    "merged_into_position": None,
+                }
+            )
+        exclusions.append(summary)
+
+    pass_debug = []
+    for pass_name, result in pass_results:
+        item = copy.deepcopy(result.get("recall_debug_pass") or {})
+        if not item:
+            continue
+        item["pass"] = pass_name
+        pass_debug.append(item)
+
+    response["recall_debug"] = {
+        "schema_version": RECALL_DEBUG_SCHEMA_VERSION,
+        "query": query,
+        "engine": {
+            "path": "records_v1_adaptive_sqlite",
+            "ranking_contract": (
+                "deterministic lexical/intent tiers plus bounded adaptive "
+                "passes and support-unit selection"
+            ),
+            "legacy_weight_formula_used": False,
+            "legacy_weight_fields_not_used": [
+                "semantic_score",
+                "emotion",
+                "importance",
+                "decay",
+                "saga",
+            ],
+            "confidence_is_final_weight": False,
+        },
+        "passes": pass_debug,
+        "top_k": [
+            {
+                "position": position,
+                **_debug_memory_summary(memory),
+            }
+            for position, memory in enumerate(selected_memories, start=1)
+        ],
+        "exclusions": exclusions + [dict(item) for item in duplicate_occurrences],
+        "visibility_note": (
+            "identity/source visibility is applied in SQL before ranking; "
+            "hidden record bodies and identifiers are never exposed by debug"
+        ),
+    }
 
 
 def _merge_results(
@@ -1010,6 +1160,7 @@ def _merge_results(
     merged: List[Dict[str, Any]] = []
     by_id: Dict[str, Dict[str, Any]] = {}
     pass_modes: List[Dict[str, Any]] = []
+    duplicate_occurrences: List[Dict[str, Any]] = []
     for pass_name, response in ordered_passes:
         pass_modes.append(
             {
@@ -1038,6 +1189,15 @@ def _merge_results(
                     matches = existing.setdefault("adaptive_match_passes", [])
                     if pass_name not in matches:
                         matches.append(pass_name)
+                    duplicate_occurrences.append(
+                        {
+                            "record_id": record_id,
+                            "reason_code": "duplicate_across_passes",
+                            "reason": "同一记录已由更早的召回轮次收录",
+                            "duplicate_pass": pass_name,
+                            "kept_passes": list(matches),
+                        }
+                    )
                     continue
                 memory["adaptive_match_passes"] = [pass_name]
                 by_id[record_id] = memory
@@ -1080,6 +1240,13 @@ def _merge_results(
             "answers, embedded private-fact dictionary, or database writes"
         ),
     }
+    _attach_recall_debug(
+        first,
+        query=query,
+        pass_results=pass_results,
+        merged_candidates=merged,
+        duplicate_occurrences=duplicate_occurrences,
+    )
     # This is a rebuildable response annotation over all evidence gathered by
     # the bounded internal plan, including rows that do not fit the caller's
     # ordinary memory limit. It never mutates records_v1 or asserts that two
@@ -1111,6 +1278,7 @@ def adaptive_recall(
     include_projection: bool = True,
     reference_time_source: Optional[str] = None,
     speech_query_policy: Optional[SpeechQueryRescuePolicy] = None,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     """Return one bounded memory packet from a small internal recall plan."""
 
@@ -1166,6 +1334,7 @@ def adaptive_recall(
                 created_at_end_exclusive=created_at_end,
                 db_path=db_path,
                 read_only=read_only,
+                debug=debug,
             )
         return recall_records(
             pass_query,
@@ -1176,6 +1345,7 @@ def adaptive_recall(
             created_at_end_exclusive=created_at_end,
             db_path=db_path,
             read_only=read_only,
+            debug=debug,
         )
 
     first = run(query)

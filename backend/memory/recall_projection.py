@@ -164,6 +164,7 @@ def recall_with_projection(
     created_at_end_exclusive: Optional[str] = None,
     db_path: Optional[str] = None,
     read_only: bool = False,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     """Attach current-agent projection and adjudication views to V1 recall."""
     agent_id = _require_agent_id(agent_id)
@@ -183,6 +184,7 @@ def recall_with_projection(
         db_path=db_path,
         agent_id=agent_id,
         read_only=read_only,
+        debug=debug,
     )
 
     memories = base.get("memories", [])
