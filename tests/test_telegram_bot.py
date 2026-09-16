@@ -123,16 +123,58 @@ class FakeRecall:
             ],
             "recall_debug": {
                 "top_k": [
-                    {"record_id": "chatgpt-a", "source_channel": "chatgpt"},
-                    {"record_id": "codex-b", "source_channel": "codex_local"},
-                ]
+                    {
+                        "position": 1,
+                        "record_id": "chatgpt-a",
+                        "source_channel": "chatgpt",
+                        "confidence": 0.91,
+                        "confidence_basis": ["合成词面命中"],
+                        "adaptive_match_passes": ["initial"],
+                        "retrieval_debug": {
+                            "position_in_pass": 1,
+                            "lexical_rank": -2.0,
+                            "rank_semantics": "synthetic_lexical_rank",
+                        },
+                    },
+                    {
+                        "position": 2,
+                        "record_id": "codex-b",
+                        "source_channel": "codex_local",
+                        "confidence": 0.82,
+                        "confidence_basis": ["合成意图命中"],
+                        "adaptive_match_passes": ["intent_expansion"],
+                        "retrieval_debug": {
+                            "position_in_pass": 2,
+                            "lexical_rank": -1.0,
+                            "rank_semantics": "synthetic_lexical_rank",
+                        },
+                    },
+                ],
+                "passes": [
+                    {
+                        "pass": "initial",
+                        "query": query,
+                        "recall_mode": "sqlite_fts5_trigram",
+                        "candidate_count": 2,
+                    }
+                ],
+                "exclusions": [
+                    {
+                        "record_id": "outside-c",
+                        "source_channel": "chatgpt",
+                        "reason_code": "result_limit",
+                        "reason": "候选进入了召回池，但排在本次 Top-K 之外",
+                        "content_preview": "第三条未进入 Top-K 的合成记录",
+                    }
+                ],
             },
         }
 
 
 class FakeAnswerer:
-    def __init__(self, *, fail: bool = False):
+    def __init__(self, *, fail: bool = False, max_evidence_items: int = 1):
         self.fail = fail
+        self.max_evidence_items = max_evidence_items
 
     def answer(self, query: str, recall) -> str:
         if self.fail:
@@ -192,6 +234,34 @@ def test_allowed_text_gets_model_answer_and_model_failure_is_explicit(tmp_path):
     assert "GPT库1条、Codex库1条" in failed_telegram.sent[-1][1]
 
 
+def test_why_command_explains_exact_previous_recall_and_model_boundary(tmp_path):
+    bot, telegram, recall, _ = _bot(tmp_path, answerer=FakeAnswerer())
+
+    assert bot.handle_update(_update("Echo 为什么这样答？", update_id=20)) == "answered"
+    prior_message_count = len(telegram.sent)
+    assert bot.handle_update(_update("/why", update_id=21)) == "why_explained"
+
+    messages = telegram.sent[prior_message_count:]
+    rendered = "\n".join(message for _, message in messages)
+    assert recall.queries == ["Echo 为什么这样答？"]
+    assert "前 1 条进入脑袋输入" in rendered
+    assert "第 1 条｜GPT库｜脑袋看到" in rendered
+    assert "第 2 条｜Codex库｜未送脑袋" in rendered
+    assert "召回理由：合成词面命中" in rendered
+    assert "脑袋实际看到的原文：\n第一条 GPT 记忆" in rendered
+    assert "Echo 召回的原文：\n第二条 Codex 记忆" in rendered
+    assert "候选进入了召回池，但排在本次 Top-K 之外" in rendered
+    assert all(len(message) <= bot_runtime.TELEGRAM_MESSAGE_LIMIT for _, message in messages)
+
+
+def test_why_command_requires_a_previous_question(tmp_path):
+    bot, telegram, recall, _ = _bot(tmp_path, answerer=FakeAnswerer())
+
+    assert bot.handle_update(_update("/why")) == "no_why_context"
+    assert "先问我一条记忆问题" in telegram.sent[-1][1]
+    assert recall.queries == []
+
+
 def test_badcase_command_saves_last_dialogue_and_debug_packet(tmp_path):
     bot, telegram, _, bad_cases = _bot(tmp_path, answerer=FakeAnswerer())
     bot.handle_update(_update("这条为什么召回错了", update_id=10))
@@ -205,6 +275,7 @@ def test_badcase_command_saves_last_dialogue_and_debug_packet(tmp_path):
     packet = json.loads(files[0].read_text(encoding="utf-8"))
     assert packet["schema_version"] == "echo-pact-bad-case-v1"
     assert packet["note"] == "应该优先找到手腕那条"
+    assert packet["model_evidence_limit"] == 1
     assert packet["dialogue"][0]["content"] == "这条为什么召回错了"
     assert packet["recall"]["recall_debug"]["top_k"][0][
         "source_channel"

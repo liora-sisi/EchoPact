@@ -15,8 +15,15 @@ from urllib import request
 
 BAD_CASE_SCHEMA_VERSION = "echo-pact-bad-case-v1"
 TELEGRAM_MESSAGE_LIMIT = 4096
+TELEGRAM_SAFE_CHUNK_LIMIT = 3900
 MAX_EVIDENCE_CHARS_PER_ITEM = 1200
 MAX_FALLBACK_PREVIEW_CHARS = 72
+
+_SOURCE_LABELS = {
+    "chatgpt": "GPT库",
+    "codex_local": "Codex库",
+    "other": "其他来源",
+}
 
 
 class RecallClient(Protocol):
@@ -147,6 +154,12 @@ class OpenAICompatibleAnswerer:
         self._max_evidence_items = max_evidence_items
         self._timeout_seconds = timeout_seconds
 
+    @property
+    def max_evidence_items(self) -> int:
+        """Expose the configured evidence boundary without exposing credentials."""
+
+        return self._max_evidence_items
+
     def answer(self, query: str, recall: Mapping[str, Any]) -> str:
         evidence_lines = []
         debug_items = {
@@ -229,6 +242,7 @@ class Interaction:
     query: str
     answer: str
     model_status: str
+    model_evidence_limit: Optional[int]
     recall: Dict[str, Any]
 
 
@@ -269,6 +283,7 @@ class BadCaseStore:
                 "user_id": interaction.user_id,
             },
             "model_status": interaction.model_status,
+            "model_evidence_limit": interaction.model_evidence_limit,
             "recall": {
                 key: interaction.recall.get(key)
                 for key in (
@@ -315,15 +330,10 @@ def _diagnostic_footer(recall: Mapping[str, Any]) -> str:
     top_k = [
         item for item in debug.get("top_k") or [] if isinstance(item, Mapping)
     ]
-    labels = {
-        "chatgpt": "GPT库",
-        "codex_local": "Codex库",
-        "other": "其他来源",
-    }
     counts: Dict[str, int] = {}
     for item in top_k:
         channel = str(item.get("source_channel") or "other")
-        label = labels.get(channel, "其他来源")
+        label = _SOURCE_LABELS.get(channel, "其他来源")
         counts[label] = counts.get(label, 0) + 1
     source_summary = "、".join(
         f"{label}{counts[label]}条"
@@ -345,6 +355,212 @@ def _diagnostic_footer(recall: Mapping[str, Any]) -> str:
     ]
     excluded_summary = f"｜另有{len(exclusions)}条收起" if exclusions else ""
     return f"【召回说明】{source_summary}｜{query_summary}{excluded_summary}"
+
+
+def _joined_debug_values(value: object) -> str:
+    if not isinstance(value, list):
+        return "—"
+    items = [str(item).strip() for item in value if str(item).strip()]
+    return "、".join(items) if items else "—"
+
+
+def _bounded_mobile_content(content: object) -> tuple[str, bool]:
+    text = str(content or "")
+    if len(text) <= MAX_EVIDENCE_CHARS_PER_ITEM:
+        return text or "（空文本）", False
+    return text[:MAX_EVIDENCE_CHARS_PER_ITEM], True
+
+
+def _model_status_label(status: str) -> str:
+    return {
+        "ok": "脑袋已正常回答",
+        "failed": "证据已尝试送入脑袋，但模型调用失败",
+        "not_configured": "脑袋未配置，本轮只有 Echo 召回",
+    }.get(status, f"未知状态：{status}")
+
+
+def _pack_telegram_sections(sections: list[str]) -> list[str]:
+    """Pack bounded sections without relying on Telegram's silent truncation."""
+
+    packed: list[str] = []
+    current = ""
+    for raw_section in sections:
+        section = raw_section.strip()
+        while len(section) > TELEGRAM_SAFE_CHUNK_LIMIT:
+            head = section[:TELEGRAM_SAFE_CHUNK_LIMIT]
+            section = section[TELEGRAM_SAFE_CHUNK_LIMIT:]
+            if current:
+                packed.append(current)
+                current = ""
+            packed.append(head)
+        candidate = section if not current else current + "\n\n" + section
+        if len(candidate) <= TELEGRAM_SAFE_CHUNK_LIMIT:
+            current = candidate
+        else:
+            packed.append(current)
+            current = section
+    if current:
+        packed.append(current)
+    return packed or ["这一轮没有可展示的召回诊断。"]
+
+
+def render_mobile_recall_debug(interaction: Interaction) -> list[str]:
+    """Render the exact previous recall as a Telegram-friendly /why panel."""
+
+    recall = interaction.recall
+    debug = recall.get("recall_debug") or {}
+    top_k = [
+        item for item in debug.get("top_k") or [] if isinstance(item, Mapping)
+    ]
+    memories = [
+        item for item in recall.get("memories") or [] if isinstance(item, Mapping)
+    ]
+    memories_by_id = {
+        str(item.get("record_id") or ""): item
+        for item in memories
+        if item.get("record_id")
+    }
+    model_limit = interaction.model_evidence_limit or 0
+    sent_count = min(model_limit, len(memories))
+    if interaction.model_status == "not_configured":
+        sent_count = 0
+    sent_record_ids = {
+        str(item.get("record_id"))
+        for item in memories[:sent_count]
+        if item.get("record_id")
+    }
+
+    header_lines = [
+        "🔎 Echo｜上一问召回现场",
+        f"问题：{interaction.query}",
+        f"脑袋状态：{_model_status_label(interaction.model_status)}",
+        f"Echo 返回：{len(top_k)} 条；其中前 {sent_count} 条进入脑袋输入。",
+        (
+            "判读方法：正确原文根本没在下面，优先查 Echo；"
+            "正确原文已标“脑袋看到”却仍答错，优先查脑袋或提示词。"
+        ),
+        (
+            "口径：当前召回引擎没有统一加权总分；"
+            "每条最多展示脑袋实际可见的 1200 字。"
+        ),
+    ]
+
+    speech = recall.get("speech_query_rescue")
+    if isinstance(speech, Mapping):
+        candidates = [
+            item
+            for item in speech.get("candidates") or []
+            if isinstance(item, Mapping)
+        ]
+        if candidates:
+            header_lines.append(
+                "错字扩查："
+                + "；".join(
+                    f"{item.get('observed')} → {item.get('intended')}"
+                    for item in candidates
+                )
+            )
+        else:
+            header_lines.append(
+                "错字扩查：未触发（"
+                + str(speech.get("trigger_reason") or "无候补")
+                + "）"
+            )
+    else:
+        header_lines.append("错字扩查：本轮未加载私人映射。")
+
+    passes = [
+        item for item in debug.get("passes") or [] if isinstance(item, Mapping)
+    ]
+    if passes:
+        header_lines.append(
+            "实际查询轮次："
+            + "；".join(
+                f"{item.get('pass')}「{item.get('query') or '—'}」"
+                for item in passes
+            )
+        )
+
+    sections = ["\n".join(header_lines)]
+    provenance = recall.get("source_provenance") or {}
+    mirror_by_representative = {
+        str(group.get("representative_record_id")): group
+        for group in provenance.get("exact_cross_source_mirror_groups") or []
+        if isinstance(group, Mapping) and group.get("representative_record_id")
+    }
+
+    for index, debug_item in enumerate(top_k, start=1):
+        record_id = str(debug_item.get("record_id") or "")
+        memory = memories_by_id.get(record_id)
+        if memory is None and index <= len(memories):
+            memory = memories[index - 1]
+        memory = memory or {}
+        source = _SOURCE_LABELS.get(
+            str(debug_item.get("source_channel") or "other"), "其他来源"
+        )
+        brain_saw = record_id in sent_record_ids if record_id else index <= sent_count
+        brain_label = "脑袋看到" if brain_saw else "未送脑袋"
+        content, truncated = _bounded_mobile_content(memory.get("content"))
+        retrieval = debug_item.get("retrieval_debug") or {}
+        basis = _joined_debug_values(debug_item.get("confidence_basis"))
+        passes_text = _joined_debug_values(debug_item.get("adaptive_match_passes"))
+        section_lines = [
+            f"【第 {index} 条｜{source}｜{brain_label}】",
+            f"时间：{memory.get('created_at') or debug_item.get('created_at') or '—'}",
+            f"角色：{memory.get('role') or debug_item.get('role') or '—'}",
+            f"记录：{record_id or '—'}",
+            f"证据分：{debug_item.get('confidence')}（证据质量参考，不是最终权重）",
+            f"召回理由：{basis}",
+            f"命中轮次：{passes_text}",
+        ]
+        if isinstance(retrieval, Mapping) and retrieval:
+            section_lines.append(
+                "排序线索："
+                f"本轮第 {retrieval.get('position_in_pass') or index} 名；"
+                f"词面序值 {retrieval.get('lexical_rank')}；"
+                f"口径 {retrieval.get('rank_semantics') or '—'}"
+            )
+        mirror = mirror_by_representative.get(record_id)
+        if mirror:
+            section_lines.append(
+                "镜像收敛：另有 "
+                f"{len(mirror.get('compacted_record_ids') or [])} 条镜像并入本条。"
+            )
+        content_label = (
+            "脑袋实际看到的原文"
+            if brain_saw
+            else "Echo 召回的原文"
+        )
+        section_lines.extend([f"{content_label}：", content])
+        if truncated:
+            section_lines.append(
+                "…【这条超过 1200 字；脑袋和手机面板都只看到上面这一段】"
+            )
+        sections.append("\n".join(section_lines))
+
+    exclusions = [
+        item for item in debug.get("exclusions") or [] if isinstance(item, Mapping)
+    ]
+    exclusion_lines = ["【被收起的候选】"]
+    if not exclusions:
+        exclusion_lines.append("本轮没有可展示的 Top-K 或镜像剔除项。")
+    for item in exclusions:
+        source = _SOURCE_LABELS.get(
+            str(item.get("source_channel") or "other"), "其他来源"
+        )
+        merged_position = item.get("merged_into_position")
+        suffix = f"，并入第 {merged_position} 条" if merged_position else ""
+        exclusion_lines.append(
+            f"- {source}｜{item.get('reason') or item.get('reason_code') or '—'}{suffix}"
+        )
+        preview = str(item.get("content_preview") or "").strip()
+        if preview:
+            exclusion_lines.append(f"  原文预览：{preview}")
+    sections.append("\n".join(exclusion_lines))
+    sections.append(
+        "看完后：答案有问题就发 /badcase；不记错题也不会改动 Echo 数据库。"
+    )
+    return _pack_telegram_sections(sections)
 
 
 class EchoTelegramBot:
@@ -402,9 +618,20 @@ class EchoTelegramBot:
         if text == "/start":
             self.telegram.send_message(
                 chat_id,
-                "直接发一条记忆问题就行；结果不对时再发 /badcase 收进本地错题本。",
+                "直接发一条记忆问题就行；发 /why 查上一问的召回现场，"
+                "结果不对时再发 /badcase 收进错题本。",
             )
             return "helped"
+        if text == "/why" or text.startswith("/why "):
+            interaction = self._last_interaction.get(chat_id)
+            if interaction is None:
+                self.telegram.send_message(
+                    chat_id, "这一轮还没有可展开的召回；先问我一条记忆问题。"
+                )
+                return "no_why_context"
+            for message in render_mobile_recall_debug(interaction):
+                self.telegram.send_message(chat_id, message)
+            return "why_explained"
         if text.startswith("/badcase"):
             interaction = self._last_interaction.get(chat_id)
             if interaction is None:
@@ -453,6 +680,12 @@ class EchoTelegramBot:
             query=text,
             answer=answer,
             model_status=model_status,
+            model_evidence_limit=(
+                int(getattr(self.answerer, "max_evidence_items"))
+                if self.answerer is not None
+                and isinstance(getattr(self.answerer, "max_evidence_items", None), int)
+                else None
+            ),
             recall=dict(recall),
         )
         return "answered"

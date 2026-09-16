@@ -60,6 +60,30 @@ channel counts, whether M8 candidate expansion ran, and how many bounded
 records were hidden by Top-K or exact-mirror compaction. This keeps everyday
 phone testing inspectable without copying the full CLI panel into Telegram.
 
+## Inspect the previous answer
+
+After any answered question, send:
+
+```text
+/why
+```
+
+The bot renders the already-captured previous recall; it does not recall again
+and it does not call the model again. The phone panel shows the question, model
+status, M8 candidates, actual recall passes, GPT/Codex source labels, evidence
+basis, rank metadata, exact-mirror compaction, Top-K exclusions and the record
+text. Each result is explicitly labelled either `脑袋看到` or `未送脑袋`,
+using the configured external-model evidence limit. This is the boundary needed
+to distinguish a retrieval miss from a model synthesis error.
+
+For privacy and fidelity, the panel displays at most the same 1200 characters
+per record that the model could receive. A longer record is visibly marked as
+truncated; `/badcase` still preserves the bounded recall packet. Long panels are
+split into multiple Telegram messages below the platform message limit. Like
+ordinary replies, this deliberately sends private recalled text through the
+configured private Telegram chat and remains protected by the user-ID and
+private-chat whitelist.
+
 ## Bad cases
 
 After any answered question, send:
@@ -69,10 +93,11 @@ After any answered question, send:
 ```
 
 An optional note may follow the command. The bot writes one atomic JSON packet
-containing the last user question, bot answer, model status, bounded recalled
-records, source provenance, M8 trace and the M14 debug structure. The configured
-directory must be outside the Git repository; the packet never contains bot or
-model credentials. The Echo database remains byte-for-byte unchanged.
+containing the last user question, bot answer, model status, model evidence
+limit, bounded recalled records, source provenance, M8 trace and the M14 debug
+structure. The configured directory must be outside the Git repository; the
+packet never contains bot or model credentials. The Echo database remains
+byte-for-byte unchanged.
 
 ## Configuration and start
 
