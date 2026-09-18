@@ -29,6 +29,15 @@ OWNER = "agt-telegram-bot-owner"
 ALLOWED = 778899
 
 
+def test_mobile_source_label_distinguishes_browser_capture():
+    assert bot_runtime._detailed_source_label(
+        {
+            "source_channel": "chatgpt",
+            "source_kind": "guijian-browser-capture-v1",
+        }
+    ) == "GPT库（浏览器抓取）"
+
+
 def _record(record_id: str, source_kind: str, content: str) -> dict:
     authority = (
         "codex-local-unverified-archive"

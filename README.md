@@ -392,6 +392,24 @@ dry-run 校验格式、版本、schema、`SHA-256(JSON.stringify(data))`、分�
 详细协议证据、分支派生规则和安全拒绝条件见
 [`docs/ROOM_FERRY_V1_ADAPTER.md`](docs/ROOM_FERRY_V1_ADAPTER.md)。
 
+### 归笺浏览器抓取适配器
+
+当 ChatGPT 官方导出暂时不可用时，可以把归笺生成的单房间
+`web-memory-ferry/export-v1` JSON 先接成一块明确标为临时来源的 GPT 柜子：
+
+```bash
+python scripts/adapt_guijian.py GUIJIAN_ROOM.json --dry-run
+python scripts/adapt_guijian.py GUIJIAN_ROOM.json --output RECORDS_V2.json
+```
+
+适配器会交叉核对 raw 与 normalized 两层指纹、整房顺序哈希、到顶/静稳证据、
+缺口与角色警告；重复正文保留为不同消息，不按内容全局去重。助手正文首行严格的
+成都时间可以作为分钟级直接证据，无时间的前置消息只使用下一枚自写时间或采集
+时刻作为“上界”，不会冒充官方原始时间。所有记录保持 `verified=false`，调试
+面板显示为“GPT库（浏览器抓取）”，且在单独会审前不参加 M12 自动镜像收敛。
+官方包日后到达也不会静默覆盖这块临时柜子。完整边界见
+[`docs/GUIJIAN_V1_ADAPTER.md`](docs/GUIJIAN_V1_ADAPTER.md)。
+
 ### Codex 本地对话适配器
 
 `codex-rollout-v1` 通过 Codex 官方 app-server 的只读 `thread/read` 路径，

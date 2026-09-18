@@ -24,8 +24,17 @@ MIN_MIRROR_DISTINCTIVE_CHARS = 12
 
 _SOURCE_CHANNELS = {
     "room-ferry-backup-v1": "chatgpt",
+    "guijian-browser-capture-v1": "chatgpt",
     "codex-app-server-v1": "codex_local",
 }
+
+# Exact-mirror compaction was reviewed only for the official-package adapter
+# and the local Codex adapter.  GuiJian records belong to the ChatGPT channel
+# for recall scoping, but their approximate time evidence is not yet strong
+# enough for automatic cross-source identity claims.
+_EXACT_MIRROR_SOURCE_KINDS = frozenset(
+    {"room-ferry-backup-v1", "codex-app-server-v1"}
+)
 
 
 def _source_channel(source_kind: str) -> str:
@@ -142,7 +151,7 @@ def _exact_mirror_groups(
     buckets: Dict[tuple[str, str], list[tuple[datetime, Mapping[str, Any]]]] = {}
     for memory in memories:
         source_kind = str(memory.get("source_kind") or "")
-        if source_kind not in _SOURCE_CHANNELS:
+        if source_kind not in _EXACT_MIRROR_SOURCE_KINDS:
             continue
         content = _normalized_content(memory.get("content"))
         role = str(memory.get("role") or "").strip().casefold()

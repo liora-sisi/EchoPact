@@ -133,6 +133,27 @@ def test_generic_or_merely_similar_records_are_never_auto_mirrored():
     )
 
 
+def test_guijian_is_in_chatgpt_scope_but_not_auto_mirror_eligible():
+    annotation = build_source_provenance(
+        [
+            _memory(
+                "guijian-observation",
+                source_kind="guijian-browser-capture-v1",
+                created_at="2026-09-01T01:02:03Z",
+            ),
+            _memory(
+                "codex-message",
+                source_kind="codex-app-server-v1",
+                created_at="2026-09-01T01:02:03Z",
+            ),
+        ]
+    )
+
+    assert annotation["source_channels"] == ["chatgpt", "codex_local"]
+    assert annotation["exact_cross_source_mirror_groups"] == []
+    assert annotation["status"] == "multiple_sources_without_exact_mirror_candidates"
+
+
 def test_source_provenance_is_deterministic():
     memories = [
         _memory(

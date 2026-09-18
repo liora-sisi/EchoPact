@@ -10,9 +10,10 @@ second retriever and it does not change the normal MCP response schema.
   caller-owned policy is loaded;
 - each adaptive pass, its query, recall mode, caller-derived plan and bounded
   candidate count;
-- Top-K records with `GPT库`, `Codex库`, or `其他来源` labels, evidence
-  confidence and its documented basis, lexical/intent rank metadata, and the
-  passes that found the record;
+- Top-K records with source labels including `GPT库（官方数据包）`,
+  `GPT库（浏览器抓取）`, `Codex库`, or `其他来源`, evidence confidence and
+  its documented basis, lexical/intent rank metadata, and the passes that
+  found the record;
 - M12 exact-mirror compaction, including the representative record and the
   number of compacted counterparts;
 - candidates omitted by the public support-unit limit and duplicate records
@@ -68,4 +69,3 @@ The CLI always calls the gateway with SQLite `mode=ro` and `PRAGMA query_only`.
 It never runs a migration. `bad_cases/` is ignored defensively, but the future
 Telegram collector must store real cases in a private directory outside the
 repository rather than relying on the ignored repository path.
-

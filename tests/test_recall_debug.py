@@ -172,6 +172,38 @@ def test_debug_panel_shows_original_and_m8_candidate_query(tmp_path):
     assert "Codex库" in rendered
 
 
+def test_debug_panel_distinguishes_official_and_browser_chatgpt_sources(tmp_path):
+    db_path = _database(
+        tmp_path,
+        [
+            _record(
+                "official-gpt",
+                source_kind="room-ferry-backup-v1",
+                content="M14-SOURCE-7711 官方数据包中的合成记录。",
+                created_at="2026-09-15T03:00:00Z",
+            ),
+            _record(
+                "browser-gpt",
+                source_kind="guijian-browser-capture-v1",
+                content="M14-SOURCE-7711 浏览器抓取中的合成记录。",
+                created_at="2026-09-15T03:01:00Z",
+            ),
+        ],
+    )
+
+    response = run_recall_debug(
+        "M14-SOURCE-7711",
+        db_path=str(db_path),
+        agent_id=OWNER,
+        limit=2,
+        include_projection=False,
+    )
+    rendered = render_recall_debug(response)
+
+    assert "GPT库（官方数据包）" in rendered
+    assert "GPT库（浏览器抓取）" in rendered
+
+
 def test_normal_gateway_never_exposes_local_debug_trace(tmp_path):
     db_path = _database(
         tmp_path,

@@ -60,6 +60,12 @@ an identical message captured later than the window and a short generic reply
 remain separate. A future source adapter must receive an explicit mirror-policy
 review before being added to the known-source allowlist.
 
+`guijian-browser-capture-v1` is classified under the `chatgpt` channel so it can
+participate in ordinary scoped recall, but it is not in that exact-mirror
+allowlist. Its direct self-stamps and conservative upper bounds are not
+interchangeable with official source timestamps. GuiJian/official or
+GuiJian/Codex reconciliation therefore remains explicit future work.
+
 ## Source separation and shared recall
 
 Room Ferry and Codex adapters continue to emit different `source_kind`,

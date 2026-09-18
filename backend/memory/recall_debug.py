@@ -19,6 +19,11 @@ _SOURCE_LABELS = {
     "codex_local": "Codex库",
     "other": "其他来源",
 }
+_SOURCE_KIND_LABELS = {
+    "room-ferry-backup-v1": "GPT库（官方数据包）",
+    "guijian-browser-capture-v1": "GPT库（浏览器抓取）",
+    "codex-app-server-v1": "Codex库",
+}
 
 
 def load_speech_query_policy(path: str) -> SpeechQueryRescuePolicy:
@@ -80,7 +85,10 @@ def run_recall_debug(
     return response
 
 
-def _source_label(channel: object) -> str:
+def _source_label(channel: object, source_kind: object = None) -> str:
+    kind_label = _SOURCE_KIND_LABELS.get(str(source_kind or ""))
+    if kind_label:
+        return kind_label
     return _SOURCE_LABELS.get(str(channel or "other"), "其他来源")
 
 
@@ -161,7 +169,8 @@ def render_recall_debug(response: Mapping[str, Any]) -> str:
     for item in top_k:
         retrieval = item.get("retrieval_debug") or {}
         lines.append(
-            f"[{item.get('position')}] {_source_label(item.get('source_channel'))}｜"
+            f"[{item.get('position')}] "
+            f"{_source_label(item.get('source_channel'), item.get('source_kind'))}｜"
             f"{item.get('record_id')}｜证据分 {item.get('confidence')}"
         )
         lines.append(
@@ -199,7 +208,7 @@ def render_recall_debug(response: Mapping[str, Any]) -> str:
         else:
             lines.append("- 本次没有记录被 Top-K 或镜像规则剔除。")
     for item in exclusions:
-        source = _source_label(item.get("source_channel"))
+        source = _source_label(item.get("source_channel"), item.get("source_kind"))
         record_id = item.get("record_id") or "同记录重复命中"
         target = item.get("merged_into_record_id")
         target_position = item.get("merged_into_position")

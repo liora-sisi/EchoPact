@@ -24,6 +24,19 @@ _SOURCE_LABELS = {
     "codex_local": "Codex库",
     "other": "其他来源",
 }
+_SOURCE_KIND_LABELS = {
+    "room-ferry-backup-v1": "GPT库（官方数据包）",
+    "guijian-browser-capture-v1": "GPT库（浏览器抓取）",
+    "codex-app-server-v1": "Codex库",
+}
+
+
+def _detailed_source_label(item: Mapping[str, Any]) -> str:
+    source_kind = str(item.get("source_kind") or "")
+    if source_kind in _SOURCE_KIND_LABELS:
+        return _SOURCE_KIND_LABELS[source_kind]
+    channel = str(item.get("source_channel") or "other")
+    return _SOURCE_LABELS.get(channel, "其他来源")
 
 
 class RecallClient(Protocol):
@@ -495,9 +508,7 @@ def render_mobile_recall_debug(interaction: Interaction) -> list[str]:
         if memory is None and index <= len(memories):
             memory = memories[index - 1]
         memory = memory or {}
-        source = _SOURCE_LABELS.get(
-            str(debug_item.get("source_channel") or "other"), "其他来源"
-        )
+        source = _detailed_source_label(debug_item)
         brain_saw = record_id in sent_record_ids if record_id else index <= sent_count
         brain_label = "脑袋看到" if brain_saw else "未送脑袋"
         content, truncated = _bounded_mobile_content(memory.get("content"))
@@ -545,9 +556,7 @@ def render_mobile_recall_debug(interaction: Interaction) -> list[str]:
     if not exclusions:
         exclusion_lines.append("本轮没有可展示的 Top-K 或镜像剔除项。")
     for item in exclusions:
-        source = _SOURCE_LABELS.get(
-            str(item.get("source_channel") or "other"), "其他来源"
-        )
+        source = _detailed_source_label(item)
         merged_position = item.get("merged_into_position")
         suffix = f"，并入第 {merged_position} 条" if merged_position else ""
         exclusion_lines.append(
