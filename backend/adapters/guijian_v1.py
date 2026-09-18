@@ -231,6 +231,7 @@ def _blank_report(input_sha256: Optional[str] = None) -> Dict[str, Any]:
         "exported_at": None,
         "counts": {
             "normalized_messages": 0,
+            "selected_messages": 0,
             "raw_segments": 0,
             "raw_observations": 0,
             "repeated_content_hash_groups": 0,
@@ -241,10 +242,20 @@ def _blank_report(input_sha256: Optional[str] = None) -> Dict[str, Any]:
             "effective_top_confirmed": None,
             "top_confirmation_basis": None,
             "top_witness": None,
+            "manual_top_attestation": None,
             "dom_quiet_confirmed": None,
             "absolute_completeness_proven": None,
             "gap_count": 0,
             "role_warnings": None,
+        },
+        "capture_repair": {
+            "requested": False,
+            "applied": False,
+            "kind": None,
+            "selected_segment_index": None,
+            "input_observations": 0,
+            "selected_observations": 0,
+            "redundant_observations_ignored": 0,
         },
         "time_evidence": {
             "platform_time": 0,
@@ -282,13 +293,51 @@ def _render_content(content: str, thinking: str) -> str:
     return f"{content}\n\n[归笺可见思考区]\n{thinking}"
 
 
+def _is_ordered_subsequence(needle: Sequence[str], haystack: Sequence[str]) -> bool:
+    if len(needle) > len(haystack):
+        return False
+    offset = 0
+    for value in haystack:
+        if offset < len(needle) and value == needle[offset]:
+            offset += 1
+    return offset == len(needle)
+
+
+def _dominant_segment_index(segment_hashes: Sequence[Sequence[str]]) -> Optional[int]:
+    """Return one segment that order-preservingly contains every other segment."""
+
+    candidates = [
+        index
+        for index, candidate in enumerate(segment_hashes)
+        if all(
+            _is_ordered_subsequence(other, candidate)
+            for other in segment_hashes
+        )
+    ]
+    if not candidates:
+        return None
+    longest = max(len(segment_hashes[index]) for index in candidates)
+    winners = [
+        index for index in candidates if len(segment_hashes[index]) == longest
+    ]
+    first = segment_hashes[winners[0]]
+    if any(list(segment_hashes[index]) != list(first) for index in winners[1:]):
+        return None
+    return winners[0]
+
+
 def inspect_guijian_export(
-    path: str, *, top_witness_path: Optional[str] = None
+    path: str,
+    *,
+    top_witness_path: Optional[str] = None,
+    manual_top_attestation: bool = False,
+    repair_redundant_segments: bool = False,
 ) -> GuijianInspection:
     """Validate one single-room GuiJian export without writing anything."""
 
     raw, input_sha256 = _load_input(path)
     report = _blank_report(input_sha256)
+    report["capture_repair"]["requested"] = repair_redundant_segments
     issues = _Issues()
     try:
         payload = _parse_json(raw)
@@ -443,20 +492,19 @@ def inspect_guijian_export(
         gaps = []
     capture["gap_count"] = len(gaps)
     capture["role_warnings"] = evidence.get("roleWarnings")
-    needs_top_witness = evidence.get("topConfirmed") is not True
-    if not needs_top_witness:
+    needs_external_top_confirmation = evidence.get("topConfirmed") is not True
+    if top_witness_path is not None and manual_top_attestation:
+        issues.fail(
+            "multiple-top-confirmation-overrides",
+            "Choose either a prior top witness or a manual top attestation",
+        )
+    if not needs_external_top_confirmation:
         capture["effective_top_confirmed"] = True
         capture["top_confirmation_basis"] = "current-capture"
-    elif top_witness_path is None:
+    elif top_witness_path is None and not manual_top_attestation:
         issues.fail("top-not-confirmed", "Capture did not prove it reached the visible top")
     if evidence.get("domQuietConfirmed") is not True:
         issues.fail("dom-not-quiet", "Capture did not reach a stable visible DOM")
-    if gaps:
-        issues.fail(
-            "capture-has-gaps",
-            "Disjoint capture segments must be repaired before formal conversion",
-            len(gaps),
-        )
     if evidence.get("roleWarnings") != 0:
         issues.fail("role-warnings", "Capture contains unresolved role warnings")
     if evidence.get("segmentCount") != len(raw_segments):
@@ -576,7 +624,87 @@ def inspect_guijian_export(
                 "Raw observation fingerprints must match normalized message order",
             )
 
-    if needs_top_witness and top_witness_path is not None:
+    selected_candidates = candidates
+    selected_content_hashes = content_hashes
+    segment_hashes = [
+        [
+            observation.get("fingerprint")
+            for observation in segment
+            if isinstance(observation, dict)
+        ]
+        for segment in raw_segments
+        if isinstance(segment, list)
+    ]
+    repair_applied = False
+    if repair_redundant_segments and len(segment_hashes) > 1:
+        selected_segment = _dominant_segment_index(segment_hashes)
+        if selected_segment is None:
+            issues.fail(
+                "redundant-segment-repair-not-provable",
+                "No single raw segment order-preservingly contains every other segment",
+            )
+        else:
+            chosen = [
+                item
+                for item in candidates
+                if item["segment_index"] == selected_segment
+            ]
+            chosen_hashes = [item["content_hash"] for item in chosen]
+            if chosen_hashes != segment_hashes[selected_segment]:
+                issues.fail(
+                    "selected-segment-normalization-mismatch",
+                    "The selected raw segment does not match its normalized messages",
+                )
+            else:
+                selected_candidates = []
+                for ordinal, item in enumerate(chosen):
+                    selected = dict(item)
+                    selected["index"] = ordinal
+                    selected_candidates.append(selected)
+                selected_content_hashes = chosen_hashes
+                repair_applied = True
+                repair = report["capture_repair"]
+                repair.update(
+                    {
+                        "applied": True,
+                        "kind": "dominant-ordered-superset-segment",
+                        "selected_segment_index": selected_segment,
+                        "input_observations": len(content_hashes),
+                        "selected_observations": len(chosen_hashes),
+                        "redundant_observations_ignored": (
+                            len(content_hashes) - len(chosen_hashes)
+                        ),
+                    }
+                )
+                issues.warning(
+                    "redundant-segments-repaired",
+                    "A dominant ordered-superset segment replaced redundant captures",
+                )
+    if gaps and not repair_applied:
+        issues.fail(
+            "capture-has-gaps",
+            "Disjoint capture segments must be repaired before formal conversion",
+            len(gaps),
+        )
+
+    report["counts"]["selected_messages"] = len(selected_candidates)
+
+    if needs_external_top_confirmation and manual_top_attestation:
+        if not selected_content_hashes:
+            issues.fail(
+                "manual-top-attestation-has-no-anchor",
+                "Manual top attestation requires a validated first message fingerprint",
+            )
+        else:
+            capture["effective_top_confirmed"] = True
+            capture["top_confirmation_basis"] = "manual-visible-top-attestation"
+            capture["manual_top_attestation"] = {
+                "kind": "human-observed-visible-top-and-recognized-first-message",
+                "input_sha256": input_sha256,
+                "first_message_content_hash": selected_content_hashes[0],
+            }
+
+    if needs_external_top_confirmation and top_witness_path is not None:
         try:
             witness = inspect_guijian_export(top_witness_path)
         except (GuijianAdapterError, OSError):
@@ -631,11 +759,11 @@ def inspect_guijian_export(
                     if isinstance(item, dict)
                 ]
                 matching_prefix = 0
-                prefix_limit = min(len(witness_hashes), len(content_hashes))
+                prefix_limit = min(len(witness_hashes), len(selected_content_hashes))
                 while (
                     matching_prefix < prefix_limit
                     and witness_hashes[matching_prefix]
-                    == content_hashes[matching_prefix]
+                    == selected_content_hashes[matching_prefix]
                 ):
                     matching_prefix += 1
                 if matching_prefix < MIN_TOP_WITNESS_PREFIX_MESSAGES:
@@ -652,7 +780,7 @@ def inspect_guijian_export(
                     }
 
     hash_counts: Dict[str, int] = {}
-    for value in content_hashes:
+    for value in selected_content_hashes:
         hash_counts[value] = hash_counts.get(value, 0) + 1
     repeated = [count for count in hash_counts.values() if count > 1]
     report["counts"]["repeated_content_hash_groups"] = len(repeated)
@@ -666,7 +794,7 @@ def inspect_guijian_export(
 
     direct = [
         (item["index"], item["direct_time"])
-        for item in candidates
+        for item in selected_candidates
         if item["direct_time"] is not None
     ]
     for (_, prior), (_, current) in zip(direct, direct[1:]):
@@ -679,7 +807,7 @@ def inspect_guijian_export(
     direct_indexes = [item[0] for item in direct]
     direct_by_index = {item[0]: item[1] for item in direct}
     messages: List[GuijianMessage] = []
-    for item in candidates:
+    for item in selected_candidates:
         created_at = item["direct_time"]
         basis = item["direct_basis"]
         precision = "minute" if basis == "content-self-stamp-minute" else "instant"
@@ -725,9 +853,18 @@ def inspect_guijian_export(
 
 
 def dry_run_guijian_export(
-    path: str, *, top_witness_path: Optional[str] = None
+    path: str,
+    *,
+    top_witness_path: Optional[str] = None,
+    manual_top_attestation: bool = False,
+    repair_redundant_segments: bool = False,
 ) -> Dict[str, Any]:
-    return inspect_guijian_export(path, top_witness_path=top_witness_path).report
+    return inspect_guijian_export(
+        path,
+        top_witness_path=top_witness_path,
+        manual_top_attestation=manual_top_attestation,
+        repair_redundant_segments=repair_redundant_segments,
+    ).report
 
 
 def _source_ref(
@@ -759,11 +896,20 @@ def _authority_for_time_basis(time_basis: str) -> str:
 
 
 def convert_guijian_export(
-    path: str, *, top_witness_path: Optional[str] = None
+    path: str,
+    *,
+    top_witness_path: Optional[str] = None,
+    manual_top_attestation: bool = False,
+    repair_redundant_segments: bool = False,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Return a deterministic compact record package and redacted dry-run."""
 
-    inspection = inspect_guijian_export(path, top_witness_path=top_witness_path)
+    inspection = inspect_guijian_export(
+        path,
+        top_witness_path=top_witness_path,
+        manual_top_attestation=manual_top_attestation,
+        repair_redundant_segments=repair_redundant_segments,
+    )
     report = inspection.report
     payload = inspection.payload
     if not report["can_convert"] or payload is None:
@@ -819,6 +965,7 @@ def convert_guijian_export(
             "verification": "unverified-browser-observation",
             "time_evidence": dict(report["time_evidence"]),
             "top_confirmation": dict(report["capture_evidence"]),
+            "capture_repair": dict(report["capture_repair"]),
         },
         "records": records,
     }
@@ -846,6 +993,8 @@ def write_converted_package(
     output_path: str,
     *,
     top_witness_path: Optional[str] = None,
+    manual_top_attestation: bool = False,
+    repair_redundant_segments: bool = False,
 ) -> Dict[str, Any]:
     """Atomically create one formal compact package without overwriting."""
 
@@ -857,7 +1006,10 @@ def write_converted_package(
             f"conversion output parent does not exist: {destination.parent}"
         )
     package, report = convert_guijian_export(
-        path, top_witness_path=top_witness_path
+        path,
+        top_witness_path=top_witness_path,
+        manual_top_attestation=manual_top_attestation,
+        repair_redundant_segments=repair_redundant_segments,
     )
     output_bytes = serialize_record_package(package)
     temporary_name: Optional[str] = None

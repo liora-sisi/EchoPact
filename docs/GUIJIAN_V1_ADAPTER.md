@@ -39,6 +39,20 @@ message fingerprints with the new capture. This historical witness can satisfy
 only the top boundary; none of its messages, gaps, or timestamps are copied
 into the new package.
 
+When the capture operator directly observed the visible top and recognized the
+first message, `--attest-visible-top` records that evidence instead of
+pretending GuiJian set `topConfirmed`. The attestation is bound to the exact
+input SHA-256 and first selected message fingerprint, contains no message text,
+and remains visibly distinct from automatic or historical-witness evidence.
+
+Some virtualized pages can produce multiple capture segments even when one
+later segment is a complete ordered superset of every earlier segment. The
+explicit `--repair-redundant-segments` option accepts this case only when one
+raw segment provably contains all other fingerprint sequences in order and its
+normalized messages match exactly. The package records the selected segment
+and discarded observation counts. This is segment-level evidence repair, not
+global content deduplication; ambiguous or complementary segments still fail.
+
 ## Time evidence
 
 The adapter uses this precedence for `created_at`:
@@ -81,6 +95,15 @@ With an explicitly selected historical top witness:
 ```powershell
 python scripts/adapt_guijian.py GUIJIAN_ROOM.json `
   --top-witness OLDER_SAME_ROOM.json `
+  --dry-run
+```
+
+With direct visible-top review and a provable redundant-segment repair:
+
+```powershell
+python scripts/adapt_guijian.py GUIJIAN_ROOM.json `
+  --attest-visible-top `
+  --repair-redundant-segments `
   --dry-run
 ```
 

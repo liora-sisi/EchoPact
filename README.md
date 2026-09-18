@@ -410,6 +410,10 @@ python scripts/adapt_guijian.py GUIJIAN_ROOM.json --output RECORDS_V2.json
 官方包日后到达也不会静默覆盖这块临时柜子。完整边界见
 [`docs/GUIJIAN_V1_ADAPTER.md`](docs/GUIJIAN_V1_ADAPTER.md)。
 
+归笺未自动确认到顶、但采集者已经亲眼核对首条消息时，可显式记录绑定输入与首条
+指纹的人工到顶见证；多个采集段只有在其中一段按顺序完整包含其余所有段时，才可
+显式收敛为该完整超集段。两种例外都会写入转换来源元数据，不会静默放宽门槛。
+
 ### Codex 本地对话适配器
 
 `codex-rollout-v1` 通过 Codex 官方 app-server 的只读 `thread/read` 路径，

@@ -269,6 +269,90 @@ def test_top_witness_from_another_room_fails_closed(tmp_path):
     assert "top-witness-room-mismatch" in _issue_codes(report, "fatal")
 
 
+def test_manual_visible_top_attestation_is_bound_to_input_and_first_hash(tmp_path):
+    payload = _payload()
+    payload["manifest"]["evidence"]["topConfirmed"] = False
+    input_path = _write(tmp_path / "manual-top.json", payload)
+
+    report = dry_run_guijian_export(
+        str(input_path), manual_top_attestation=True
+    )
+
+    assert report["can_convert"] is True
+    capture = report["capture_evidence"]
+    assert capture["effective_top_confirmed"] is True
+    assert capture["top_confirmation_basis"] == "manual-visible-top-attestation"
+    assert capture["manual_top_attestation"] == {
+        "kind": "human-observed-visible-top-and-recognized-first-message",
+        "input_sha256": hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        "first_message_content_hash": payload["normalized"][0]["contentHash"],
+    }
+    assert payload["normalized"][0]["content"] not in json.dumps(
+        report, ensure_ascii=False
+    )
+
+
+def test_dominant_ordered_superset_segment_can_replace_redundant_capture(tmp_path):
+    base_contents = [f"合成顺序消息 {index}" for index in range(6)]
+    segment_zero = [
+        _message(
+            index,
+            "user",
+            content,
+            observed_at=f"2026-09-18T02:00:{index:02d}.000Z",
+            segment_index=0,
+        )
+        for index, content in enumerate(base_contents)
+    ]
+    superset_contents = base_contents[:3] + ["合成插入消息 A"] + base_contents[3:]
+    superset_contents.append("合成插入消息 B")
+    segment_one = [
+        _message(
+            len(segment_zero) + index,
+            "user",
+            content,
+            observed_at=f"2026-09-18T02:01:{index:02d}.000Z",
+            segment_index=1,
+        )
+        for index, content in enumerate(superset_contents)
+    ]
+    flattened = segment_zero + segment_one
+    payload = _payload(flattened)
+    payload["raw"]["segments"] = [
+        [{"fingerprint": item["contentHash"]} for item in segment_zero],
+        [{"fingerprint": item["contentHash"]} for item in segment_one],
+    ]
+    payload["manifest"]["evidence"]["segmentCount"] = 2
+    payload["manifest"]["evidence"]["gaps"] = [
+        {"beforeSegment": 1, "reason": "synthetic-no-overlap"}
+    ]
+
+    input_path = _write(tmp_path / "redundant-segments.json", payload)
+    refused = dry_run_guijian_export(str(input_path))
+    package, repaired = convert_guijian_export(
+        str(input_path), repair_redundant_segments=True
+    )
+
+    assert refused["can_convert"] is False
+    assert "capture-has-gaps" in _issue_codes(refused, "fatal")
+    assert repaired["can_convert"] is True
+    assert repaired["counts"]["normalized_messages"] == 14
+    assert repaired["counts"]["selected_messages"] == 8
+    assert repaired["capture_repair"] == {
+        "requested": True,
+        "applied": True,
+        "kind": "dominant-ordered-superset-segment",
+        "selected_segment_index": 1,
+        "input_observations": 14,
+        "selected_observations": 8,
+        "redundant_observations_ignored": 6,
+    }
+    assert len(package["records"]) == 8
+    assert [item["content"] for item in package["records"]] == superset_contents
+    assert all("segment=1" in item["source_ref"] for item in package["records"])
+    assert package["source"]["capture_repair"] == repaired["capture_repair"]
+
+
 def test_content_or_sequence_tampering_fails_closed(tmp_path):
     content_payload = _payload()
     content_payload["normalized"][0]["content"] = "被篡改的正文"

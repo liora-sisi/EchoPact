@@ -29,11 +29,28 @@ def _parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("input", help="one GuiJian single-room JSON export")
-    parser.add_argument(
+    top_confirmation = parser.add_mutually_exclusive_group()
+    top_confirmation.add_argument(
         "--top-witness",
         help=(
             "optional older same-room export that confirmed the visible top; "
             "used only to validate a matching leading fingerprint sequence"
+        ),
+    )
+    top_confirmation.add_argument(
+        "--attest-visible-top",
+        action="store_true",
+        help=(
+            "record an explicit human observation that this capture reached "
+            "the visible top and its first message was recognized"
+        ),
+    )
+    parser.add_argument(
+        "--repair-redundant-segments",
+        action="store_true",
+        help=(
+            "select one raw segment only when it order-preservingly contains "
+            "every other segment; retain repair evidence in the package"
         ),
     )
     action = parser.add_mutually_exclusive_group(required=True)
@@ -53,7 +70,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = _parser().parse_args(argv)
     if args.dry_run:
         report = dry_run_guijian_export(
-            args.input, top_witness_path=args.top_witness
+            args.input,
+            top_witness_path=args.top_witness,
+            manual_top_attestation=args.attest_visible_top,
+            repair_redundant_segments=args.repair_redundant_segments,
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["can_convert"] else 2
@@ -62,6 +82,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.input,
             args.output,
             top_witness_path=args.top_witness,
+            manual_top_attestation=args.attest_visible_top,
+            repair_redundant_segments=args.repair_redundant_segments,
         )
     except GuijianAdapterError as exc:
         output = exc.report or {"can_convert": False, "error": str(exc)}
