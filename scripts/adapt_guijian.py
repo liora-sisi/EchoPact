@@ -45,12 +45,21 @@ def _parser() -> argparse.ArgumentParser:
             "the visible top and its first message was recognized"
         ),
     )
-    parser.add_argument(
+    capture_repair = parser.add_mutually_exclusive_group()
+    capture_repair.add_argument(
         "--repair-redundant-segments",
         action="store_true",
         help=(
             "select one raw segment only when it order-preservingly contains "
             "every other segment; retain repair evidence in the package"
+        ),
+    )
+    capture_repair.add_argument(
+        "--repair-source-message-ids",
+        action="store_true",
+        help=(
+            "collapse repeated observations by canonical ChatGPT message ID "
+            "only when their adjacency evidence proves one unique order"
         ),
     )
     action = parser.add_mutually_exclusive_group(required=True)
@@ -74,6 +83,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             top_witness_path=args.top_witness,
             manual_top_attestation=args.attest_visible_top,
             repair_redundant_segments=args.repair_redundant_segments,
+            repair_source_message_ids=args.repair_source_message_ids,
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["can_convert"] else 2
@@ -84,6 +94,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             top_witness_path=args.top_witness,
             manual_top_attestation=args.attest_visible_top,
             repair_redundant_segments=args.repair_redundant_segments,
+            repair_source_message_ids=args.repair_source_message_ids,
         )
     except GuijianAdapterError as exc:
         output = exc.report or {"can_convert": False, "error": str(exc)}

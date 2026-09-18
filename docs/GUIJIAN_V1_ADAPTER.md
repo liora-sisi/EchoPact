@@ -53,6 +53,17 @@ normalized messages match exactly. The package records the selected segment
 and discarded observation counts. This is segment-level evidence repair, not
 global content deduplication; ambiguous or complementary segments still fail.
 
+Long virtualized rooms can also repeat the same ChatGPT message across many
+capture windows. The explicit `--repair-source-message-ids` option is a
+separate, stricter repair path. It requires a canonical ChatGPT
+`data-message-id` on every raw observation, identical role and fingerprint for
+every occurrence of one ID, a clear 3:2 majority for any reciprocal adjacency
+noise, and exactly one topological ordering after that noise is removed. It
+collapses observations by source identity, never by equal message text. A
+missing ID, changed body, tied or weak edge, cycle, or more than one possible
+order fails closed. The report retains only counts and repair evidence; raw
+message IDs are not printed.
+
 ## Time evidence
 
 The adapter uses this precedence for `created_at`:
@@ -104,6 +115,14 @@ With direct visible-top review and a provable redundant-segment repair:
 python scripts/adapt_guijian.py GUIJIAN_ROOM.json `
   --attest-visible-top `
   --repair-redundant-segments `
+  --dry-run
+```
+
+For a long room whose canonical source IDs prove one unique order:
+
+```powershell
+python scripts/adapt_guijian.py GUIJIAN_ROOM.json `
+  --repair-source-message-ids `
   --dry-run
 ```
 

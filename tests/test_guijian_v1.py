@@ -114,6 +114,63 @@ def _issue_codes(report, category):
     return {issue["code"] for issue in report[category]}
 
 
+def _source_id_payload(*, ambiguous=False):
+    source_ids = {
+        "a": "00000000-0000-4000-8000-000000000001",
+        "b": "00000000-0000-4000-8000-000000000002",
+        "c": "00000000-0000-4000-8000-000000000003",
+        "d": "00000000-0000-4000-8000-000000000004",
+    }
+    templates = {
+        "a": ("user", "合成甲。"),
+        "b": ("assistant", "2026-09-18 10:01（成都）\n\n合成乙。"),
+        "c": ("user", "合成丙。"),
+        "d": ("assistant", "2026-09-18 10:03（成都）\n\n合成丁。"),
+    }
+    segment_keys = (
+        [["a", "b"], ["c", "d"]]
+        if ambiguous
+        else [["a", "b", "c", "b", "c", "d"], ["b", "c", "d"]]
+    )
+    normalized = []
+    raw_segments = []
+    ordinal = 0
+    for segment_index, keys in enumerate(segment_keys):
+        raw_segment = []
+        for key in keys:
+            role, content = templates[key]
+            observed_at = f"2026-09-18T02:00:{ordinal:02d}.000Z"
+            item = _message(
+                ordinal,
+                role,
+                content,
+                observed_at=observed_at,
+                segment_index=segment_index,
+            )
+            normalized.append(item)
+            raw_segment.append(
+                {
+                    "fingerprint": item["contentHash"],
+                    "sourceMessageId": source_ids[key],
+                    "sourceMessageIdSource": "attr:data-message-id",
+                }
+            )
+            ordinal += 1
+        raw_segments.append(raw_segment)
+    payload = _payload(normalized)
+    payload["raw"]["segments"] = raw_segments
+    payload["manifest"]["evidence"].update(
+        {
+            "duplicateObservations": len(normalized) - 4,
+            "gaps": [
+                {"beforeSegment": 1, "reason": "synthetic-virtual-window-gap"}
+            ],
+            "segmentCount": 2,
+        }
+    )
+    return payload, source_ids
+
+
 def test_dry_run_is_redacted_and_preserves_input(tmp_path):
     input_path = _write(tmp_path / "guijian.json", _payload())
     before = hashlib.sha256(input_path.read_bytes()).hexdigest()
@@ -351,6 +408,61 @@ def test_dominant_ordered_superset_segment_can_replace_redundant_capture(tmp_pat
     assert [item["content"] for item in package["records"]] == superset_contents
     assert all("segment=1" in item["source_ref"] for item in package["records"])
     assert package["source"]["capture_repair"] == repaired["capture_repair"]
+
+
+def test_source_message_ids_can_prove_one_unique_repaired_order(tmp_path):
+    payload, source_ids = _source_id_payload()
+    input_path = _write(tmp_path / "source-id-windows.json", payload)
+
+    refused = dry_run_guijian_export(str(input_path))
+    package, repaired = convert_guijian_export(
+        str(input_path), repair_source_message_ids=True
+    )
+
+    assert refused["can_convert"] is False
+    assert repaired["can_convert"] is True
+    assert repaired["counts"]["normalized_messages"] == 9
+    assert repaired["counts"]["selected_messages"] == 4
+    assert repaired["capture_repair"] == {
+        "requested": True,
+        "applied": True,
+        "kind": "source-message-id-unique-topological-order",
+        "selected_segment_index": None,
+        "input_observations": 9,
+        "selected_observations": 4,
+        "redundant_observations_ignored": 5,
+        "source_message_id_observations": 9,
+        "unique_source_message_ids": 4,
+        "ordering_edges": 3,
+        "reciprocal_edge_pairs_resolved": 1,
+        "minority_edge_observations_ignored": 1,
+    }
+    assert [item["role"] for item in package["records"]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert len({item["record_id"] for item in package["records"]}) == 4
+    redacted = json.dumps(repaired, ensure_ascii=False)
+    assert all(source_id not in redacted for source_id in source_ids.values())
+    assert all(
+        source_id not in json.dumps(package["source"], ensure_ascii=False)
+        for source_id in source_ids.values()
+    )
+
+
+def test_source_message_id_repair_fails_when_order_is_not_unique(tmp_path):
+    payload, _ = _source_id_payload(ambiguous=True)
+    input_path = _write(tmp_path / "ambiguous-source-id-windows.json", payload)
+
+    report = dry_run_guijian_export(
+        str(input_path), repair_source_message_ids=True
+    )
+
+    assert report["can_convert"] is False
+    assert "source-id-order-ambiguous" in _issue_codes(report, "fatal")
+    assert report["capture_repair"]["applied"] is False
 
 
 def test_content_or_sequence_tampering_fails_closed(tmp_path):

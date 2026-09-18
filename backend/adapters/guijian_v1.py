@@ -79,6 +79,11 @@ NORMALIZED_REQUIRED_FIELDS = {
 }
 VALID_ROLES = {"system", "user", "assistant", "tool", "developer"}
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+CANONICAL_SOURCE_MESSAGE_ID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+SOURCE_MESSAGE_ID_EVIDENCE = "attr:data-message-id"
 SELF_STAMP = re.compile(
     r"^\ufeff?\s*(?P<date>20\d{2}-\d{2}-\d{2})[ \t]+"
     r"(?P<time>\d{2}:\d{2})(?:\s*[（(]成都[）)])\s*(?:\n|$)"
@@ -123,6 +128,7 @@ class GuijianMessage:
     created_at: str
     time_basis: str
     time_precision: str
+    source_message_id: Optional[str] = None
 
 
 @dataclass
@@ -326,19 +332,160 @@ def _dominant_segment_index(segment_hashes: Sequence[Sequence[str]]) -> Optional
     return winners[0]
 
 
+def _source_message_id_repair(
+    candidates: Sequence[Dict[str, Any]],
+    raw_segments: Sequence[Sequence[Mapping[str, Any]]],
+) -> tuple[Optional[List[Dict[str, Any]]], Dict[str, int], Optional[str]]:
+    """Collapse duplicated observations and prove one unique order from source IDs.
+
+    GuiJian can retain the same virtualized ChatGPT message in many capture
+    windows. A canonical ``data-message-id`` is message identity; the body
+    fingerprint is not. This repair deliberately fails closed unless every
+    observation has reviewed identity evidence, each identity is internally
+    consistent, reciprocal edge noise has a clear 3:2 majority, and the
+    remaining partial order has exactly one topological ordering.
+    """
+
+    evidence = {
+        "source_message_id_observations": 0,
+        "unique_source_message_ids": 0,
+        "ordering_edges": 0,
+        "reciprocal_edge_pairs_resolved": 0,
+        "minority_edge_observations_ignored": 0,
+    }
+    raw_count = sum(len(segment) for segment in raw_segments)
+    evidence["source_message_id_observations"] = raw_count
+    if raw_count != len(candidates):
+        return None, evidence, "source-id-candidate-count-mismatch"
+
+    representative: Dict[str, Dict[str, Any]] = {}
+    identity_signature: Dict[str, tuple[str, str]] = {}
+    edge_support: Dict[tuple[str, str], int] = {}
+    cursor = 0
+    for segment_index, segment in enumerate(raw_segments):
+        segment_ids: List[str] = []
+        for observation in segment:
+            candidate = candidates[cursor]
+            cursor += 1
+            if not isinstance(observation, Mapping):
+                return None, evidence, "source-id-evidence-missing"
+            source_id = observation.get("sourceMessageId")
+            source_id_source = observation.get("sourceMessageIdSource")
+            if (
+                not isinstance(source_id, str)
+                or CANONICAL_SOURCE_MESSAGE_ID.fullmatch(source_id) is None
+                or source_id_source != SOURCE_MESSAGE_ID_EVIDENCE
+            ):
+                return None, evidence, "source-id-evidence-missing"
+            if (
+                candidate["segment_index"] != segment_index
+                or observation.get("fingerprint") != candidate["content_hash"]
+            ):
+                return None, evidence, "source-id-normalization-mismatch"
+
+            signature = (candidate["role"], candidate["content_hash"])
+            prior_signature = identity_signature.get(source_id)
+            if prior_signature is not None and prior_signature != signature:
+                return None, evidence, "source-id-content-conflict"
+            identity_signature[source_id] = signature
+
+            selected = representative.get(source_id)
+            if selected is None or candidate["observed_at"] < selected["observed_at"]:
+                selected = dict(candidate)
+                selected["source_message_id"] = source_id
+                representative[source_id] = selected
+            segment_ids.append(source_id)
+
+        for left, right in zip(segment_ids, segment_ids[1:]):
+            if left == right:
+                continue
+            edge = (left, right)
+            edge_support[edge] = edge_support.get(edge, 0) + 1
+
+    evidence["unique_source_message_ids"] = len(representative)
+    if not representative:
+        return None, evidence, "source-id-evidence-missing"
+
+    discarded_edges: set[tuple[str, str]] = set()
+    reciprocal_pairs: set[frozenset[str]] = set()
+    for (left, right), support in edge_support.items():
+        reverse = (right, left)
+        reverse_support = edge_support.get(reverse)
+        if reverse_support is None:
+            continue
+        pair = frozenset((left, right))
+        if pair in reciprocal_pairs:
+            continue
+        reciprocal_pairs.add(pair)
+        if support == reverse_support:
+            return None, evidence, "source-id-reciprocal-edge-ambiguous"
+        if support > reverse_support:
+            majority, minority = support, reverse_support
+            minority_edge = reverse
+        else:
+            majority, minority = reverse_support, support
+            minority_edge = (left, right)
+        # A strict but tiny majority is not enough to rewrite private history.
+        if majority * 2 < minority * 3:
+            return None, evidence, "source-id-reciprocal-edge-ambiguous"
+        discarded_edges.add(minority_edge)
+        evidence["minority_edge_observations_ignored"] += minority
+
+    evidence["reciprocal_edge_pairs_resolved"] = len(reciprocal_pairs)
+    edges: Dict[str, set[str]] = {source_id: set() for source_id in representative}
+    indegree = {source_id: 0 for source_id in representative}
+    for edge in edge_support:
+        if edge in discarded_edges:
+            continue
+        left, right = edge
+        if right not in edges[left]:
+            edges[left].add(right)
+            indegree[right] += 1
+    evidence["ordering_edges"] = sum(len(values) for values in edges.values())
+
+    available = [source_id for source_id, degree in indegree.items() if degree == 0]
+    ordered_ids: List[str] = []
+    while available:
+        if len(available) != 1:
+            return None, evidence, "source-id-order-ambiguous"
+        source_id = available.pop()
+        ordered_ids.append(source_id)
+        for successor in edges[source_id]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                available.append(successor)
+    if len(ordered_ids) != len(representative):
+        return None, evidence, "source-id-order-cycle"
+
+    selected_candidates: List[Dict[str, Any]] = []
+    for ordinal, source_id in enumerate(ordered_ids):
+        selected = dict(representative[source_id])
+        selected["index"] = ordinal
+        selected_candidates.append(selected)
+    return selected_candidates, evidence, None
+
+
 def inspect_guijian_export(
     path: str,
     *,
     top_witness_path: Optional[str] = None,
     manual_top_attestation: bool = False,
     repair_redundant_segments: bool = False,
+    repair_source_message_ids: bool = False,
 ) -> GuijianInspection:
     """Validate one single-room GuiJian export without writing anything."""
 
     raw, input_sha256 = _load_input(path)
     report = _blank_report(input_sha256)
-    report["capture_repair"]["requested"] = repair_redundant_segments
+    report["capture_repair"]["requested"] = (
+        repair_redundant_segments or repair_source_message_ids
+    )
     issues = _Issues()
+    if repair_redundant_segments and repair_source_message_ids:
+        issues.fail(
+            "multiple-capture-repairs",
+            "Choose exactly one GuiJian capture repair strategy",
+        )
     try:
         payload = _parse_json(raw)
     except GuijianAdapterError as exc:
@@ -680,6 +827,39 @@ def inspect_guijian_export(
                     "redundant-segments-repaired",
                     "A dominant ordered-superset segment replaced redundant captures",
                 )
+    if repair_source_message_ids:
+        source_id_selection, source_id_evidence, source_id_error = (
+            _source_message_id_repair(candidates, raw_segments)
+        )
+        report["capture_repair"].update(source_id_evidence)
+        if source_id_error is not None or source_id_selection is None:
+            issues.fail(
+                source_id_error or "source-id-repair-failed",
+                "Source message IDs did not prove one safe complete message order",
+            )
+        else:
+            selected_candidates = source_id_selection
+            selected_content_hashes = [
+                item["content_hash"] for item in selected_candidates
+            ]
+            repair_applied = True
+            repair = report["capture_repair"]
+            repair.update(
+                {
+                    "applied": True,
+                    "kind": "source-message-id-unique-topological-order",
+                    "selected_segment_index": None,
+                    "input_observations": len(content_hashes),
+                    "selected_observations": len(selected_candidates),
+                    "redundant_observations_ignored": (
+                        len(content_hashes) - len(selected_candidates)
+                    ),
+                }
+            )
+            issues.warning(
+                "source-message-id-observations-repaired",
+                "Canonical source message IDs collapsed repeated observations and proved one order",
+            )
     if gaps and not repair_applied:
         issues.fail(
             "capture-has-gaps",
@@ -843,6 +1023,7 @@ def inspect_guijian_export(
                 created_at=created_at,
                 time_basis=basis,
                 time_precision=precision,
+                source_message_id=item.get("source_message_id"),
             )
         )
 
@@ -858,12 +1039,14 @@ def dry_run_guijian_export(
     top_witness_path: Optional[str] = None,
     manual_top_attestation: bool = False,
     repair_redundant_segments: bool = False,
+    repair_source_message_ids: bool = False,
 ) -> Dict[str, Any]:
     return inspect_guijian_export(
         path,
         top_witness_path=top_witness_path,
         manual_top_attestation=manual_top_attestation,
         repair_redundant_segments=repair_redundant_segments,
+        repair_source_message_ids=repair_source_message_ids,
     ).report
 
 
@@ -901,6 +1084,7 @@ def convert_guijian_export(
     top_witness_path: Optional[str] = None,
     manual_top_attestation: bool = False,
     repair_redundant_segments: bool = False,
+    repair_source_message_ids: bool = False,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Return a deterministic compact record package and redacted dry-run."""
 
@@ -909,6 +1093,7 @@ def convert_guijian_export(
         top_witness_path=top_witness_path,
         manual_top_attestation=manual_top_attestation,
         repair_redundant_segments=repair_redundant_segments,
+        repair_source_message_ids=repair_source_message_ids,
     )
     report = inspection.report
     payload = inspection.payload
@@ -925,9 +1110,19 @@ def convert_guijian_export(
 
     records: List[Dict[str, Any]] = []
     for message in inspection.messages:
-        record_seed = "\n".join(
-            (SUPPORTED_PLATFORM, room_key, str(message.index), message.content_hash)
-        )
+        if message.source_message_id is not None:
+            record_seed = "\n".join(
+                (
+                    SUPPORTED_PLATFORM,
+                    room_key,
+                    "source-message-id",
+                    message.source_message_id,
+                )
+            )
+        else:
+            record_seed = "\n".join(
+                (SUPPORTED_PLATFORM, room_key, str(message.index), message.content_hash)
+            )
         record_hash = _sha256_text(record_seed)
         records.append(
             {
@@ -995,6 +1190,7 @@ def write_converted_package(
     top_witness_path: Optional[str] = None,
     manual_top_attestation: bool = False,
     repair_redundant_segments: bool = False,
+    repair_source_message_ids: bool = False,
 ) -> Dict[str, Any]:
     """Atomically create one formal compact package without overwriting."""
 
@@ -1010,6 +1206,7 @@ def write_converted_package(
         top_witness_path=top_witness_path,
         manual_top_attestation=manual_top_attestation,
         repair_redundant_segments=repair_redundant_segments,
+        repair_source_message_ids=repair_source_message_ids,
     )
     output_bytes = serialize_record_package(package)
     temporary_name: Optional[str] = None
