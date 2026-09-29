@@ -3,4 +3,4 @@
 .tmp/
 __pycache__/
 *.py[cod]
-bad_cases/
+/bad_cases/
