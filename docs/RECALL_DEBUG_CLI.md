@@ -13,7 +13,8 @@ second retriever and it does not change the normal MCP response schema.
 - Top-K records with source labels including `GPT库（官方数据包）`,
   `GPT库（浏览器抓取）`, `Codex库`, or `其他来源`, evidence confidence and
   its documented basis, lexical/intent rank metadata, and the passes that
-  found the record;
+  found the record; Codex results also show their stored `commentary` or
+  `final_answer` phase and the query's bounded phase preference;
 - M12 exact-mirror compaction, including the representative record and the
   number of compacted counterparts;
 - candidates omitted by the public support-unit limit and duplicate records

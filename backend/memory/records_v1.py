@@ -1690,6 +1690,7 @@ class RecallQueryPlan:
     like_terms: Sequence[str]
     prefer_oldest: bool
     prefer_latest: bool
+    content_phase_preference: str
     intent_required_all_like_terms: Sequence[str]
     intent_required_any_like_terms: Sequence[str]
     intent_bonus_like_terms: Sequence[str]
@@ -1729,6 +1730,7 @@ def _query_plan_debug_payload(plan: RecallQueryPlan) -> Dict[str, Any]:
         "like_terms": list(plan.like_terms),
         "prefer_oldest": plan.prefer_oldest,
         "prefer_latest": plan.prefer_latest,
+        "content_phase_preference": plan.content_phase_preference,
         "intent_required_all_like_terms": list(
             plan.intent_required_all_like_terms
         ),
@@ -2105,6 +2107,66 @@ _ORIGINAL_TRACE_META_MARKERS = (
     "原话是",
     "原文是",
 )
+
+# Codex preserves visible work-in-progress commentary and the final answer as
+# separate records.  Both are useful evidence, but an ordinary life question
+# should not lose its answer merely because several progress updates repeat the
+# same keywords.  Commentary becomes the preferred tie-breaker only when the
+# caller explicitly asks for the process itself.
+_COMMENTARY_EVIDENCE_QUERY_MARKERS = (
+    "施工过程",
+    "排查过程",
+    "调试过程",
+    "修复过程",
+    "工作过程",
+    "中途怎么",
+    "一步一步",
+    "每一步",
+    "一路碎碎念",
+    "碎碎念",
+    "过程记录",
+    "运行了什么命令",
+    "执行了什么命令",
+)
+
+
+def _content_phase_preference(normalized_query: str) -> str:
+    if any(
+        marker in normalized_query
+        for marker in _COMMENTARY_EVIDENCE_QUERY_MARKERS
+    ):
+        return "commentary"
+    return "final_answer"
+
+
+def _content_phase_priority_sql(alias: str, preference: str) -> str:
+    """Return a static SQL tie-breaker for preserved Codex message phases."""
+
+    if preference == "commentary":
+        preferred = "phase=commentary"
+        secondary = "phase=final_answer"
+    else:
+        preferred = "phase=final_answer"
+        secondary = "phase=commentary"
+    return (
+        "CASE "
+        f"WHEN {alias}.source_kind = 'codex-app-server-v1' "
+        f"AND instr({alias}.source_ref, '{preferred}') > 0 THEN 2 "
+        f"WHEN {alias}.source_kind = 'codex-app-server-v1' "
+        f"AND instr({alias}.source_ref, '{secondary}') > 0 THEN 0 "
+        "ELSE 1 END"
+    )
+
+
+def _content_phase(source_kind: object, source_ref: object) -> Optional[str]:
+    if str(source_kind or "") != "codex-app-server-v1":
+        return None
+    reference = str(source_ref or "")
+    if "phase=final_answer" in reference:
+        return "final_answer"
+    if "phase=commentary" in reference:
+        return "commentary"
+    return None
 
 MAX_ORIGINAL_TRACE_ANCHORS = 8
 MAX_ORIGINAL_TRACE_ANCHOR_CHARS = 120
@@ -3590,6 +3652,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         like_terms=_bounded_text(_unique_text(like_terms), MAX_LIKE_TERMS),
         prefer_oldest=prefer_oldest,
         prefer_latest=prefer_latest,
+        content_phase_preference=_content_phase_preference(normalized),
         intent_required_all_like_terms=intent_required_all_like_terms,
         intent_required_any_like_terms=intent_required_any_like_terms,
         intent_bonus_like_terms=intent_bonus_like_terms,
@@ -3768,6 +3831,9 @@ def recall_records(
             scope_params.append(normalized_created_at_end)
         conn.execute("PRAGMA query_only = ON")
         query_plan = _recall_query_plan(query)
+        content_phase_priority_sql = _content_phase_priority_sql(
+            "r", query_plan.content_phase_preference
+        )
 
         date_direction = "ASC" if query_plan.prefer_oldest else "DESC"
 
@@ -3779,7 +3845,8 @@ def recall_records(
                 JOIN records_v1 AS r ON r.id = records_v1_fts.rowid
                 WHERE records_v1_fts MATCH ?
                 {scope_where}
-                ORDER BY lexical_rank ASC, r.created_at {date_direction}
+                ORDER BY lexical_rank ASC, {content_phase_priority_sql} DESC,
+                         r.created_at {date_direction}
                 LIMIT ?
                 """,
                 [expression] + scope_params + [limit],
@@ -3799,7 +3866,8 @@ def recall_records(
                 FROM records_v1 AS r
                 WHERE ({where_sql})
                 {scope_where}
-                ORDER BY lexical_rank DESC, r.created_at {date_direction}
+                ORDER BY lexical_rank DESC, {content_phase_priority_sql} DESC,
+                         r.created_at {date_direction}
                 LIMIT ?
                 """,
                 list(patterns) + list(patterns) + scope_params + [limit],
@@ -3893,23 +3961,30 @@ def recall_records(
             where_sql = " AND ".join(where_parts)
             if query_plan.prefer_oldest and relevance_first:
                 order_sql = (
-                    "lexical_rank DESC, r.created_at ASC, length(r.content) ASC"
+                    "lexical_rank DESC, "
+                    f"{content_phase_priority_sql} DESC, "
+                    "r.created_at ASC, length(r.content) ASC"
                 )
             elif query_plan.prefer_oldest:
                 order_sql = (
-                    "r.created_at ASC, lexical_rank DESC, length(r.content) ASC"
+                    "r.created_at ASC, lexical_rank DESC, "
+                    f"{content_phase_priority_sql} DESC, length(r.content) ASC"
                 )
             elif query_plan.prefer_latest:
                 order_sql = (
-                    "r.created_at DESC, lexical_rank DESC, length(r.content) ASC"
+                    "r.created_at DESC, lexical_rank DESC, "
+                    f"{content_phase_priority_sql} DESC, length(r.content) ASC"
                 )
             elif prefer_compact:
                 order_sql = (
-                    "length(r.content) ASC, lexical_rank DESC, r.created_at DESC"
+                    "length(r.content) ASC, lexical_rank DESC, "
+                    f"{content_phase_priority_sql} DESC, r.created_at DESC"
                 )
             else:
                 order_sql = (
-                    "lexical_rank DESC, length(r.content) ASC, r.created_at DESC"
+                    "lexical_rank DESC, "
+                    f"{content_phase_priority_sql} DESC, "
+                    "length(r.content) ASC, r.created_at DESC"
                 )
             return conn.execute(
                 f"""
@@ -4662,12 +4737,19 @@ def recall_records(
             return {
                 "position_in_pass": position,
                 "selection_order_note": (
-                    "final pass order is mode-specific; no unified scalar "
-                    "weight is used"
+                    "final pass order is mode-specific; equally relevant "
+                    "Codex records use the requested content phase as a "
+                    "tie-breaker; no unified scalar weight is used"
                 ),
                 "lexical_rank": lexical_rank,
                 "rank_semantics": rank_semantics,
                 "recall_mode": recall_mode,
+                "content_phase": _content_phase(
+                    row["source_kind"], row["source_ref"]
+                ),
+                "content_phase_preference": (
+                    query_plan.content_phase_preference
+                ),
                 "final_weight": None,
                 "final_weight_note": (
                     "records_v1 does not use the legacy semantic/emotion/"

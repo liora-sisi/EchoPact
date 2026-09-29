@@ -87,6 +87,16 @@ file changes, tool calls, web searches, and other operational items are not
 imported or indexed. A future user-input type fails closed until reviewed;
 ordinary non-conversation item types are counted and ignored.
 
+## Recall phase preference
+
+Both retained assistant phases remain first-class records.  For ordinary
+queries, `final_answer` is a bounded tie-break preference among otherwise
+comparable Codex candidates.  Queries that explicitly ask for construction,
+debugging, or step-by-step process instead prefer `commentary`.  This does not
+filter either phase, override relevance/date/compact-answer intent, or move
+non-Codex sources out of their neutral position.  Recall debug output exposes
+both the stored phase and the preference selected for the query.
+
 User messages use the turn's original `startedAt`. Assistant messages normally
 use the turn's original `completedAt`. One narrow historical exception is
 allowed: when an interrupted turn preserved visible assistant commentary but
