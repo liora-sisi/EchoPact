@@ -67,6 +67,13 @@ def phase_db(tmp_path):
             position=2,
         ),
         _record(
+            "ordinary-independent",
+            "正文优先测试：另一条独立生活事实。",
+            source_kind="room-ferry-backup-v1",
+            source_ref="room-ferry-backup-v1://conversation/a/message/4",
+            position=6,
+        ),
+        _record(
             "process-final",
             "排序排查过程：最终正文。",
             source_kind="codex-app-server-v1",
@@ -105,7 +112,7 @@ def phase_db(tmp_path):
     return db_path
 
 
-def test_ordinary_question_prefers_final_answer_without_hiding_other_sources(phase_db):
+def test_ordinary_question_bundles_process_without_spending_result_slot(phase_db):
     response = recall_records(
         "正文优先测试",
         limit=3,
@@ -118,8 +125,20 @@ def test_ordinary_question_prefers_final_answer_without_hiding_other_sources(pha
     assert [item["record_id"] for item in response["memories"]] == [
         "ordinary-final",
         "ordinary-neutral",
-        "ordinary-commentary",
+        "ordinary-independent",
     ]
+    assert response["memories"][0]["phase_bundle"] == {
+        "status": "supporting_process_attached",
+        "supporting_record_count": 1,
+        "supporting_record_ids": ["ordinary-commentary"],
+        "result_slot_semantics": (
+            "supporting process records do not consume top-level slots"
+        ),
+    }
+    assert response["memories"][0]["supporting_phase_records"][0][
+        "content"
+    ] == "正文优先测试：中途记录。"
+    assert response["phase_bundling"]["bundled_record_count"] == 1
     assert response["recall_debug_pass"]["query_plan"][
         "content_phase_preference"
     ] == "final_answer"
@@ -218,11 +237,14 @@ def test_chatgpt_folded_reasoning_is_retained_but_does_not_hide_final(tmp_path):
 
     assert ordinary["memories"][0]["record_id"] == "chatgpt-final"
     assert {item["record_id"] for item in ordinary["memories"]} == {
-        "chatgpt-thoughts",
-        "chatgpt-recap",
         "chatgpt-neutral",
         "chatgpt-final",
     }
+    assert {
+        item["record_id"]
+        for item in ordinary["memories"][0]["supporting_phase_records"]
+    } == {"chatgpt-thoughts", "chatgpt-recap"}
+    assert ordinary["phase_bundling"]["bundled_record_count"] == 2
     assert process["memories"][0]["retrieval_debug"]["content_phase"] in {
         "thoughts",
         "reasoning_recap",

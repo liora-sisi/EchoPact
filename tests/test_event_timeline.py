@@ -11,6 +11,7 @@ from backend.memory.event_timeline import (
     MAX_ORDINARY_TIMELINE_NODES,
     build_event_timeline,
     classify_mention_types,
+    resolve_query_calendar_scope,
 )
 from backend.memory.identity import register_agent
 from backend.memory.records_v1 import import_record_package
@@ -166,6 +167,48 @@ def test_relative_weekday_uses_explicit_chengdu_reference_without_claiming_evide
         "2026-08-24T11:00:00+08:00"
     )
     assert query_clock["used_for_record_filtering"] is False
+
+
+def test_absolute_date_creates_exact_record_filter_without_reference():
+    scope = resolve_query_calendar_scope(
+        "2026年7月28日我们说过什么？",
+        None,
+        None,
+        used_for_record_filtering=True,
+    )
+
+    assert scope["status"] == "resolved_calendar_scope"
+    assert scope["resolved_on"] == "2026-07-28"
+    assert scope["filter_start_at"] == "2026-07-27T16:00:00Z"
+    assert scope["filter_end_at_exclusive"] == "2026-07-28T16:00:00Z"
+    assert scope["used_for_record_filtering"] is True
+
+
+def test_absolute_date_around_marker_creates_three_day_window():
+    scope = resolve_query_calendar_scope(
+        "7月28日前后，我说过最喜欢哪种声音？",
+        "2026-10-05T18:00:00+08:00",
+        "caller_as_of",
+        used_for_record_filtering=True,
+    )
+
+    assert scope["precision"] == "day_window"
+    assert scope["resolved_start_on"] == "2026-07-27"
+    assert scope["resolved_end_on"] == "2026-07-29"
+    assert scope["filter_start_at"] == "2026-07-26T16:00:00Z"
+    assert scope["filter_end_at_exclusive"] == "2026-07-29T16:00:00Z"
+
+
+def test_chinese_written_month_day_uses_reference_year():
+    scope = resolve_query_calendar_scope(
+        "六月一号我们做了什么？",
+        "2026-10-05T18:00:00+08:00",
+        "caller_as_of",
+        used_for_record_filtering=True,
+    )
+
+    assert scope["resolved_on"] == "2026-06-01"
+    assert scope["matched_expression"] == "六月一号"
 
 
 def test_last_month_resolves_to_calendar_range():

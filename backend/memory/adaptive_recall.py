@@ -444,6 +444,9 @@ def _subquestion_subject_hint(first_question: str) -> Optional[str]:
         "",
         _normalize(first_question),
     )
+    title_match = re.search(r"《([^》]{2,48})》", value)
+    if title_match:
+        return title_match.group(1).strip()
     marker_positions = [
         position
         for marker in (
@@ -516,6 +519,20 @@ def _subquestion_passes(query: str) -> List[tuple[str, str]]:
         "接着",
         "随后",
         "然后",
+        "中间",
+        "里面",
+        "其中",
+        "上面",
+        "下面",
+        "左边",
+        "右边",
+        "这颗",
+        "那颗",
+        "这串",
+        "那串",
+        "这个",
+        "那个",
+        "它",
     )
     result: List[tuple[str, str]] = []
     has_independent_topic = False
@@ -970,6 +987,26 @@ def _apply_temporal_coverage_guard(
 def _debug_memory_summary(memory: Mapping[str, Any]) -> Dict[str, Any]:
     content = str(memory.get("content") or "")
     preview = content if len(content) <= 240 else content[:237] + "..."
+    supporting_phase_records = []
+    for item in memory.get("supporting_phase_records") or []:
+        supporting_content = str(item.get("content") or "")
+        supporting_phase_records.append(
+            {
+                "record_id": str(item.get("record_id") or ""),
+                "source_kind": item.get("source_kind"),
+                "source_channel": source_channel_for_kind(
+                    item.get("source_kind")
+                ),
+                "role": item.get("role"),
+                "created_at": item.get("created_at"),
+                "content_phase": item.get("content_phase"),
+                "content_preview": (
+                    supporting_content
+                    if len(supporting_content) <= 240
+                    else supporting_content[:237] + "..."
+                ),
+            }
+        )
     return {
         "record_id": str(memory.get("record_id") or ""),
         "source_kind": memory.get("source_kind"),
@@ -983,6 +1020,8 @@ def _debug_memory_summary(memory: Mapping[str, Any]) -> Dict[str, Any]:
             memory.get("adaptive_match_passes") or []
         ),
         "retrieval_debug": copy.deepcopy(memory.get("retrieval_debug") or {}),
+        "phase_bundle": copy.deepcopy(memory.get("phase_bundle") or {}),
+        "supporting_phase_records": supporting_phase_records,
         "content_preview": preview,
     }
 

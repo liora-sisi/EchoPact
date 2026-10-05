@@ -15,7 +15,7 @@ import json
 import re
 import unicodedata
 from calendar import monthrange
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 
@@ -112,6 +112,15 @@ _FULL_DATE_RE = re.compile(
     r"(?<!\d)(?P<year>20\d{2})[-/.年](?P<month>\d{1,2})[-/.月]"
     r"(?P<day>\d{1,2})(?:日|号)?(?!\d)"
 )
+_MONTH_DAY_RE = re.compile(
+    r"(?<![\d年])(?P<month>\d{1,2})[-/.月](?P<day>\d{1,2})"
+    r"(?:日|号)?(?!\d)"
+)
+_CJK_MONTH_DAY_RE = re.compile(
+    r"(?P<month>[一二三四五六七八九十]{1,2})月"
+    r"(?P<day>[一二三四五六七八九十]{1,3})(?:日|号)"
+)
+_AROUND_DATE_MARKERS = ("前后", "左右", "附近", "那几天")
 _OCCURRENCE_BINDING_MARKERS = (
     "发生在",
     "发生于",
@@ -176,10 +185,16 @@ def _local_iso(value: datetime) -> str:
 
 
 def query_uses_relative_time(query: Any) -> bool:
-    """Return whether the caller wrote a supported relative clock phrase."""
+    """Return whether query scope needs a current Chengdu calendar anchor."""
 
     compact = re.sub(r"\s+", "", _normalize_text(query))
-    return any(marker in compact for marker in _RELATIVE_QUERY_MARKERS)
+    if any(marker in compact for marker in _RELATIVE_QUERY_MARKERS):
+        return True
+    if _FULL_DATE_RE.search(compact):
+        return False
+    return bool(
+        _MONTH_DAY_RE.search(compact) or _CJK_MONTH_DAY_RE.search(compact)
+    )
 
 
 def _previous_calendar_month_same_day(value):
@@ -192,6 +207,75 @@ def _previous_calendar_month_same_day(value):
     )
 
 
+def _small_cjk_number(value: str) -> Optional[int]:
+    """Parse a Chinese-written month/day from one through thirty-one."""
+
+    digits = {
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if value in digits:
+        return digits[value]
+    if value == "十":
+        return 10
+    if value.startswith("十") and len(value) == 2:
+        return 10 + digits.get(value[1], 0)
+    if value.endswith("十") and len(value) == 2:
+        return digits.get(value[0], 0) * 10
+    if len(value) == 3 and value[1] == "十":
+        return digits.get(value[0], 0) * 10 + digits.get(value[2], 0)
+    return None
+
+
+def _absolute_query_date(
+    compact: str,
+    reference_date: Optional[date],
+) -> tuple[Optional[date], Optional[str]]:
+    """Return a caller-written date without treating it as event evidence."""
+
+    full_match = _FULL_DATE_RE.search(compact)
+    if full_match:
+        try:
+            return (
+                datetime(
+                    int(full_match.group("year")),
+                    int(full_match.group("month")),
+                    int(full_match.group("day")),
+                ).date(),
+                full_match.group(0),
+            )
+        except ValueError:
+            return None, None
+
+    if reference_date is None:
+        return None, None
+    numeric_match = _MONTH_DAY_RE.search(compact)
+    cjk_match = _CJK_MONTH_DAY_RE.search(compact)
+    if numeric_match:
+        month = int(numeric_match.group("month"))
+        day = int(numeric_match.group("day"))
+        matched = numeric_match.group(0)
+    elif cjk_match:
+        month = _small_cjk_number(cjk_match.group("month"))
+        day = _small_cjk_number(cjk_match.group("day"))
+        matched = cjk_match.group(0)
+        if month is None or day is None:
+            return None, None
+    else:
+        return None, None
+    try:
+        return datetime(reference_date.year, month, day).date(), matched
+    except ValueError:
+        return None, None
+
+
 def resolve_query_calendar_scope(
     query: str,
     reference_instant: Optional[str],
@@ -199,7 +283,7 @@ def resolve_query_calendar_scope(
     *,
     used_for_record_filtering: bool = False,
 ) -> Dict[str, Any]:
-    """Resolve a small explicit relative-date vocabulary against Chengdu.
+    """Resolve a small explicit calendar-date vocabulary against Chengdu.
 
     This only describes the caller's requested calendar scope. It never turns
     a message timestamp into an event timestamp and does not claim that the
@@ -208,7 +292,15 @@ def resolve_query_calendar_scope(
 
     compact = re.sub(r"\s+", "", _normalize_text(query))
     markers = [marker for marker in _RELATIVE_QUERY_MARKERS if marker in compact]
-    if not markers:
+    parsed = _parse_aware_instant(reference_instant)
+    local_reference = (
+        parsed.astimezone(_CHENGDU_TIMEZONE) if parsed is not None else None
+    )
+    reference_date = local_reference.date() if local_reference else None
+    absolute_date, absolute_expression = _absolute_query_date(
+        compact, reference_date
+    )
+    if not markers and absolute_date is None:
         return {
             "status": "not_requested",
             "reference_at": None,
@@ -223,8 +315,7 @@ def resolve_query_calendar_scope(
             "used_for_record_filtering": False,
         }
 
-    parsed = _parse_aware_instant(reference_instant)
-    if parsed is None:
+    if parsed is None and absolute_date is None:
         return {
             "status": "unresolved_missing_timezone_aware_reference",
             "reference_at": None,
@@ -239,16 +330,29 @@ def resolve_query_calendar_scope(
             "used_for_record_filtering": False,
         }
 
-    local_reference = parsed.astimezone(_CHENGDU_TIMEZONE)
-    reference_date = local_reference.date()
     resolved_on = None
     resolved_start = None
     resolved_end = None
-    matched_expression = markers[0]
+    matched_expression = absolute_expression or markers[0]
     precision = "day"
 
     weekday_match = re.search(r"上(?:周|星期)([一二三四五六日天])", compact)
-    if weekday_match:
+    if absolute_date is not None:
+        around_absolute_date = bool(
+            absolute_expression
+            and any(
+                f"{absolute_expression}{marker}" in compact
+                or f"{marker}{absolute_expression}" in compact
+                for marker in _AROUND_DATE_MARKERS
+            )
+        )
+        if around_absolute_date:
+            resolved_start = absolute_date - timedelta(days=1)
+            resolved_end = absolute_date + timedelta(days=1)
+            precision = "day_window"
+        else:
+            resolved_on = absolute_date
+    elif weekday_match:
         previous_monday = reference_date - timedelta(
             days=reference_date.weekday() + 7
         )
@@ -312,9 +416,15 @@ def resolve_query_calendar_scope(
     )
     return {
         "status": "resolved_calendar_scope",
-        "reference_at": _utc_iso(parsed),
-        "reference_at_local": _local_iso(parsed),
-        "reference_source": reference_source or "caller_supplied",
+        "reference_at": _utc_iso(parsed) if parsed is not None else None,
+        "reference_at_local": (
+            _local_iso(parsed) if parsed is not None else None
+        ),
+        "reference_source": (
+            (reference_source or "caller_supplied")
+            if parsed is not None
+            else None
+        ),
         "display_timezone": CHENGDU_TIMEZONE_NAME,
         "matched_expression": matched_expression,
         "precision": precision,

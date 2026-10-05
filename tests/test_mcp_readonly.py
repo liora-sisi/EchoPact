@@ -174,6 +174,29 @@ def test_bounded_result_preserves_source_provenance_without_record_content():
     )
 
 
+def test_bounded_result_truncates_supporting_phase_content():
+    long_content = "过程" * (MAX_CONTENT_CHARS + 20)
+    bounded = _bounded_result(
+        {
+            "memories": [
+                {
+                    "record_id": "final",
+                    "content": "正文",
+                    "supporting_phase_records": [
+                        {"record_id": "thoughts", "content": long_content}
+                    ],
+                }
+            ]
+        }
+    )
+
+    supporting = bounded["memories"][0]["supporting_phase_records"][0]
+    assert supporting["content_chars"] == len(long_content)
+    assert supporting["content_truncated"] is True
+    assert supporting["content"].startswith(long_content[:MAX_CONTENT_CHARS])
+    assert supporting["content"].endswith("[Echo Pact: content truncated]")
+
+
 def test_gateway_anchors_relative_time_to_local_server_clock(mcp_db, monkeypatch):
     from backend.mcp import readonly_server
     real_datetime = readonly_server.datetime
@@ -193,6 +216,27 @@ def test_gateway_anchors_relative_time_to_local_server_clock(mcp_db, monkeypatch
     query_clock = recalled["event_timeline"]["query_clock"]
     assert query_clock["reference_source"] == "mcp_server_clock"
     assert query_clock["resolved_on"] == "2026-08-19"
+
+
+def test_gateway_anchors_month_day_without_year_to_server_clock(mcp_db, monkeypatch):
+    from backend.mcp import readonly_server
+    real_datetime = readonly_server.datetime
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz):
+            return real_datetime.fromisoformat(
+                "2026-10-05T18:00:00+08:00"
+            ).astimezone(tz)
+
+    monkeypatch.setattr(readonly_server, "datetime", FixedDateTime)
+    recalled = ReadonlyGateway(str(mcp_db), OWNER).recall(
+        {"query": "六月一号我们做了什么？", "limit": 1}
+    )
+
+    query_clock = recalled["event_timeline"]["query_clock"]
+    assert query_clock["reference_source"] == "mcp_server_clock"
+    assert query_clock["resolved_on"] == "2026-06-01"
 
 
 def test_gateway_recalls_owner_only_without_changing_database(mcp_db):

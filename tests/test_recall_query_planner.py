@@ -115,6 +115,7 @@ def query_db(tmp_path):
             "favorite-food",
             "我说过自己最喜欢吃烤南瓜。",
             "2026-07-12T00:00:00Z",
+            role="assistant",
         ),
         _record(
             "academy",
@@ -238,6 +239,22 @@ def query_db(tmp_path):
             "昨天只是从烧烤摊旁边路过，并没有点餐。",
             "2026-07-23T09:00:00Z",
         ),
+        _record(
+            "beibei-arrival",
+            "我当时说，贝贝是在领养后接回来的，后来来到我身边的。",
+            "2026-07-24T09:00:00Z",
+        ),
+        _record(
+            "cove-user-original",
+            "我以前说过，我最喜欢 ChatGPT 的 Cove 原声。",
+            "2026-07-28T09:00:00Z",
+        ),
+        _record(
+            "voice-assistant-noise",
+            "我以前回答过，我最喜欢另一种原声。",
+            "2026-07-28T09:01:00Z",
+            role="assistant",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -357,6 +374,40 @@ def test_preference_question_keeps_literal_subject_and_answer_language(query_db)
     assert "喜欢" in plan.intent_required_any_like_terms
     assert response["memories"][0]["record_id"] == "perfume-preference-answer"
     assert response["recall_mode"] == "sqlite_like_intent_focused"
+
+
+def test_user_original_preference_uses_user_role_and_literal_category(query_db):
+    query = "我以前说过我最喜欢 ChatGPT 的哪一种原声？"
+    plan = _recall_query_plan(query)
+    response = recall_records(query, limit=5, db_path=str(query_db))
+
+    assert list(plan.intent_required_all_like_terms) == ["原声"]
+    assert list(plan.intent_roles) == ["user"]
+    assert response["memories"][0]["record_id"] == "cove-user-original"
+    assert all(item["role"] == "user" for item in response["memories"])
+
+
+def test_named_life_arrival_fails_closed_for_wrong_or_missing_subject(query_db):
+    beibei = recall_records(
+        "贝贝是怎么来到我身边的？",
+        limit=5,
+        db_path=str(query_db),
+    )
+    doudou = recall_records(
+        "豆豆是怎么来到我身边的？",
+        limit=5,
+        db_path=str(query_db),
+    )
+
+    assert beibei["memories"][0]["record_id"] == "beibei-arrival"
+    assert doudou["memories"] == []
+
+
+def test_rare_unicode_symbols_survive_as_literal_anchors():
+    plan = _recall_query_plan("🫪 和 Ꙭ 在我们这里分别是什么意思？")
+
+    assert "🫪" in plan.explicit_literal_anchors
+    assert "Ꙭ" in plan.explicit_literal_anchors
 
 
 def test_latest_composite_event_requires_all_topics_and_prefers_newest(query_db):

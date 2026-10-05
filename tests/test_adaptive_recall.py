@@ -743,6 +743,15 @@ def test_dependent_subquestion_keeps_literal_subject_without_guessing(tmp_path):
     assert "subquestion_2_subject" in passes
 
 
+def test_artifact_title_carries_into_component_pronoun_followup():
+    assert _subquestion_subject_hint(
+        "《光影映骨》的原图是什么布局"
+    ) == "光影映骨"
+    assert _subquestion_passes(
+        "《光影映骨》的原图是什么布局？中间那颗后来为什么换了？"
+    ) == [("subquestion_2_subject", "光影映骨")]
+
+
 def test_question_mark_inside_quote_is_not_a_subquestion_boundary():
     assert _explicit_subquestions(
         "“这是真的吗？”是什么意思？后来怎么解释？"
@@ -793,6 +802,25 @@ def test_last_month_filters_primary_records_and_separates_later_retelling(tmp_pa
     assert response["event_timeline"]["query_clock"][
         "used_for_record_filtering"
     ] is True
+
+
+def test_explicit_calendar_date_filters_primary_records_in_gateway(tmp_path):
+    db_path = _temporal_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "2026年7月10日 Echo Pact 做过什么防丢保护？",
+            "limit": 8,
+        }
+    )
+
+    assert [item["record_id"] for item in response["memories"]] == [
+        "july-protection"
+    ]
+    scope = response["temporal_scope"]
+    assert scope["resolved_on"] == "2026-07-10"
+    assert scope["used_for_record_filtering"] is True
+    assert scope["filter_start_at"] == "2026-07-09T16:00:00Z"
+    assert scope["filter_end_at_exclusive"] == "2026-07-10T16:00:00Z"
 
 
 def test_recent_month_is_rolling_calendar_range_not_previous_month(tmp_path):

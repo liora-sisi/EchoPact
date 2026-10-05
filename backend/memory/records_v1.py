@@ -1903,6 +1903,26 @@ _PREFERENCE_BONUS_TERMS = (
     "回答",
 )
 
+_LIFE_ARRIVAL_QUERY_MARKERS = (
+    "来到我身边",
+    "来到我们身边",
+    "来到我家",
+    "来到我们家",
+    "怎么来我家",
+    "如何来我家",
+)
+_LIFE_ARRIVAL_CONTEXT_TERMS = (
+    "来到",
+    "带回",
+    "接回",
+    "捡到",
+    "收养",
+    "领养",
+    "出生",
+    "送来",
+    "来家里",
+)
+
 _PROCEDURE_QUERY_MARKERS = (
     "怎么做",
     "怎样做",
@@ -2562,6 +2582,17 @@ def _explicit_query_anchors(normalized: str) -> List[str]:
             r"\d{1,4}(?:号房|万多条记忆|万条记忆|条记忆)", normalized
         )
     )
+    # Rare caller-written symbols and non-CJK scripts are often private
+    # meaning handles in their own right.  Keep them verbatim instead of
+    # dropping them from the ASCII/CJK tokenizer; no interpretation is added.
+    anchors.extend(
+        token
+        for token in re.findall(
+            r"[^\x00-\x7F\u3400-\u9fff\s，。！？、；：…“”‘’《》【】（）()]+",
+            normalized,
+        )
+        if 1 <= len(token) <= 16
+    )
     return _bounded_text(_unique_text(anchors), 3)
 
 
@@ -2774,6 +2805,11 @@ def _preference_query_entity(normalized: str) -> Optional[str]:
         return None
     compact = re.sub(r"\s+", "", normalized)
     patterns = (
+        r"(?:最喜欢|最爱|偏爱|更喜欢)"
+        r"(?:[0-9A-Za-z\u3400-\u9fff_-]{2,16}的)?"
+        r"(?:哪一种|哪一款|哪一个|哪款|哪类|哪种|什么)"
+        r"(?P<entity>[0-9A-Za-z\u3400-\u9fff_-]{2,16}?)"
+        r"(?:[，,。！？!?；;：:]|$)",
         r"(?:最喜欢|最爱|偏爱|更喜欢)(?:的)?"
         r"(?P<entity>[0-9A-Za-z\u3400-\u9fff_-]{2,16}?)"
         r"(?:是(?:哪|什么)|哪(?:一种|一款|个|款|类)|什么|"
@@ -2790,6 +2826,57 @@ def _preference_query_entity(normalized: str) -> Optional[str]:
             if len(entity) >= 2:
                 return entity
     return None
+
+
+def _life_arrival_subject(normalized: str) -> Optional[str]:
+    """Extract a literal named subject from a life-arrival question."""
+
+    compact = re.sub(r"\s+", "", normalized)
+    if not any(marker in compact for marker in _LIFE_ARRIVAL_QUERY_MARKERS):
+        return None
+    match = re.search(
+        r"(?:老公|老婆|宝贝|大宝贝)?"
+        r"(?P<subject>[0-9A-Za-z\u3400-\u9fff_-]{2,16}?)"
+        r"(?:是)?(?:怎么|怎样|如何)(?:会)?来到(?:我|我们)",
+        compact,
+    )
+    if not match:
+        return None
+    subject = match.group("subject").strip("的")
+    if subject in {"这个", "那个", "它们", "他们", "她们", "我们"}:
+        return None
+    return subject
+
+
+def _original_speaker_roles(normalized: str) -> List[str]:
+    """Bind an explicitly attributed original statement to its source role."""
+
+    compact = re.sub(r"\s+", "", normalized)
+    user_markers = (
+        "我的原话",
+        "我说过",
+        "我当时说",
+        "我以前说",
+        "我之前说",
+        "我曾经说",
+        "我写过",
+        "我告诉过你",
+    )
+    assistant_markers = (
+        "你的原话",
+        "你说过",
+        "你当时说",
+        "你以前说",
+        "你之前说",
+        "你曾经说",
+        "你写过",
+        "你告诉过我",
+    )
+    if any(marker in compact for marker in user_markers):
+        return ["user"]
+    if any(marker in compact for marker in assistant_markers):
+        return ["assistant"]
+    return []
 
 
 def _procedure_query_subject(normalized: str) -> Optional[str]:
@@ -3545,6 +3632,12 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     )
     prefer_latest = any(marker in normalized for marker in _LATEST_QUERY_MARKERS)
     preference_entity = _preference_query_entity(normalized)
+    life_arrival_subject = _life_arrival_subject(normalized)
+    if life_arrival_subject and not explicit_literal_anchors:
+        # Reuse the explicit-anchor fail-closed path: if no row contains both
+        # the named subject and arrival evidence, generic wording must not
+        # relax into a different being's story.
+        explicit_literal_anchors = [life_arrival_subject]
     procedure_subject = _procedure_query_subject(normalized)
     latest_composite_terms = _latest_composite_topic_terms(normalized)
     directional_relation = _directional_relation_query(normalized)
@@ -3572,7 +3665,7 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
     intent_priority_like_terms: List[str] = []
     intent_prefer_compact = False
     intent_min_any_matches = 1
-    intent_roles: List[str] = []
+    intent_roles: List[str] = _original_speaker_roles(normalized)
     intent_relevance_first = False
     intent_score_any_as_group = False
     intent_score_priority_as_group = False
@@ -3625,6 +3718,23 @@ def _recall_query_plan(query: str) -> RecallQueryPlan:
         intent_required_any_like_terms = ["我爱你", "爱你"]
         intent_bonus_like_terms = ["亲口", "第一次"]
         intent_roles = ["assistant"]
+    elif life_arrival_subject is not None:
+        # A named being must remain present together with actual arrival or
+        # origin language.  A common phrase such as "来到我身边" must never
+        # jump to a different subject, while a name-only row is insufficient
+        # evidence and therefore fails closed.
+        intent_required_all_like_terms = [life_arrival_subject]
+        intent_required_any_like_terms = list(_LIFE_ARRIVAL_CONTEXT_TERMS)
+        intent_relevance_first = True
+    elif preference_entity is not None and intent_roles:
+        # Explicit "I/you said" attribution is stronger than an incidental
+        # ASCII platform name.  Retrieve the literal category from that
+        # speaker's original row; its bounded branch context carries the
+        # adjacent reply without reversing who said the preference.
+        intent_required_all_like_terms = [preference_entity]
+        intent_required_any_like_terms = list(_PREFERENCE_CONTEXT_TERMS)
+        intent_bonus_like_terms = list(_PREFERENCE_BONUS_TERMS)
+        intent_prefer_compact = True
     elif explicit_literal_anchors:
         # An exact user-supplied phrase/name is stronger than generic latest,
         # preference or long-clause language.  Requiring every explicit handle
@@ -3787,6 +3897,161 @@ def _row_to_recall_result(
     return result
 
 
+def _phase_positions(memory: Mapping[str, Any]) -> Dict[str, int]:
+    positions: Dict[str, int] = {}
+    for membership in memory.get("branch_memberships") or []:
+        branch_id = membership.get("branch_id")
+        position = membership.get("position")
+        if isinstance(branch_id, str) and isinstance(position, int):
+            positions[branch_id] = position
+    return positions
+
+
+def _has_user_between(
+    process: Mapping[str, Any],
+    final: Mapping[str, Any],
+    branch_id: str,
+    lower: int,
+    upper: int,
+) -> bool:
+    for owner in (process, final):
+        for item in owner.get("conversation_context") or []:
+            if item.get("role") != "user":
+                continue
+            for membership in item.get("branch_memberships") or []:
+                if (
+                    membership.get("branch_id") == branch_id
+                    and isinstance(membership.get("position"), int)
+                    and lower < membership["position"] < upper
+                ):
+                    return True
+    return False
+
+
+def _bundle_supporting_phases(
+    memories: Sequence[Mapping[str, Any]],
+    *,
+    preference: str,
+    limit: int,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Keep process evidence accessible without spending ordinary result slots."""
+
+    rendered = [dict(memory) for memory in memories]
+    if preference != "final_answer":
+        return rendered[:limit], {
+            "applied": False,
+            "reason": "caller_requested_process_evidence",
+            "bundled_record_count": 0,
+            "bundle_count": 0,
+        }
+
+    process_phases = {"commentary", "thoughts", "reasoning_recap"}
+    phase_by_id = {
+        str(memory.get("record_id") or ""): _content_phase(
+            memory.get("source_kind"), memory.get("source_ref")
+        )
+        for memory in rendered
+    }
+    finals = [
+        memory
+        for memory in rendered
+        if phase_by_id.get(str(memory.get("record_id") or ""))
+        == "final_answer"
+        and memory.get("role") == "assistant"
+    ]
+    bundled_ids = set()
+    bundle_count = 0
+    for process in rendered:
+        process_id = str(process.get("record_id") or "")
+        phase = phase_by_id.get(process_id)
+        if phase not in process_phases or process.get("role") != "assistant":
+            continue
+        process_positions = _phase_positions(process)
+        candidates: List[tuple[int, Dict[str, Any]]] = []
+        for final in finals:
+            if final.get("conversation_id") != process.get("conversation_id"):
+                continue
+            final_positions = _phase_positions(final)
+            for branch_id, process_position in process_positions.items():
+                final_position = final_positions.get(branch_id)
+                if final_position is None:
+                    continue
+                distance = abs(final_position - process_position)
+                if not 0 < distance <= 4:
+                    continue
+                lower, upper = sorted((process_position, final_position))
+                if _has_user_between(
+                    process, final, branch_id, lower, upper
+                ):
+                    continue
+                candidates.append((distance, final))
+                break
+        if not candidates:
+            continue
+        _, primary = min(
+            candidates,
+            key=lambda item: (
+                item[0],
+                str(item[1].get("created_at") or ""),
+                str(item[1].get("record_id") or ""),
+            ),
+        )
+        supporting = primary.setdefault("supporting_phase_records", [])
+        supporting.append(
+            {
+                "record_id": process_id,
+                "content": process.get("content"),
+                "created_at": process.get("created_at"),
+                "source_kind": process.get("source_kind"),
+                "source_ref": process.get("source_ref"),
+                "conversation_id": process.get("conversation_id"),
+                "message_id": process.get("message_id"),
+                "role": process.get("role"),
+                "content_phase": phase,
+                "branch_ids": list(process.get("branch_ids") or []),
+                "branch_memberships": [
+                    dict(item)
+                    for item in process.get("branch_memberships") or []
+                ],
+            }
+        )
+        bundled_ids.add(process_id)
+
+    for primary in finals:
+        supporting = primary.get("supporting_phase_records") or []
+        if supporting:
+            supporting.sort(
+                key=lambda item: (
+                    str(item.get("created_at") or ""),
+                    str(item.get("record_id") or ""),
+                )
+            )
+            primary["phase_bundle"] = {
+                "status": "supporting_process_attached",
+                "supporting_record_count": len(supporting),
+                "supporting_record_ids": [
+                    item["record_id"] for item in supporting
+                ],
+                "result_slot_semantics": (
+                    "supporting process records do not consume top-level slots"
+                ),
+            }
+            bundle_count += 1
+
+    top_level = [
+        memory
+        for memory in rendered
+        if str(memory.get("record_id") or "") not in bundled_ids
+    ][:limit]
+    return top_level, {
+        "applied": bool(bundled_ids),
+        "reason": "ordinary_recall_prefers_final_with_process_support",
+        "bundled_record_count": len(bundled_ids),
+        "bundle_count": bundle_count,
+        "bundled_record_ids": sorted(bundled_ids),
+    }
+
+
 def recall_records(
     query: str,
     *,
@@ -3863,6 +4128,11 @@ def recall_records(
         content_phase_priority_sql = _content_phase_priority_sql(
             "r", query_plan.content_phase_preference
         )
+        sql_result_limit = (
+            min(100, limit * 3)
+            if query_plan.content_phase_preference == "final_answer"
+            else limit
+        )
 
         date_direction = "ASC" if query_plan.prefer_oldest else "DESC"
 
@@ -3878,7 +4148,7 @@ def recall_records(
                          r.created_at {date_direction}
                 LIMIT ?
                 """,
-                [expression] + scope_params + [limit],
+                [expression] + scope_params + [sql_result_limit],
             ).fetchall()
 
         def fetch_like(patterns: Sequence[str]) -> List[sqlite3.Row]:
@@ -3899,7 +4169,10 @@ def recall_records(
                          r.created_at {date_direction}
                 LIMIT ?
                 """,
-                list(patterns) + list(patterns) + scope_params + [limit],
+                list(patterns)
+                + list(patterns)
+                + scope_params
+                + [sql_result_limit],
             ).fetchall()
 
         def fetch_ranked_like(
@@ -4027,7 +4300,7 @@ def recall_records(
                 score_patterns
                 + where_params
                 + scope_params
-                + [limit],
+                + [sql_result_limit],
             ).fetchall()
 
         def fetch_original_trace(anchors: Sequence[str]) -> List[sqlite3.Row]:
@@ -4072,7 +4345,7 @@ def recall_records(
                 + patterns
                 + [minimum_matches]
                 + scope_params
-                + [max(limit * 2, limit)],
+                + [min(100, max(sql_result_limit * 2, sql_result_limit))],
             ).fetchall()
 
         def fetch_shared_event_candidates(
@@ -4618,22 +4891,27 @@ def recall_records(
         memberships_by_rowid: Dict[int, List[Dict[str, Any]]] = {}
         if rows:
             rowids = [row["id"] for row in rows]
-            placeholders = ",".join("?" for _ in rowids)
-            for membership in conn.execute(
-                "SELECT record_rowid, branch_id, position "
-                "FROM records_v1_branch_memberships "
-                f"WHERE record_rowid IN ({placeholders}) "
-                "ORDER BY branch_id",
-                rowids,
-            ).fetchall():
-                memberships_by_rowid.setdefault(
-                    membership["record_rowid"], []
-                ).append(
-                    {
-                        "branch_id": membership["branch_id"],
-                        "position": membership["position"],
-                    }
-                )
+            variable_limit = max(
+                1, conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+            )
+            for offset in range(0, len(rowids), variable_limit):
+                rowid_batch = rowids[offset : offset + variable_limit]
+                placeholders = ",".join("?" for _ in rowid_batch)
+                for membership in conn.execute(
+                    "SELECT record_rowid, branch_id, position "
+                    "FROM records_v1_branch_memberships "
+                    f"WHERE record_rowid IN ({placeholders}) "
+                    "ORDER BY branch_id",
+                    rowid_batch,
+                ).fetchall():
+                    memberships_by_rowid.setdefault(
+                        membership["record_rowid"], []
+                    ).append(
+                        {
+                            "branch_id": membership["branch_id"],
+                            "position": membership["position"],
+                        }
+                    )
         context_by_rowid: Dict[int, List[Dict[str, Any]]] = {}
         context_hits: List[tuple[int, str, int, str]] = []
         for row in rows:
@@ -4801,6 +5079,11 @@ def recall_records(
             )
             for position, row in enumerate(rows, start=1)
         ]
+        rendered_memories, phase_bundling = _bundle_supporting_phases(
+            rendered_memories,
+            preference=query_plan.content_phase_preference,
+            limit=limit,
+        )
         response = {
             "schema_version": RECALL_SCHEMA_VERSION,
             "query": query,
@@ -4823,6 +5106,7 @@ def recall_records(
                 ),
             },
             "memories": rendered_memories,
+            "phase_bundling": phase_bundling,
         }
         if debug:
             response["recall_debug_pass"] = {
@@ -4832,6 +5116,8 @@ def recall_records(
                 "recall_mode": recall_mode,
                 "candidate_count": len(rendered_memories),
                 "candidate_limit": limit,
+                "internal_candidate_limit": sql_result_limit,
+                "phase_bundling": dict(phase_bundling),
                 "record_time_filter": dict(response["record_time_filter"]),
                 "agent_visibility_filter": {
                     "applied": agent_id is not None,

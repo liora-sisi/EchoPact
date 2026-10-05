@@ -205,7 +205,11 @@ def _bounded_result(result: Mapping[str, Any]) -> Dict[str, Any]:
         for claim in memory.get("claims", []):
             if "content" in claim:
                 claim["content"] = _truncate_text(claim["content"])
-        for field in ("conversation_context", "event_evidence"):
+        for field in (
+            "conversation_context",
+            "event_evidence",
+            "supporting_phase_records",
+        ):
             for context_record in memory.get(field, []):
                 original = context_record.get("content")
                 if isinstance(original, str):
