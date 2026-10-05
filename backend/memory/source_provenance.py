@@ -24,16 +24,21 @@ MIN_MIRROR_DISTINCTIVE_CHARS = 12
 
 _SOURCE_CHANNELS = {
     "room-ferry-backup-v1": "chatgpt",
+    "chatgpt-official-export-v1": "chatgpt",
     "guijian-browser-capture-v1": "chatgpt",
     "codex-app-server-v1": "codex_local",
 }
 
-# Exact-mirror compaction was reviewed only for the official-package adapter
-# and the local Codex adapter.  GuiJian records belong to the ChatGPT channel
+# Exact-mirror compaction was reviewed only for official-package adapters and
+# the local Codex adapter. GuiJian records belong to the ChatGPT channel
 # for recall scoping, but their approximate time evidence is not yet strong
 # enough for automatic cross-source identity claims.
 _EXACT_MIRROR_SOURCE_KINDS = frozenset(
-    {"room-ferry-backup-v1", "codex-app-server-v1"}
+    {
+        "room-ferry-backup-v1",
+        "chatgpt-official-export-v1",
+        "codex-app-server-v1",
+    }
 )
 
 

@@ -188,6 +188,13 @@ V1 支持原有 `echo-pact-records-v1` JSON/JSONL，以及向前兼容的紧凑
 `record_id` 与相同内容会跳过，相同 `record_id` 但内容不同会明确失败，
 不会覆盖已有记录。
 
+ChatGPT 官方账号导出 ZIP 可由
+[`scripts/adapt_chatgpt_official.py`](scripts/adapt_chatgpt_official.py) 做
+完整 ZIP/manifest 校验，并转换成 records-v2。正文、图片/语音占位、折叠的
+`thoughts` 与 `reasoning_recap` 都保留并标注阶段；普通召回优先最终正文，
+但过程证据不会被删除。格式边界见
+[`docs/CHATGPT_OFFICIAL_V1_ADAPTER.md`](docs/CHATGPT_OFFICIAL_V1_ADAPTER.md)。
+
 ```bash
 python scripts/import_history.py tests/fixtures/echo_pact_records_v1.json --db ./demo-v1.db
 python scripts/import_history.py --db ./demo-v1.db --check-index

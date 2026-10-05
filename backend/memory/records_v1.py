@@ -2108,10 +2108,10 @@ _ORIGINAL_TRACE_META_MARKERS = (
     "原文是",
 )
 
-# Codex preserves visible work-in-progress commentary and the final answer as
-# separate records.  Both are useful evidence, but an ordinary life question
-# should not lose its answer merely because several progress updates repeat the
-# same keywords.  Commentary becomes the preferred tie-breaker only when the
+# Codex commentary and ChatGPT's exported folded reasoning are preserved beside
+# final answers. All are useful evidence, but an ordinary life question should
+# not lose its answer merely because several process records repeat the same
+# keywords. Process records become the preferred tie-breaker only when the
 # caller explicitly asks for the process itself.
 _COMMENTARY_EVIDENCE_QUERY_MARKERS = (
     "施工过程",
@@ -2140,32 +2140,61 @@ def _content_phase_preference(normalized_query: str) -> str:
 
 
 def _content_phase_priority_sql(alias: str, preference: str) -> str:
-    """Return a static SQL tie-breaker for preserved Codex message phases."""
+    """Return a static SQL tie-breaker for preserved message phases."""
 
     if preference == "commentary":
-        preferred = "phase=commentary"
+        preferred = ("phase=commentary", "phase=thoughts", "phase=reasoning_recap")
+        preferred_score = 2
         secondary = "phase=final_answer"
     else:
-        preferred = "phase=final_answer"
-        secondary = "phase=commentary"
+        preferred = ("phase=final_answer",)
+        preferred_score = 2
+        secondary = None
+    process_predicate = " OR ".join(
+        f"instr({alias}.source_ref, '{phase}') > 0"
+        for phase in ("phase=commentary", "phase=thoughts", "phase=reasoning_recap")
+    )
+    preferred_predicate = " OR ".join(
+        f"instr({alias}.source_ref, '{phase}') > 0" for phase in preferred
+    )
+    phase_source_predicate = (
+        f"{alias}.source_kind IN "
+        "('codex-app-server-v1', 'chatgpt-official-export-v1')"
+    )
+    secondary_clause = ""
+    if secondary is not None:
+        secondary_clause = (
+            f"WHEN {phase_source_predicate} "
+            f"AND instr({alias}.source_ref, '{secondary}') > 0 THEN 0 "
+        )
+    else:
+        secondary_clause = (
+            f"WHEN {phase_source_predicate} AND ({process_predicate}) THEN 0 "
+        )
     return (
         "CASE "
-        f"WHEN {alias}.source_kind = 'codex-app-server-v1' "
-        f"AND instr({alias}.source_ref, '{preferred}') > 0 THEN 2 "
-        f"WHEN {alias}.source_kind = 'codex-app-server-v1' "
-        f"AND instr({alias}.source_ref, '{secondary}') > 0 THEN 0 "
+        f"WHEN {phase_source_predicate} AND ({preferred_predicate}) "
+        f"THEN {preferred_score} "
+        f"{secondary_clause}"
         "ELSE 1 END"
     )
 
 
 def _content_phase(source_kind: object, source_ref: object) -> Optional[str]:
-    if str(source_kind or "") != "codex-app-server-v1":
+    if str(source_kind or "") not in {
+        "codex-app-server-v1",
+        "chatgpt-official-export-v1",
+    }:
         return None
     reference = str(source_ref or "")
     if "phase=final_answer" in reference:
         return "final_answer"
     if "phase=commentary" in reference:
         return "commentary"
+    if "phase=reasoning_recap" in reference:
+        return "reasoning_recap"
+    if "phase=thoughts" in reference:
+        return "thoughts"
     return None
 
 MAX_ORIGINAL_TRACE_ANCHORS = 8
@@ -4738,7 +4767,7 @@ def recall_records(
                 "position_in_pass": position,
                 "selection_order_note": (
                     "final pass order is mode-specific; equally relevant "
-                    "Codex records use the requested content phase as a "
+                    "phase-bearing records use the requested content phase as a "
                     "tie-breaker; no unified scalar weight is used"
                 ),
                 "lexical_rank": lexical_rank,

@@ -149,3 +149,81 @@ def test_explicit_process_question_prefers_commentary_without_hiding_final(phase
     assert response["memories"][0]["retrieval_debug"]["content_phase"] == (
         "commentary"
     )
+
+
+def test_chatgpt_folded_reasoning_is_retained_but_does_not_hide_final(tmp_path):
+    db_path = tmp_path / "chatgpt-phases.sqlite3"
+    package_path = tmp_path / "records.json"
+    records = [
+        _record(
+            "chatgpt-thoughts",
+            "折叠阶段测试碎碎念：思考过程。",
+            source_kind="chatgpt-official-export-v1",
+            source_ref="chatgpt-official-export-v1://conversation/a/message/1?phase=thoughts",
+            position=0,
+        ),
+        _record(
+            "chatgpt-recap",
+            "折叠阶段测试碎碎念：推理摘要。",
+            source_kind="chatgpt-official-export-v1",
+            source_ref="chatgpt-official-export-v1://conversation/a/message/2?phase=reasoning_recap",
+            position=1,
+        ),
+        _record(
+            "chatgpt-neutral",
+            "折叠阶段测试碎碎念：老婆的原问题。",
+            source_kind="chatgpt-official-export-v1",
+            source_ref="chatgpt-official-export-v1://conversation/a/message/3",
+            position=2,
+        ),
+        _record(
+            "chatgpt-final",
+            "折叠阶段测试碎碎念：最终正文。",
+            source_kind="chatgpt-official-export-v1",
+            source_ref="chatgpt-official-export-v1://conversation/a/message/4?phase=final_answer",
+            position=3,
+        ),
+    ]
+    package_path.write_text(
+        json.dumps(
+            {"schema_version": COMPACT_RECORD_SCHEMA_VERSION, "records": records},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    register_agent(OWNER, "Content phase owner", actor="test", db_path=str(db_path))
+    import_record_package(
+        str(package_path),
+        db_path=str(db_path),
+        owner_agent_id=OWNER,
+        actor="test",
+    )
+
+    ordinary = recall_records(
+        "折叠阶段测试",
+        limit=4,
+        db_path=str(db_path),
+        agent_id=OWNER,
+        read_only=True,
+        debug=True,
+    )
+    process = recall_records(
+        "折叠阶段测试碎碎念",
+        limit=4,
+        db_path=str(db_path),
+        agent_id=OWNER,
+        read_only=True,
+        debug=True,
+    )
+
+    assert ordinary["memories"][0]["record_id"] == "chatgpt-final"
+    assert {item["record_id"] for item in ordinary["memories"]} == {
+        "chatgpt-thoughts",
+        "chatgpt-recap",
+        "chatgpt-neutral",
+        "chatgpt-final",
+    }
+    assert process["memories"][0]["retrieval_debug"]["content_phase"] in {
+        "thoughts",
+        "reasoning_recap",
+    }

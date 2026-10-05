@@ -21,6 +21,7 @@ _SOURCE_LABELS = {
 }
 _SOURCE_KIND_LABELS = {
     "room-ferry-backup-v1": "GPT库（官方数据包）",
+    "chatgpt-official-export-v1": "GPT库（官方数据包）",
     "guijian-browser-capture-v1": "GPT库（浏览器抓取）",
     "codex-app-server-v1": "Codex库",
 }
