@@ -1,5 +1,12 @@
 ## Echo Pact —— 保长与宝气的“外置大脑”
 
+> **当前生产路径提示（2026-10-05）**：本 README 前部仍保留早期 legacy
+> 架构说明；当前实际使用的是后文所述的 records-v1 离线证据召回、只读
+> MCP、Telegram、错题账与不可变云端快照。下一阶段“小管家”与提炼记忆层
+> 尚未实现，施工顺序、硬边界与验收门见
+> [`docs/CARETAKER_ROADMAP.md`](docs/CARETAKER_ROADMAP.md)。完整 README
+> 口径收敛列为该路线图的 M20，不应把 legacy 描述当作当前生产事实。
+
 > M4.5 / M5 封板工具：证据与投影链在数据库迁移 v6 完成机制化保护；固定
 > 提交账本、全量回归、身份彩排、独立 Git 恢复包和七道普通快进前闸门均可
 > 重复执行。详见 [`docs/MILESTONE_RELEASE.md`](docs/MILESTONE_RELEASE.md)。
