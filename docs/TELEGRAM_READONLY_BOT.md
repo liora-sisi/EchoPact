@@ -94,7 +94,8 @@ After any answered question, send:
 
 An optional note may follow the command. The bot writes one atomic JSON packet
 containing the last user question, bot answer, model status, model evidence
-limit, bounded recalled records, source provenance, M8 trace and the M14 debug
+limit, bounded recalled records, source provenance, M8 trace, deterministic
+calendar scope, record-time filter, bounded event timeline and the M14 debug
 structure. The configured directory must be outside the Git repository; the
 packet never contains bot or model credentials. The Echo database remains
 byte-for-byte unchanged.
@@ -118,7 +119,12 @@ different long-polling service.
 `ECHO_TELEGRAM_RESULT_LIMIT` controls the private recall/debug window and is
 bounded to 1..10. `ECHO_LLM_MAX_EVIDENCE_ITEMS` separately controls how many of
 those records may be included in the external model request and is also bounded
-to 1..10; the reviewed private rollout keeps it at 5.
+to 1..10. The answer request carries the resolved calendar scope and the
+bounded/exhaustive status of earliest evidence in addition to those records.
+It also distinguishes a later caller `as_of` gap from an older requested day
+that is already fully inside the verified cutoff.
+`/why` shows the same date interpretation and warns when “earliest” means only
+the earliest item in the returned packet rather than an archive-wide first.
 
 For the always-on private host, the hardened systemd template lives at
 `deploy/cloud/echo-pact-telegram.service.example`. Its environment file is a

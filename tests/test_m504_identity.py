@@ -899,7 +899,7 @@ def test_static_scan_invariants(setup_db):
     assert LEGACY_PRINCIPAL in migration_sql
     assert records_module.MIGRATION_VERSION == 6
 
-    # 召回可见性谓词：九条主候选读取使用 scope_where（身份可见范围再叠加
+    # 召回可见性谓词：十条主候选读取使用 scope_where（身份可见范围再叠加
     # 可选记录时间范围），两条相邻上下文读取继续只使用 vis_where。所有返回
     # 记录的路径都在 ORDER BY / LIMIT 前完成身份过滤；锚点计数也必须在同一
     # 可见范围内（fail-closed 空集也在）。
@@ -908,7 +908,7 @@ def test_static_scan_invariants(setup_db):
     scope_marks = [
         m.start() for m in re.finditer(r"\{scope_where\}", recall_src)
     ]
-    assert len(scope_marks) == 9
+    assert len(scope_marks) == 10
     assert len(vis_marks) == 2
     assert "scope_where = vis_where" in recall_src
     for mark in scope_marks + vis_marks:

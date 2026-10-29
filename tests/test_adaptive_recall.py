@@ -354,6 +354,22 @@ def _temporal_database(tmp_path: Path) -> Path:
             "后来望舒负责月亮司机和巡山工作。",
             "2026-08-12T05:00:00Z",
         ),
+        _record(
+            "mid-autumn-user",
+            "我们把月饼切开，一边吃一边聊今天想留下的生活片段。",
+            "2026-09-25T04:00:00Z",
+        ),
+        _record(
+            "mid-autumn-assistant",
+            "晚上又把这一天的照片和手账线索一起整理好了。",
+            "2026-09-25T12:00:00Z",
+            "assistant",
+        ),
+        _record(
+            "mid-autumn-outside",
+            "前一天只是在准备节日用品，还没有开始当天的记录。",
+            "2026-09-24T12:00:00Z",
+        ),
     ]
     package_path.write_text(
         json.dumps(
@@ -821,6 +837,42 @@ def test_explicit_calendar_date_filters_primary_records_in_gateway(tmp_path):
     assert scope["used_for_record_filtering"] is True
     assert scope["filter_start_at"] == "2026-07-09T16:00:00Z"
     assert scope["filter_end_at_exclusive"] == "2026-07-10T16:00:00Z"
+
+
+def test_calendar_overview_reads_the_resolved_day_without_topic_terms(tmp_path):
+    db_path = _temporal_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "7月10号我们在做什么？",
+            "limit": 8,
+            "as_of": "2026-10-29T21:00:00+08:00",
+        }
+    )
+
+    assert [item["record_id"] for item in response["memories"]] == [
+        "july-protection"
+    ]
+    assert response["recall_mode"] == "sqlite_calendar_scope_overview"
+    assert response["record_time_filter"]["applied"] is True
+    assert response["temporal_scope"]["resolved_on"] == "2026-07-10"
+
+
+def test_named_mid_autumn_filters_and_round_robins_the_resolved_day(tmp_path):
+    db_path = _temporal_database(tmp_path)
+    response = ReadonlyGateway(str(db_path), OWNER).recall(
+        {
+            "query": "中秋节那天我们在干嘛？",
+            "limit": 10,
+            "as_of": "2026-10-29T21:00:00+08:00",
+        }
+    )
+
+    ids = [item["record_id"] for item in response["memories"]]
+    assert ids == ["mid-autumn-user", "mid-autumn-assistant"]
+    assert "mid-autumn-outside" not in ids
+    assert response["recall_mode"] == "sqlite_calendar_scope_overview"
+    assert response["temporal_scope"]["matched_expression"] == "中秋节"
+    assert response["temporal_scope"]["resolved_on"] == "2026-09-25"
 
 
 def test_recent_month_is_rolling_calendar_range_not_previous_month(tmp_path):

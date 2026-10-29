@@ -137,6 +137,19 @@ _RELATIVE_SCOPE_MARKERS = (
     "昨晚",
     "今天",
 )
+_CALENDAR_OVERVIEW_MARKERS = (
+    "我们在做什么",
+    "我们做了什么",
+    "我们在干嘛",
+    "我们干了什么",
+    "那天在做什么",
+    "那天做了什么",
+    "那天在干嘛",
+    "那天干了什么",
+    "那天发生了什么",
+    "那天聊了什么",
+    "那天说了什么",
+)
 _NEGATIVE_EXPERIENCE_MARKERS = (
     "还没",
     "没有",
@@ -273,6 +286,23 @@ def _normalize(value: str) -> str:
 
 def _contains_any(value: str, markers: Sequence[str]) -> bool:
     return any(marker in value for marker in markers)
+
+
+def _calendar_overview_requested(
+    query: str,
+    query_clock: Mapping[str, Any],
+) -> bool:
+    """Recognize a broad day question only after the date is resolved."""
+
+    if query_clock.get("status") != "resolved_calendar_scope":
+        return False
+    if not (
+        query_clock.get("filter_start_at")
+        and query_clock.get("filter_end_at_exclusive")
+    ):
+        return False
+    compact = re.sub(r"\s+", "", _normalize(query))
+    return _contains_any(compact, _CALENDAR_OVERVIEW_MARKERS)
 
 
 def _unique_passes(passes: Sequence[tuple[str, str]]) -> List[tuple[str, str]]:
@@ -1359,8 +1389,16 @@ def adaptive_recall(
         and scope_start
         and scope_end
     )
+    calendar_overview = scope_applied and _calendar_overview_requested(
+        query, query_clock
+    )
 
-    def run(pass_query: str, *, apply_scope: bool = True) -> Dict[str, Any]:
+    def run(
+        pass_query: str,
+        *,
+        apply_scope: bool = True,
+        use_calendar_overview: bool = False,
+    ) -> Dict[str, Any]:
         created_at_start = scope_start if scope_applied and apply_scope else None
         created_at_end = scope_end if scope_applied and apply_scope else None
         if include_projection:
@@ -1371,6 +1409,7 @@ def adaptive_recall(
                 as_of=as_of,
                 created_at_start=created_at_start,
                 created_at_end_exclusive=created_at_end,
+                calendar_overview=use_calendar_overview,
                 db_path=db_path,
                 read_only=read_only,
                 debug=debug,
@@ -1382,12 +1421,13 @@ def adaptive_recall(
             as_of=as_of,
             created_at_start=created_at_start,
             created_at_end_exclusive=created_at_end,
+            calendar_overview=use_calendar_overview,
             db_path=db_path,
             read_only=read_only,
             debug=debug,
         )
 
-    first = run(query)
+    first = run(query, use_calendar_overview=calendar_overview)
     normalized_query = _normalize(query)
     if _contains_any(
         normalized_query, _NEGATIVE_EXPERIENCE_MARKERS

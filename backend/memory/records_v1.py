@@ -4059,6 +4059,7 @@ def recall_records(
     as_of: Optional[str] = None,
     created_at_start: Optional[str] = None,
     created_at_end_exclusive: Optional[str] = None,
+    calendar_overview: bool = False,
     db_path: Optional[str] = None,
     agent_id: Optional[str] = None,
     read_only: bool = False,
@@ -4097,6 +4098,12 @@ def recall_records(
     ):
         raise ValueError(
             "created_at_start must be earlier than created_at_end_exclusive"
+        )
+    if calendar_overview and not (
+        normalized_created_at_start and normalized_created_at_end
+    ):
+        raise ValueError(
+            "calendar_overview requires a bounded record-time interval"
         )
     if read_only:
         conn = _connect_readonly(db_path)
@@ -4173,6 +4180,38 @@ def recall_records(
                 + list(patterns)
                 + scope_params
                 + [sql_result_limit],
+            ).fetchall()
+
+        def fetch_calendar_overview() -> List[sqlite3.Row]:
+            """Round-robin bounded rows across conversations in one date scope.
+
+            This mode is used only after a deterministic calendar interval has
+            been resolved.  It does not claim that every mentioned event
+            occurred on the record date; it gives the answer layer a diverse
+            view of what the in-range conversations contain.
+            """
+
+            return conn.execute(
+                f"""
+                WITH overview_rows AS (
+                    SELECT r.*, 0.0 AS lexical_rank,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY r.conversation_id
+                               ORDER BY {content_phase_priority_sql} DESC,
+                                        length(r.content) DESC,
+                                        r.created_at ASC,
+                                        r.id ASC
+                           ) AS overview_round
+                    FROM records_v1 AS r
+                    WHERE 1 = 1
+                    {scope_where}
+                )
+                SELECT *
+                FROM overview_rows
+                ORDER BY overview_round ASC, created_at ASC, id ASC
+                LIMIT ?
+                """,
+                scope_params + [sql_result_limit],
             ).fetchall()
 
         def fetch_ranked_like(
@@ -4685,7 +4724,10 @@ def recall_records(
         rows: List[sqlite3.Row] = []
         recall_mode = "sqlite_fts5_trigram"
         prioritize_literal_anchors = _literal_anchors_need_priority(query_plan)
-        if prioritize_literal_anchors:
+        if calendar_overview:
+            recall_mode = "sqlite_calendar_scope_overview"
+            rows = fetch_calendar_overview()
+        elif prioritize_literal_anchors:
             recall_mode = "sqlite_like_intent_focused"
             rows = fetch_ranked_like(
                 query_plan.intent_required_all_like_terms,
@@ -4700,7 +4742,9 @@ def recall_records(
                 score_priority_as_group=query_plan.intent_score_priority_as_group,
                 priority_weight_override=query_plan.intent_priority_weight,
             )
-        allow_generic_fallback = not (prioritize_literal_anchors and not rows)
+        allow_generic_fallback = not calendar_overview and not (
+            prioritize_literal_anchors and not rows
+        )
 
         if not rows and allow_generic_fallback:
             for expression in query_plan.exact_expressions:
@@ -5039,6 +5083,8 @@ def recall_records(
                 rank_semantics = "matched_term_score_higher_is_better"
             elif recall_mode == "sqlite_shared_event_window":
                 rank_semantics = "bounded_event_evidence_order"
+            elif recall_mode == "sqlite_calendar_scope_overview":
+                rank_semantics = "bounded_calendar_scope_round_robin"
             else:
                 rank_semantics = "mode_specific_order"
             return {
@@ -5113,6 +5159,7 @@ def recall_records(
                 "schema_version": "echo-pact-recall-debug-pass-v1",
                 "query": query,
                 "query_plan": _query_plan_debug_payload(query_plan),
+                "calendar_overview": calendar_overview,
                 "recall_mode": recall_mode,
                 "candidate_count": len(rendered_memories),
                 "candidate_limit": limit,

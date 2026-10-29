@@ -211,6 +211,37 @@ def test_chinese_written_month_day_uses_reference_year():
     assert scope["matched_expression"] == "六月一号"
 
 
+def test_named_mid_autumn_uses_verified_2026_calendar_date():
+    scope = resolve_query_calendar_scope(
+        "中秋节那天我们在干嘛？",
+        "2026-10-29T21:00:00+08:00",
+        "caller_as_of",
+        used_for_record_filtering=True,
+    )
+
+    assert scope["status"] == "resolved_calendar_scope"
+    assert scope["matched_expression"] == "中秋节"
+    assert scope["precision"] == "named_calendar_day"
+    assert scope["resolved_on"] == "2026-09-25"
+    assert scope["filter_start_at"] == "2026-09-24T16:00:00Z"
+    assert scope["filter_end_at_exclusive"] == "2026-09-25T16:00:00Z"
+    assert scope["used_for_record_filtering"] is True
+
+
+def test_named_calendar_day_fails_closed_for_unverified_year():
+    scope = resolve_query_calendar_scope(
+        "中秋节那天我们在干嘛？",
+        "2025-10-29T21:00:00+08:00",
+        "caller_as_of",
+        used_for_record_filtering=True,
+    )
+
+    assert scope["status"] == "unresolved_unsupported_named_calendar_year"
+    assert scope["matched_expression"] == "中秋节"
+    assert scope["resolved_on"] is None
+    assert scope["used_for_record_filtering"] is False
+
+
 def test_last_month_resolves_to_calendar_range():
     timeline = build_event_timeline(
         "上个月我们做了什么？",

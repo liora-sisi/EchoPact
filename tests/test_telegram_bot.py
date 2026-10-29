@@ -116,6 +116,29 @@ class FakeRecall:
         return {
             "query": query,
             "recall_mode": "sqlite_fts5_trigram",
+            "coverage": {
+                "verified_knowledge_cutoff_at": "2026-10-28T01:32:19Z",
+                "coverage_gap": False,
+            },
+            "record_time_filter": {
+                "applied": True,
+                "created_at_start": "2026-09-14T16:00:00Z",
+                "created_at_end_exclusive": "2026-09-15T16:00:00Z",
+            },
+            "temporal_scope": {
+                "status": "resolved_calendar_scope",
+                "matched_expression": "9月15日",
+                "resolved_on": "2026-09-15",
+                "filter_start_at": "2026-09-14T16:00:00Z",
+                "filter_end_at_exclusive": "2026-09-15T16:00:00Z",
+            },
+            "event_timeline": {
+                "archive_first_scope": {
+                    "kind": "bounded_recalled_evidence",
+                    "exhaustive": False,
+                    "claim": "earliest observed in this packet, not an absolute archive first",
+                }
+            },
             "memories": [
                 {
                     "record_id": "chatgpt-a",
@@ -260,6 +283,9 @@ def test_why_command_explains_exact_previous_recall_and_model_boundary(tmp_path)
     assert "脑袋实际看到的原文：\n第一条 GPT 记忆" in rendered
     assert "Echo 召回的原文：\n第二条 Codex 记忆" in rendered
     assert "候选进入了召回池，但排在本次 Top-K 之外" in rendered
+    assert "日期解释：9月15日 → 2026-09-15（成都）" in rendered
+    assert "最早口径：只是在本次证据包里最早" in rendered
+    assert "日期覆盖：请求的整段日期位于当前已验证数据截止线内" in rendered
     assert all(len(message) <= bot_runtime.TELEGRAM_MESSAGE_LIMIT for _, message in messages)
 
 
@@ -289,6 +315,8 @@ def test_badcase_command_saves_last_dialogue_and_debug_packet(tmp_path):
     assert packet["recall"]["recall_debug"]["top_k"][0][
         "source_channel"
     ] == "chatgpt"
+    assert packet["recall"]["temporal_scope"]["resolved_on"] == "2026-09-15"
+    assert packet["recall"]["record_time_filter"]["applied"] is True
     assert "已经收进本地" in telegram.sent[-1][1]
     assert not list(bad_cases.root.glob("*.tmp"))
 
@@ -512,7 +540,25 @@ def test_answerer_limits_external_evidence_items(monkeypatch):
                 {"record_id": "a", "content": "第一条"},
                 {"record_id": "b", "content": "第二条"},
                 {"record_id": "c", "content": "不应外送的第三条"},
-            ]
+            ],
+            "temporal_scope": {
+                "status": "resolved_calendar_scope",
+                "matched_expression": "9月15日",
+                "resolved_on": "2026-09-15",
+                "filter_start_at": "2026-09-14T16:00:00Z",
+                "filter_end_at_exclusive": "2026-09-15T16:00:00Z",
+            },
+            "coverage": {
+                "verified_knowledge_cutoff_at": "2026-10-28T01:32:19Z",
+                "coverage_gap": True,
+            },
+            "event_timeline": {
+                "archive_first_scope": {
+                    "kind": "bounded_recalled_evidence",
+                    "exhaustive": False,
+                    "claim": "bounded only",
+                }
+            },
         },
     )
 
@@ -523,3 +569,8 @@ def test_answerer_limits_external_evidence_items(monkeypatch):
     assert "explicit user corrections" in captured["payload"]["messages"][0][
         "content"
     ]
+    assert "calendar_scope=" in captured["payload"]["messages"][1]["content"]
+    assert "earliest_scope=" in captured["payload"]["messages"][1]["content"]
+    assert "requested_scope=within_verified_cutoff" in captured["payload"][
+        "messages"
+    ][1]["content"]

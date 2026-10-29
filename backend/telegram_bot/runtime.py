@@ -197,6 +197,7 @@ class OpenAICompatibleAnswerer:
                 f"verified={bool(memory.get('verified'))}; content={content}"
             )
         evidence = "\n".join(evidence_lines) or "[no recalled evidence]"
+        evidence_scope = _answer_scope_summary(recall)
         payload = {
             "model": self._model,
             "temperature": 0.2,
@@ -215,13 +216,24 @@ class OpenAICompatibleAnswerer:
                         "not merge similarly named people, objects, or events unless "
                         "the evidence explicitly links them. "
                         "Preserve uncertainty and source or time differences when "
-                        "they matter. If evidence is insufficient, say so and ask "
-                        "for one useful clue. Never invent missing facts."
+                        "they matter. A created_at value is the archive record time, "
+                        "not automatic proof that every event mentioned in that "
+                        "record happened then. When a deterministic calendar scope "
+                        "is supplied, the records were already restricted to that "
+                        "Chengdu date; summarize what those in-range conversations "
+                        "show instead of claiming there is no date information. "
+                        "Never call a bounded packet's earliest record the absolute "
+                        "first occurrence unless the scope explicitly says it is "
+                        "exhaustive. If evidence is insufficient, say so and ask for "
+                        "one useful clue. Never invent missing facts."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"Question: {query}\nEvidence:\n{evidence}",
+                    "content": (
+                        f"Question: {query}\nEvidence scope:\n{evidence_scope}"
+                        f"\nEvidence:\n{evidence}"
+                    ),
                 },
             ],
         }
@@ -304,6 +316,10 @@ class BadCaseStore:
                     "query",
                     "recall_mode",
                     "coverage",
+                    "record_time_filter",
+                    "temporal_scope",
+                    "event_timeline",
+                    "event_recall",
                     "memories",
                     "source_provenance",
                     "speech_query_rescue",
@@ -321,6 +337,84 @@ class BadCaseStore:
         finally:
             temp_path.unlink(missing_ok=True)
         return final_path
+
+
+def _answer_scope_summary(recall: Mapping[str, Any]) -> str:
+    """Render bounded machine facts that the answer model must not infer."""
+
+    lines = []
+    temporal = recall.get("temporal_scope")
+    if isinstance(temporal, Mapping):
+        status = str(temporal.get("status") or "unknown")
+        matched = temporal.get("matched_expression")
+        resolved = temporal.get("resolved_on")
+        start = temporal.get("filter_start_at")
+        end = temporal.get("filter_end_at_exclusive")
+        lines.append(
+            "calendar_scope="
+            f"{status}; expression={matched or 'none'}; "
+            f"resolved_on={resolved or 'none'}; "
+            f"record_filter_utc=[{start or 'none'}, {end or 'none'})"
+        )
+    timeline = recall.get("event_timeline")
+    if isinstance(timeline, Mapping):
+        first_scope = timeline.get("archive_first_scope")
+        if isinstance(first_scope, Mapping):
+            lines.append(
+                "earliest_scope="
+                f"{first_scope.get('kind') or 'unknown'}; "
+                f"exhaustive={bool(first_scope.get('exhaustive'))}; "
+                f"claim={first_scope.get('claim') or 'none'}"
+            )
+    event_recall = recall.get("event_recall")
+    if isinstance(event_recall, Mapping):
+        lines.append(
+            "event_recall="
+            f"status={event_recall.get('status') or 'unknown'}; "
+            f"candidates_scanned={event_recall.get('candidates_scanned')}; "
+            f"search_truncated={event_recall.get('search_truncated')}"
+        )
+    coverage = recall.get("coverage")
+    if isinstance(coverage, Mapping):
+        requested_scope_coverage = _requested_scope_coverage(recall)
+        lines.append(
+            "coverage="
+            f"verified_cutoff={coverage.get('verified_knowledge_cutoff_at')}; "
+            f"gap={coverage.get('coverage_gap')}; "
+            f"requested_scope={requested_scope_coverage}"
+        )
+    return "\n".join(lines) or "[no additional scope metadata]"
+
+
+def _aware_datetime(value: object) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    candidate = value.strip()
+    if candidate.endswith(("Z", "z")):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _requested_scope_coverage(recall: Mapping[str, Any]) -> str:
+    """Separate a covered past day from a later caller-as-of coverage gap."""
+
+    temporal = recall.get("temporal_scope")
+    coverage = recall.get("coverage")
+    if not isinstance(temporal, Mapping) or not isinstance(coverage, Mapping):
+        return "not_assessed"
+    scope_end = _aware_datetime(temporal.get("filter_end_at_exclusive"))
+    cutoff = _aware_datetime(coverage.get("verified_knowledge_cutoff_at"))
+    if scope_end is None or cutoff is None:
+        return "not_assessed"
+    if scope_end <= cutoff:
+        return "within_verified_cutoff"
+    return "extends_beyond_verified_cutoff"
 
 
 def _fallback_answer(recall: Mapping[str, Any]) -> str:
@@ -458,6 +552,40 @@ def render_mobile_recall_debug(interaction: Interaction) -> list[str]:
             "每条最多展示脑袋实际可见的 1200 字。"
         ),
     ]
+
+    temporal = recall.get("temporal_scope")
+    if isinstance(temporal, Mapping):
+        if temporal.get("resolved_on"):
+            header_lines.append(
+                "日期解释："
+                f"{temporal.get('matched_expression') or '日期表达'} → "
+                f"{temporal.get('resolved_on')}（成都）"
+            )
+        elif temporal.get("status") not in {None, "not_requested"}:
+            header_lines.append(
+                "日期解释："
+                f"{temporal.get('matched_expression') or '日期表达'} 未能可靠换算"
+                f"（{temporal.get('status')}）"
+            )
+    record_filter = recall.get("record_time_filter")
+    if isinstance(record_filter, Mapping) and record_filter.get("applied"):
+        header_lines.append(
+            "记录时间过滤："
+            f"[{record_filter.get('created_at_start')}, "
+            f"{record_filter.get('created_at_end_exclusive')}) UTC"
+        )
+    timeline = recall.get("event_timeline")
+    if isinstance(timeline, Mapping):
+        first_scope = timeline.get("archive_first_scope")
+        if isinstance(first_scope, Mapping) and not first_scope.get("exhaustive"):
+            header_lines.append(
+                "最早口径：只是在本次证据包里最早，不是全库第一次。"
+            )
+    requested_scope_coverage = _requested_scope_coverage(recall)
+    if requested_scope_coverage == "within_verified_cutoff":
+        header_lines.append("日期覆盖：请求的整段日期位于当前已验证数据截止线内。")
+    elif requested_scope_coverage == "extends_beyond_verified_cutoff":
+        header_lines.append("日期覆盖：请求范围越过当前已验证数据截止线。")
 
     speech = recall.get("speech_query_rescue")
     if isinstance(speech, Mapping):

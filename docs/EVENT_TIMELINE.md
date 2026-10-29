@@ -59,6 +59,16 @@ recorded inside the requested calendar scope; it does not prove the real-world
 event happened then. Later retellings outside the scope are returned only in a
 separate labelled channel and never merged into the primary in-range memories.
 
+Named lunar-calendar days are resolved only from an explicit verified-year
+table. The first supported entry is `中秋` / `中秋节` for 2026, resolved to
+`2026-09-25` with `precision=named_calendar_day`. An unsupported year fails
+closed as `unresolved_unsupported_named_calendar_year`; Echo Pact never copies
+one year's lunar date into another year. When the caller asks only for a broad
+day overview (for example, “10月26号我们在做什么” or “中秋节那天我们在干嘛”),
+the bounded recall path round-robins in-range records across conversations
+instead of requiring the generic question words to appear in the archive. The
+same record-time/event-time distinction still applies.
+
 ChatGPT export timestamps travel through Room Ferry as epoch milliseconds and
 are normalized by Echo Pact to UTC instants. They are not stored as Beijing
 wall-clock strings. Local conversion happens only in the response annotation.

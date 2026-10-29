@@ -92,6 +92,28 @@ _RELATIVE_QUERY_MARKERS = (
     "过去一个月",
     "上个月",
 )
+
+# Named lunar-calendar days are intentionally explicit and fail closed outside
+# a verified year.  The 2026 Mid-Autumn date is published in the State Council
+# holiday notice (国办发明电〔2025〕7号).  Do not guess another year's lunar date
+# from this table.
+_NAMED_CALENDAR_DATES = {
+    2026: {
+        "中秋节": date(2026, 9, 25),
+        "中秋": date(2026, 9, 25),
+    },
+}
+_NAMED_CALENDAR_MARKERS = tuple(
+    sorted(
+        {
+            marker
+            for year_dates in _NAMED_CALENDAR_DATES.values()
+            for marker in year_dates
+        },
+        key=len,
+        reverse=True,
+    )
+)
 _WEEKDAY_INDEX = {
     "一": 0,
     "二": 1,
@@ -190,6 +212,8 @@ def query_uses_relative_time(query: Any) -> bool:
     compact = re.sub(r"\s+", "", _normalize_text(query))
     if any(marker in compact for marker in _RELATIVE_QUERY_MARKERS):
         return True
+    if any(marker in compact for marker in _NAMED_CALENDAR_MARKERS):
+        return True
     if _FULL_DATE_RE.search(compact):
         return False
     return bool(
@@ -276,6 +300,23 @@ def _absolute_query_date(
         return None, None
 
 
+def _named_calendar_expression(compact: str) -> Optional[str]:
+    return next(
+        (marker for marker in _NAMED_CALENDAR_MARKERS if marker in compact),
+        None,
+    )
+
+
+def _named_calendar_date(
+    compact: str,
+    reference_date: Optional[date],
+) -> tuple[Optional[date], Optional[str]]:
+    marker = _named_calendar_expression(compact)
+    if marker is None or reference_date is None:
+        return None, marker
+    return _NAMED_CALENDAR_DATES.get(reference_date.year, {}).get(marker), marker
+
+
 def resolve_query_calendar_scope(
     query: str,
     reference_instant: Optional[str],
@@ -300,7 +341,11 @@ def resolve_query_calendar_scope(
     absolute_date, absolute_expression = _absolute_query_date(
         compact, reference_date
     )
-    if not markers and absolute_date is None:
+    named_date, named_expression = _named_calendar_date(compact, reference_date)
+    if absolute_date is None and named_date is not None:
+        absolute_date = named_date
+        absolute_expression = named_expression
+    if not markers and absolute_date is None and named_expression is None:
         return {
             "status": "not_requested",
             "reference_at": None,
@@ -321,7 +366,24 @@ def resolve_query_calendar_scope(
             "reference_at": None,
             "reference_at_local": None,
             "reference_source": reference_source,
-            "matched_expression": markers[0],
+            "matched_expression": named_expression or markers[0],
+            "resolved_on": None,
+            "resolved_start_on": None,
+            "resolved_end_on": None,
+            "filter_start_at": None,
+            "filter_end_at_exclusive": None,
+            "used_for_record_filtering": False,
+        }
+
+    if named_expression is not None and absolute_date is None:
+        return {
+            "status": "unresolved_unsupported_named_calendar_year",
+            "reference_at": _utc_iso(parsed) if parsed is not None else None,
+            "reference_at_local": (
+                local_reference.isoformat() if local_reference else None
+            ),
+            "reference_source": reference_source,
+            "matched_expression": named_expression,
             "resolved_on": None,
             "resolved_start_on": None,
             "resolved_end_on": None,
@@ -334,7 +396,7 @@ def resolve_query_calendar_scope(
     resolved_start = None
     resolved_end = None
     matched_expression = absolute_expression or markers[0]
-    precision = "day"
+    precision = "named_calendar_day" if named_expression else "day"
 
     weekday_match = re.search(r"上(?:周|星期)([一二三四五六日天])", compact)
     if absolute_date is not None:
