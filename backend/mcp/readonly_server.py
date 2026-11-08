@@ -40,6 +40,7 @@ SERVER_VERSION = "0.1.2"
 MAX_QUERY_CHARS = 2_000
 MAX_RESULT_LIMIT = 10
 MAX_CONTENT_CHARS = 4_000
+BRIEF_PREVIEW_CHARS = 120
 
 SERVER_INSTRUCTIONS = (
     "Echo Pact is a read-only external memory fallback, not a replacement for "
@@ -79,6 +80,9 @@ SERVER_INSTRUCTIONS = (
     "must not be auto-merged. The result limit counts distinct support units; "
     "source_provenance keeps metadata for compacted mirror counterparts. Archive "
     "coverage continues to count immutable raw records. "
+    "When context budget matters, call recall_context with detail \"brief\" "
+    "for an overview pass of one-line previews, then expand a chosen hit "
+    "with a follow-up full-detail query on its own anchors. "
     "Do not call merely because a past topic is mentioned when the current "
     "conversation already supports the answer. Use memory_coverage to check what "
     "the archive can honestly support. Treat verified, authority, "
@@ -106,7 +110,10 @@ TOOLS = (
             "evidence, optional Claim annotations, and a conservative "
             "multi-occurrence event_collection when the query explicitly asks "
             "for several related events, or named_collection when it asks for "
-            "the count and names of a category of things."
+            "the count and names of a category of things. Pass detail "
+            "\"brief\" for an overview pass that returns one-line previews "
+            "without full record content, then expand a chosen hit with a "
+            "follow-up full-detail query."
         ),
         "inputSchema": {
             "type": "object",
@@ -141,6 +148,17 @@ TOOLS = (
                     "type": "boolean",
                     "default": True,
                     "description": "Attach visible Claim/conflict annotations.",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["full", "brief"],
+                    "default": "full",
+                    "description": (
+                        "brief returns one-line previews (record_id, source, "
+                        "role, time, preview of about 120 characters, and "
+                        "context counts) without full record content; full "
+                        "returns the bounded records as before."
+                    ),
                 },
             },
             "required": ["query"],
@@ -228,6 +246,59 @@ def _bounded_result(result: Mapping[str, Any]) -> Dict[str, Any]:
     return bounded
 
 
+def _brief_memory(memory: Mapping[str, Any]) -> Dict[str, Any]:
+    """One-line preview of a record for overview-first recall."""
+
+    content = str(memory.get("content") or "")
+    preview = (
+        content
+        if len(content) <= BRIEF_PREVIEW_CHARS
+        else content[:BRIEF_PREVIEW_CHARS] + "\u2026"
+    )
+    return {
+        "record_id": str(memory.get("record_id") or ""),
+        "source_kind": memory.get("source_kind"),
+        "source_channel": memory.get("source_channel"),
+        "conversation_id": memory.get("conversation_id"),
+        "role": memory.get("role"),
+        "created_at": memory.get("created_at"),
+        "confidence": memory.get("confidence"),
+        "content_chars": len(content),
+        "content_preview": preview,
+        "claims_count": len(memory.get("claims") or []),
+        "conversation_context_count": len(memory.get("conversation_context") or []),
+        "event_evidence_count": len(memory.get("event_evidence") or []),
+        "supporting_phase_records_count": len(
+            memory.get("supporting_phase_records") or []
+        ),
+    }
+
+
+def _brief_result(result: Mapping[str, Any]) -> Dict[str, Any]:
+    """Slim a bounded recall result down to per-record one-line previews.
+
+    Provenance, coverage, clarification and collection aggregates are kept
+    untouched; only record payloads are replaced by previews plus counts, so a
+    caller can choose which record to expand with a follow-up full-detail call.
+    """
+
+    bounded = _bounded_result(result)
+    bounded["detail"] = "brief"
+    bounded["memories"] = [
+        _brief_memory(memory)
+        for memory in bounded.get("memories", [])
+        if isinstance(memory, Mapping)
+    ]
+    temporal_scope = bounded.get("temporal_scope")
+    if isinstance(temporal_scope, dict):
+        temporal_scope["outside_scope_retellings"] = [
+            _brief_memory(memory)
+            for memory in temporal_scope.get("outside_scope_retellings", [])
+            if isinstance(memory, Mapping)
+        ]
+    return bounded
+
+
 @dataclass(frozen=True)
 class ReadonlyGateway:
     db_path: str
@@ -262,7 +333,7 @@ class ReadonlyGateway:
         self.coverage()
 
     def recall(self, arguments: Mapping[str, Any]) -> Dict[str, Any]:
-        allowed = {"query", "limit", "as_of", "include_projection"}
+        allowed = {"query", "limit", "as_of", "include_projection", "detail"}
         unknown = sorted(set(arguments) - allowed)
         if unknown:
             raise ValueError("unknown arguments: " + ", ".join(unknown))
@@ -282,6 +353,9 @@ class ReadonlyGateway:
         include_projection = arguments.get("include_projection", True)
         if not isinstance(include_projection, bool):
             raise ValueError("include_projection must be a boolean")
+        detail = arguments.get("detail", "full")
+        if detail not in ("full", "brief"):
+            raise ValueError('detail must be "full" or "brief"')
 
         result = adaptive_recall(
             query,
@@ -294,6 +368,8 @@ class ReadonlyGateway:
             reference_time_source=reference_time_source,
             speech_query_policy=self.speech_query_policy,
         )
+        if detail == "brief":
+            return _brief_result(result)
         return _bounded_result(result)
 
 

@@ -270,8 +270,7 @@ def test_gateway_bounds_long_memory_content(mcp_db):
 
 def test_gateway_bounds_shared_event_evidence_content():
     original = "乙" * (MAX_CONTENT_CHARS + 40)
-    relationship_direction = {
-        "relation": "guided_visit",
+    relationship_direction = {"relation": "guided_visit",
         "query_speaker_role": "guest",
     }
     bounded = _bounded_result(
@@ -447,3 +446,97 @@ def test_tool_argument_validation_does_not_echo_query(mcp_db):
     rendered = json.dumps(response, ensure_ascii=False)
     assert "PRIVATE-SYNTHETIC" not in rendered
     assert OUTSIDER not in rendered
+
+
+def test_brief_result_returns_previews_and_counts_without_content():
+    from backend.mcp.readonly_server import BRIEF_PREVIEW_CHARS, _brief_result
+
+    long_content = "甲" * (BRIEF_PREVIEW_CHARS * 5)
+    brief = _brief_result(
+        {
+            "memories": [
+                {
+                    "record_id": "rec-1",
+                    "source_kind": "synthetic_conversation",
+                    "conversation_id": "conv-1",
+                    "role": "user",
+                    "created_at": "2026-08-01T00:00:00Z",
+                    "content": long_content,
+                    "claims": [{"content": "claim"}],
+                    "conversation_context": [{"content": "ctx"}],
+                    "event_evidence": [{"content": "ev1"}, {"content": "ev2"}],
+                    "supporting_phase_records": [{"content": "sup"}],
+                }
+            ]
+        }
+    )
+
+    assert brief["detail"] == "brief"
+    memory = brief["memories"][0]
+    assert "content" not in memory
+    assert "claims" not in memory
+    assert "conversation_context" not in memory
+    assert "event_evidence" not in memory
+    assert "supporting_phase_records" not in memory
+    assert memory["record_id"] == "rec-1"
+    assert memory["content_chars"] == len(long_content)
+    assert memory["content_preview"].startswith("甲" * 10)
+    assert len(memory["content_preview"]) <= BRIEF_PREVIEW_CHARS + 1
+    assert memory["claims_count"] == 1
+    assert memory["conversation_context_count"] == 1
+    assert memory["event_evidence_count"] == 2
+    assert memory["supporting_phase_records_count"] == 1
+    assert long_content not in json.dumps(brief, ensure_ascii=False)
+
+
+def test_brief_result_slims_temporal_scope_retellings():
+    from backend.mcp.readonly_server import _brief_result
+
+    brief = _brief_result(
+        {
+            "memories": [],
+            "temporal_scope": {
+                "outside_scope_retellings": [
+                    {"record_id": "rec-9", "content": "旧复述" * 100}
+                ]
+            },
+        }
+    )
+
+    retelling = brief["temporal_scope"]["outside_scope_retellings"][0]
+    assert retelling["record_id"] == "rec-9"
+    assert "content" not in retelling
+    assert "旧复述" * 100 not in json.dumps(brief, ensure_ascii=False)
+
+
+def test_gateway_recall_rejects_unknown_detail_value(mcp_db):
+    gateway = ReadonlyGateway(db_path=str(mcp_db), agent_id=OWNER)
+    try:
+        gateway.recall({"query": "灯塔暗号", "detail": "everything"})
+    except ValueError as exc:
+        assert 'detail must be "full" or "brief"' in str(exc)
+    else:
+        raise AssertionError("expected ValueError for unknown detail")
+
+
+def test_gateway_recall_brief_mode_hides_full_content(mcp_db):
+    gateway = ReadonlyGateway(db_path=str(mcp_db), agent_id=OWNER)
+    result = gateway.recall({"query": "灯塔暗号 FERRY-MCP-2042", "detail": "brief"})
+
+    assert result["detail"] == "brief"
+    assert result["memories"], "expected at least one brief hit"
+    for memory in result["memories"]:
+        assert "content" not in memory
+        assert "content_preview" in memory
+        assert "content_chars" in memory
+    full = gateway.recall({"query": "灯塔暗号 FERRY-MCP-2042"})
+    assert any(
+        "FERRY-MCP-2042" in (memory.get("content") or "")
+        for memory in full["memories"]
+    )
+    assert "FERRY-MCP-2042" not in json.dumps(
+        result["memories"], ensure_ascii=False
+    ) or any(
+        "FERRY-MCP-2042" in (memory.get("content_preview") or "")
+        for memory in result["memories"]
+    )
