@@ -1,0 +1,18 @@
+[
+  {
+    "case_id": "compact_correction_preference_no_date",
+    "review_targets": ["据更正，起名人是南乔，接收人岑野", "起名已经发生，既不是未来计划也不是无法摘要", "日期未知，不能补成记录日", "喜欢称呼是偏好，旧说法应留痕"],
+    "records": [
+      {"record_id":"compact-c1","recorded_at":"2028-03-04T09:00:00+08:00","source_kind":"synthetic","content":"我记得是岑野给南乔起了昵称‘小灯塔’，具体哪天没有记。"},
+      {"record_id":"compact-c2","recorded_at":"2028-03-05T10:00:00+08:00","source_kind":"synthetic","content":"刚把方向讲反了。实际上是南乔给岑野起的这个昵称。岑野说他很喜欢这个称呼。"}
+    ]
+  },
+  {
+    "case_id": "compact_cancel_then_done",
+    "review_targets": ["原定2028年4月9日去植物园但取消，取消决定日未知", "2028年4月10日画册已整理完，不是计划", "下个月修钟仍为计划，无完整日期", "不能把未来年份当成拒绝处理合成故事的理由"],
+    "records": [
+      {"record_id":"compact-p1","recorded_at":"2028-04-07T09:00:00+08:00","source_kind":"synthetic","content":"计划2028年4月9日去植物园。"},
+      {"record_id":"compact-p2","recorded_at":"2028-04-11T10:00:00+08:00","source_kind":"synthetic","content":"植物园的计划取消了，取消决定是哪天没记。2028年4月10日，我们已经把画册整理完了。下个月想修钟，但还没开始。"}
+    ]
+  }
+]

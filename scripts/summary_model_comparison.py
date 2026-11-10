@@ -18,20 +18,24 @@ if str(ROOT) not in sys.path:
 
 from backend.memory.caretaker_summary import SummaryError, validate_records
 from backend.memory.caretaker_summary_v2 import SYSTEM_PROMPT, SUMMARY_SCHEMA, build_messages
+from backend.memory import caretaker_summary_v2, caretaker_summary_v3
 from backend.memory.summary_trial_budget import BudgetLedger
 from backend.memory.venice_summary_trial import (
     MODEL_PRICE_CEILINGS, TrialBudget, VeniceClient, preflight, read_dpapi_key, run_case,
 )
 
 
-def load_cases():
+def load_cases(compact=False):
     cases = []
-    for name, group in (("caretaker_summary_synthetic.json", "regression"),
-                        ("caretaker_summary_holdout.json", "held_out_before_first_run")):
+    files = (("caretaker_summary_compact_probe.json", "compact_new_before_first_run"),) if compact else (
+        ("caretaker_summary_synthetic.json", "regression"),
+        ("caretaker_summary_holdout.json", "held_out_before_first_run"))
+    for name, group in files:
         for case in json.loads((ROOT / "tests/fixtures" / name).read_text(encoding="utf-8")):
             validate_records(case["records"])
             cases.append({**case, "group": group})
-    if len(cases) != 6 or len({c["case_id"] for c in cases}) != 6:
+    expected_count = 2 if compact else 6
+    if len(cases) != expected_count or len({c["case_id"] for c in cases}) != expected_count:
         raise SummaryError("comparison_suite_changed")
     return cases
 
@@ -62,6 +66,8 @@ def restore_attempted(previous, report, cases, ledger):
 
 
 def run_comparison(client, cases, report, output_dir, ledger):
+    version = report.get("contract", "v2")
+    contract = {"v2": caretaker_summary_v2, "v3": caretaker_summary_v3}[version]
     prices = {model: preflight(client, model) for model in MODEL_PRICE_CEILINGS}
     report["preflight"] = prices
     report["inherited_reserved_usd"] = str(ledger.total)
@@ -73,7 +79,7 @@ def run_comparison(client, cases, report, output_dir, ledger):
         for model in prices:
             if (case["case_id"], model) in attempted:
                 continue
-            preview.reserve(build_messages(case["records"]), prices[model], SUMMARY_SCHEMA)
+            preview.reserve(contract.build_messages(case["records"]), prices[model], contract.SUMMARY_SCHEMA)
     report["projected_cumulative_reserved_usd"] = str(preview.spent_reservations)
     write_json(output_dir / "report.json", report)
 
@@ -88,7 +94,7 @@ def run_comparison(client, cases, report, output_dir, ledger):
                    "review_targets": case["review_targets"]}
             try:
                 result = run_case(client, case["records"], prices=prices[model], budget=budget,
-                                  before_request=reserve, model=model, contract_version="v2")
+                                  before_request=reserve, model=model, contract_version=version)
                 row.update(status="validated_structure", result=result)
             except SummaryError as error:
                 row.update(status="rejected", error_code=str(error))
@@ -113,16 +119,19 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--budget-ledger", type=Path)
     parser.add_argument("--continue-unattempted-from", type=Path)
+    parser.add_argument("--compact-contract-probe", action="store_true")
     args = parser.parse_args(argv)
-    cases = load_cases()
+    cases = load_cases(args.compact_contract_probe)
+    version = "v3" if args.compact_contract_probe else "v2"
+    contract = caretaker_summary_v3 if args.compact_contract_probe else caretaker_summary_v2
     if not args.allow_live_api:
         preview = TrialBudget(max_calls=12)
         for case in cases:
             for model, (inp, out) in MODEL_PRICE_CEILINGS.items():
-                preview.reserve(build_messages(case["records"]), {
-                    "input_usd_per_million": str(inp), "output_usd_per_million": str(out)}, SUMMARY_SCHEMA)
+                preview.reserve(contract.build_messages(case["records"]), {
+                    "input_usd_per_million": str(inp), "output_usd_per_million": str(out)}, contract.SUMMARY_SCHEMA)
         print(json.dumps({"mode": "dry_run", "models": list(MODEL_PRICE_CEILINGS), "cases": len(cases),
-            "model_calls": 0, "planned_calls": 12, "new_reservation_ceiling_usd": str(preview.spent_reservations),
+            "model_calls": 0, "contract": version, "planned_calls": len(cases)*2, "new_reservation_ceiling_usd": str(preview.spent_reservations),
             "cumulative_budget_usd": "0.05", "requires_existing_budget_ledger": True}))
         return 0
     if not all((args.key_file, args.output_dir, args.budget_ledger)):
@@ -131,14 +140,14 @@ def main(argv=None):
         parser.error("output directory must be new; no implicit retries")
     args.output_dir.mkdir(parents=True)
     report = {"schema": "echo-summary-model-comparison-v1", "run_id": args.output_dir.name,
-        "at": datetime.now(timezone.utc).isoformat(), "synthetic_only": True, "contract": "v2",
-        "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
-        "schema_sha256": hashlib.sha256(json.dumps(SUMMARY_SCHEMA, sort_keys=True).encode()).hexdigest(),
+        "at": datetime.now(timezone.utc).isoformat(), "synthetic_only": True, "contract": version,
+        "prompt_sha256": hashlib.sha256(contract.SYSTEM_PROMPT.encode()).hexdigest(),
+        "schema_sha256": hashlib.sha256(json.dumps(contract.SUMMARY_SCHEMA, sort_keys=True).encode()).hexdigest(),
         "input_sha256": hashlib.sha256(json.dumps(cases, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         "status": "running", "requires_human_review": True, "cases": []}
     write_json(args.output_dir / "synthetic-input.json", cases)
     # Freeze instructions and schema as well as inputs. Gold review targets are never sent.
-    write_json(args.output_dir / "contract.json", {"system_prompt": SYSTEM_PROMPT, "schema": SUMMARY_SCHEMA})
+    write_json(args.output_dir / "contract.json", {"system_prompt": contract.SYSTEM_PROMPT, "schema": contract.SUMMARY_SCHEMA})
     try:
         with BudgetLedger(args.budget_ledger) as ledger:
             report["cumulative_reserved_usd"] = str(ledger.total)
