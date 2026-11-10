@@ -12,7 +12,7 @@ import re
 from .event_timeline import resolve_query_calendar_scope
 from .caretaker_shadow import build_shadow_packet
 
-VERSION = "echo-query-caretaker-shadow-v1"
+VERSION = "echo-query-caretaker-shadow-v2"
 MAX_PAYLOAD_CHARS = 8000
 MAX_CONTENT_CHARS = 2400
 MAX_EXTRA_QUERIES = 2
@@ -137,17 +137,32 @@ def evidence_brief(original, passes, *, query, plan=None):
             cues = ("规则", "格式", "样式", "步骤", "约定", "动作", "功能") if intent == "procedure" else ("区别", "不同", "两串", "分别")
             # Ranking is only a lexical aid; it makes no claim of factual truth.
             score = matched * 100 + (sum(t in content for t in cues) * 4 if terms else 0)
-            candidates.append((score, pass_number, rank, row))
+            candidates.append((score, pass_number, rank, row, matched))
     candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
     result = {"schema_version": VERSION + "-brief", "query": query,
               "generation": "local_exact_excerpts_no_model_summary", "items": [],
               "content_chars": 0, "excluded_count": 0, "original_available": True,
+              "excluded_reasons": {"no_literal_topic": 0, "brief_budget": 0},
               "limitations": ["not_semantically_verified", "not_exhaustive", "record_time_is_not_event_time"],
               "calendar_scope": copy.deepcopy(original.get("temporal_scope") or {}).get("status"),
               "coverage_gap": bool((original.get("coverage") or {}).get("coverage_gap"))}
-    for score, pass_number, rank, row in candidates:
+    if terms:
+        result["limitations"].append("literal_topic_gate_can_miss_aliases")
+    has_topic = any(row[4] for row in candidates)
+    result["evidence_status"] = ("literal_topic_candidates_unverified" if terms and has_topic
+                                 else "no_literal_topic_evidence" if terms else "unverified_excerpts")
+    for score, pass_number, rank, row, matched in candidates:
+        # Generic intent words are not evidence of the requested subject. Keep
+        # unmatched records in the original/passes, not as padding in the brief.
+        # A compound term or alias may miss useful evidence; report the lexical
+        # gap rather than asserting that the underlying memory does not exist.
+        if terms and not matched:
+            result["excluded_count"] += 1
+            result["excluded_reasons"]["no_literal_topic"] += 1
+            continue
         if len(result["items"]) >= 6:
             result["excluded_count"] += 1
+            result["excluded_reasons"]["brief_budget"] += 1
             continue
         # For constrained questions only use the original shadow's date-audited
         # prefix selection, handled by run_shadow below; this routine is generic.
@@ -161,6 +176,15 @@ def evidence_brief(original, passes, *, query, plan=None):
             result["items"].pop()
             result["content_chars"] -= len(text)
             result["excluded_count"] += 1
+            result["excluded_reasons"]["brief_budget"] += 1
+    # Final counters also occupy space, including when their digit count grows.
+    while _size(result) > MAX_PAYLOAD_CHARS and result["items"]:
+        row = result["items"].pop()
+        result["content_chars"] -= len(row["text"])
+        result["excluded_count"] += 1
+        result["excluded_reasons"]["brief_budget"] += 1
+    if has_topic and not result["items"]:
+        result["evidence_status"] = "no_excerpt_within_brief_budget"
     return result
 
 

@@ -99,10 +99,36 @@ def test_excerpts_use_exact_offsets_and_entire_short_packet_is_bounded():
     result = core.evidence_brief(original, passes, query=QUESTION, plan=PLAN)
     assert core._size(result) <= 8000 and result["content_chars"] <= 2400 and len(result["items"]) <= 6
     assert result["excluded_count"] > 0
+    assert result["excluded_count"] == sum(result["excluded_reasons"].values())
     source = {p["memories"][0]["record_id"]: p["memories"][0]["content"] for p in [original, *passes]}
     for item in result["items"]:
         assert item["text"] == source[item["record_id"]][item["excerpt_start"]:item["excerpt_end"]]
         assert "陶艺" in item["text"]
+
+
+def test_generic_intent_matches_cannot_pad_a_topic_brief():
+    original = packet("舞蹈规则、格式、样式、步骤、动作与功能。", "unrelated")
+    passes = [packet("陶艺：晾干后烧制。", "relevant")]
+    result = core.evidence_brief(original, passes, query=QUESTION, plan=PLAN)
+    assert [row["record_id"] for row in result["items"]] == ["relevant"]
+    assert result["excluded_reasons"] == {"no_literal_topic": 1, "brief_budget": 0}
+    assert result["excluded_count"] == 1
+    assert result["evidence_status"] == "literal_topic_candidates_unverified"
+    assert result["original_available"]
+
+
+def test_compound_topic_gap_is_explicit_without_discarding_original_evidence():
+    question = "桌面陶艺机器人要有哪些动作？"
+    plan = {"status": "planned", "intent": "procedure", "topic_terms": ["桌面陶艺机器人"]}
+    original = packet("陶艺机器人动作：点头、摇臂。", "possible-alias")
+    result = core.run_shadow(question, as_of="2031-05-07T00:00:00Z", limit=10,
+                             runner=lambda _: copy.deepcopy(original), planner=lambda _: plan)
+    assert result["planner_status"] == "planned"
+    assert result["original"] == original and result["passes"] == [original, original]
+    assert result["brief"]["items"] == []
+    assert result["brief"]["evidence_status"] == "no_literal_topic_evidence"
+    assert result["brief"]["excluded_reasons"] == {"no_literal_topic": 1, "brief_budget": 0}
+    assert "literal_topic_gate_can_miss_aliases" in result["brief"]["limitations"]
 
 
 def response(plan=PLAN):
