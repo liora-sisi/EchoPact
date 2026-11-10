@@ -222,6 +222,10 @@ def run_case(client, records: list[dict], *, prices: dict, budget: TrialBudget,
         from . import caretaker_summary_v3
         builder, schema, validator = (caretaker_summary_v3.build_messages,
             caretaker_summary_v3.SUMMARY_SCHEMA, caretaker_summary_v3.validate_summary)
+    elif contract_version == "v4":
+        from . import caretaker_summary_v4
+        builder, schema, validator = (caretaker_summary_v4.build_messages,
+            caretaker_summary_v4.SUMMARY_SCHEMA, caretaker_summary_v4.validate_summary)
     else:
         raise SummaryError("unknown_summary_contract")
     messages = builder(records)

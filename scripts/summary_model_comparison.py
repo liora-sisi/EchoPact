@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two models, one frozen v2 prompt/suite; synthetic-only and offline by default."""
+"""Frozen synthetic suites; historical comparison and bounded repair probes."""
 
 from __future__ import annotations
 
@@ -18,26 +18,46 @@ if str(ROOT) not in sys.path:
 
 from backend.memory.caretaker_summary import SummaryError, validate_records
 from backend.memory.caretaker_summary_v2 import SYSTEM_PROMPT, SUMMARY_SCHEMA, build_messages
-from backend.memory import caretaker_summary_v2, caretaker_summary_v3
+from backend.memory import caretaker_summary_v2, caretaker_summary_v3, caretaker_summary_v4
 from backend.memory.summary_trial_budget import BudgetLedger
 from backend.memory.venice_summary_trial import (
     MODEL_PRICE_CEILINGS, TrialBudget, VeniceClient, preflight, read_dpapi_key, run_case,
 )
 
 
-def load_cases(compact=False):
+MISTRAL = "mistral-small-3-2-24b-instruct"
+CONTRACTS = {"v2": caretaker_summary_v2, "v3": caretaker_summary_v3, "v4": caretaker_summary_v4}
+
+
+def load_cases(compact=False, repair=False):
     cases = []
-    files = (("caretaker_summary_compact_probe.json", "compact_new_before_first_run"),) if compact else (
-        ("caretaker_summary_synthetic.json", "regression"),
-        ("caretaker_summary_holdout.json", "held_out_before_first_run"))
+    if repair:
+        files = (("caretaker_summary_compact_probe.json", "regression"),
+                 ("caretaker_summary_evidence_repair.json", "held_out_before_first_run"))
+    elif compact:
+        files = (("caretaker_summary_compact_probe.json", "compact_new_before_first_run"),)
+    else:
+        files = (("caretaker_summary_synthetic.json", "regression"),
+                 ("caretaker_summary_holdout.json", "held_out_before_first_run"))
     for name, group in files:
         for case in json.loads((ROOT / "tests/fixtures" / name).read_text(encoding="utf-8")):
             validate_records(case["records"])
             cases.append({**case, "group": group})
-    expected_count = 2 if compact else 6
+    expected_count = 4 if repair else (2 if compact else 6)
     if len(cases) != expected_count or len({c["case_id"] for c in cases}) != expected_count:
         raise SummaryError("comparison_suite_changed")
     return cases
+
+
+def selected_models(report):
+    models = report.get("models", list(MODEL_PRICE_CEILINGS))
+    if (not isinstance(models, list) or not models
+            or any(not isinstance(m, str) or m not in MODEL_PRICE_CEILINGS for m in models)
+            or len(set(models)) != len(models)):
+        raise SummaryError("invalid_comparison_models")
+    if report.get("contract") == "v4" and models != [MISTRAL]:
+        raise SummaryError("repair_probe_requires_mistral_only")
+    return models
 
 
 def write_json(path, data):
@@ -52,10 +72,12 @@ def restore_attempted(previous, report, cases, ledger):
     for name in ("schema", "contract", "prompt_sha256", "schema_sha256", "input_sha256"):
         if previous.get(name) != report.get(name):
             raise SummaryError("continuation_contract_or_input_changed")
+    if selected_models(previous) != selected_models(report):
+        raise SummaryError("continuation_models_changed")
     if previous.get("status") != "stopped_no_retry" or previous.get("synthetic_only") is not True:
         raise SummaryError("continuation_requires_stopped_synthetic_run")
     lineage = [*previous.get("lineage", []), previous["run_id"]]
-    expected = {(c["case_id"], m) for c in cases for m in MODEL_PRICE_CEILINGS}
+    expected = {(c["case_id"], m) for c in cases for m in selected_models(report)}
     rows = previous.get("cases", [])
     attempted = [(r["case_id"], r["model"]) for r in rows]
     reserved = [(r["case_id"], r["model"]) for r in ledger.data["reservations"] if r["run_id"] in lineage]
@@ -67,8 +89,8 @@ def restore_attempted(previous, report, cases, ledger):
 
 def run_comparison(client, cases, report, output_dir, ledger):
     version = report.get("contract", "v2")
-    contract = {"v2": caretaker_summary_v2, "v3": caretaker_summary_v3}[version]
-    prices = {model: preflight(client, model) for model in MODEL_PRICE_CEILINGS}
+    contract = CONTRACTS[version]
+    prices = {model: preflight(client, model) for model in selected_models(report)}
     report["preflight"] = prices
     report["inherited_reserved_usd"] = str(ledger.total)
     budget = TrialBudget(spent_reservations=ledger.total, max_calls=12)
@@ -119,19 +141,23 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--budget-ledger", type=Path)
     parser.add_argument("--continue-unattempted-from", type=Path)
-    parser.add_argument("--compact-contract-probe", action="store_true")
+    probes = parser.add_mutually_exclusive_group()
+    probes.add_argument("--compact-contract-probe", action="store_true")
+    probes.add_argument("--evidence-repair-probe", action="store_true")
     args = parser.parse_args(argv)
-    cases = load_cases(args.compact_contract_probe)
-    version = "v3" if args.compact_contract_probe else "v2"
-    contract = caretaker_summary_v3 if args.compact_contract_probe else caretaker_summary_v2
+    cases = load_cases(args.compact_contract_probe, args.evidence_repair_probe)
+    version = "v4" if args.evidence_repair_probe else ("v3" if args.compact_contract_probe else "v2")
+    contract = CONTRACTS[version]
+    models = [MISTRAL] if args.evidence_repair_probe else list(MODEL_PRICE_CEILINGS)
     if not args.allow_live_api:
         preview = TrialBudget(max_calls=12)
         for case in cases:
-            for model, (inp, out) in MODEL_PRICE_CEILINGS.items():
+            for model in models:
+                inp, out = MODEL_PRICE_CEILINGS[model]
                 preview.reserve(contract.build_messages(case["records"]), {
                     "input_usd_per_million": str(inp), "output_usd_per_million": str(out)}, contract.SUMMARY_SCHEMA)
-        print(json.dumps({"mode": "dry_run", "models": list(MODEL_PRICE_CEILINGS), "cases": len(cases),
-            "model_calls": 0, "contract": version, "planned_calls": len(cases)*2, "new_reservation_ceiling_usd": str(preview.spent_reservations),
+        print(json.dumps({"mode": "dry_run", "models": models, "cases": len(cases),
+            "model_calls": 0, "contract": version, "planned_calls": len(cases)*len(models), "new_reservation_ceiling_usd": str(preview.spent_reservations),
             "cumulative_budget_usd": "0.05", "requires_existing_budget_ledger": True}))
         return 0
     if not all((args.key_file, args.output_dir, args.budget_ledger)):
@@ -140,7 +166,7 @@ def main(argv=None):
         parser.error("output directory must be new; no implicit retries")
     args.output_dir.mkdir(parents=True)
     report = {"schema": "echo-summary-model-comparison-v1", "run_id": args.output_dir.name,
-        "at": datetime.now(timezone.utc).isoformat(), "synthetic_only": True, "contract": version,
+        "at": datetime.now(timezone.utc).isoformat(), "synthetic_only": True, "contract": version, "models": models,
         "prompt_sha256": hashlib.sha256(contract.SYSTEM_PROMPT.encode()).hexdigest(),
         "schema_sha256": hashlib.sha256(json.dumps(contract.SUMMARY_SCHEMA, sort_keys=True).encode()).hexdigest(),
         "input_sha256": hashlib.sha256(json.dumps(cases, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
