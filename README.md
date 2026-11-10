@@ -33,6 +33,9 @@ Telegram 的回答模型是末端表达器，尚不是通用小管家。
 [`摘要 API 合成试验`](docs/CARETAKER_API_TRIAL.md)、
 [`独立摘要柜与两阶段路线`](docs/SUMMARY_CABINET.md)。
 
+OpenAI 同题对照的接法、预算与进度见 [试验说明](docs/OPENAI_SUMMARY_COMPARISON.md)；
+默认离线，不改变生产入口。
+
 > M4.5 / M5 封板工具：证据与投影链在数据库迁移 v6 完成机制化保护；固定
 > 提交账本、全量回归、身份彩排、独立 Git 恢复包和七道普通快进前闸门均可
 > 重复执行。详见 [`docs/MILESTONE_RELEASE.md`](docs/MILESTONE_RELEASE.md)。

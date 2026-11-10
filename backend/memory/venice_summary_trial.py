@@ -37,7 +37,11 @@ SAFE_PROVIDER_CODES = {
 }
 
 
-def read_dpapi_key(path: str | Path) -> str:
+def read_dpapi_key(path: str | Path, *, provider: str = "venice") -> str:
+    entropies = {"venice": b"EchoPact.Venice.SummaryTrial.v1",
+                 "openai": b"EchoPact.OpenAI.SummaryTrial.v1"}
+    if provider not in entropies:
+        raise SummaryError("unsupported_key_provider")
     if os.name != "nt":
         raise SummaryError("windows_key_store_required")
     try:
@@ -45,7 +49,7 @@ def read_dpapi_key(path: str | Path) -> str:
         if len(raw) > 16384:
             raise ValueError
         envelope = json.loads(raw)
-        if (envelope.get("schema") != "echo-caretaker-key-v1" or envelope.get("provider") != "venice"
+        if (envelope.get("schema") != "echo-caretaker-key-v1" or envelope.get("provider") != provider
                 or envelope.get("protection") != "Windows-DPAPI-CurrentUser"):
             raise ValueError
         encrypted = base64.b64decode(envelope["ciphertext_b64"], validate=True)
@@ -60,7 +64,7 @@ def read_dpapi_key(path: str | Path) -> str:
         return Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))), buffer
 
     source, source_buffer = blob(encrypted)
-    entropy, entropy_buffer = blob(b"EchoPact.Venice.SummaryTrial.v1")
+    entropy, entropy_buffer = blob(entropies[provider])
     destination = Blob()
     crypt = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)

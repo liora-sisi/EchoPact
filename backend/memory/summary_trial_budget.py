@@ -19,7 +19,11 @@ class BudgetLedger:
     An interrupted process may leave the lock behind; reconciliation is manual.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, maximum_limit=MAX_SUPPORTED_BUDGET_USD):
+        if (not isinstance(maximum_limit, Decimal) or not maximum_limit.is_finite()
+                or not 0 < maximum_limit <= Decimal("0.50")):
+            raise SummaryError("invalid_trial_budget_ceiling")
+        self.maximum_limit = maximum_limit
         self.path = path
         self.lock_path = path.with_name(path.name + ".lock")
         self.lock_fd = None
@@ -48,7 +52,7 @@ class BudgetLedger:
             if not isinstance(value, str):
                 raise ValueError
             limit = Decimal(value)
-            if not limit.is_finite() or not 0 < limit <= MAX_SUPPORTED_BUDGET_USD:
+            if not limit.is_finite() or not 0 < limit <= self.maximum_limit:
                 raise ValueError
             return limit
         except (KeyError, TypeError, ValueError, InvalidOperation):

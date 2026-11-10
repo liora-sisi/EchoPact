@@ -3,12 +3,14 @@
 param(
     [string]$StorePath,
     [string]$ReceiptPath,
+    [ValidateSet('venice','openai')][string]$Provider = 'venice',
     [switch]$SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
-$entropy = [Text.Encoding]::UTF8.GetBytes('EchoPact.Venice.SummaryTrial.v1')
+$providerTitle = if ($Provider -eq 'openai') { 'OpenAI' } else { 'Venice' }
+$entropy = [Text.Encoding]::UTF8.GetBytes("EchoPact.$providerTitle.SummaryTrial.v1")
 
 function Protect-KeyBytes([byte[]]$Bytes) {
     return [Security.Cryptography.ProtectedData]::Protect(
@@ -67,7 +69,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Echo｜威尼斯钥匙安全输入'
+$form.Text = "Echo | $providerTitle API Key"
 $form.ClientSize = New-Object Drawing.Size(560, 245)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
@@ -79,7 +81,7 @@ $form.Tag = 'pending'
 $label = New-Object Windows.Forms.Label
 $label.Location = New-Object Drawing.Point(20, 20)
 $label.Size = New-Object Drawing.Size(520, 65)
-$label.Text = "把 Venice 新生成的 API Key 粘到下面。`r`n先在密码本中另存一份；这里仅加密保存在本机。"
+$label.Text = "把 $providerTitle 新生成的 API Key 粘到下面。`r`n先在密码本中另存一份；这里仅加密保存在本机。"
 $form.Controls.Add($label)
 $inputBox = New-Object Windows.Forms.TextBox
 $inputBox.Location = New-Object Drawing.Point(20, 90)
@@ -115,6 +117,7 @@ $save.Add_Click({
         elseif ($value.Length -gt 1024) { $invalidReason = 'too_long' }
         elseif ($value -match '\s') { $invalidReason = 'contains_whitespace' }
         elseif ($value.Contains('"') -or $value.Contains("'")) { $invalidReason = 'contains_quotes' }
+        elseif ($Provider -eq 'openai' -and -not $value.StartsWith('sk-')) { $invalidReason = 'wrong_provider_prefix' }
         if ($invalidReason) {
             $status.Text = "收到 $($value.Length) 个字符。格式检查：$invalidReason。选中框内全部内容再重新粘贴。"
             Write-Receipt 'input_rejected' $invalidReason
@@ -122,7 +125,7 @@ $save.Add_Click({
         }
         $plainBytes = [Text.Encoding]::UTF8.GetBytes($value)
         $cipher = Protect-KeyBytes $plainBytes
-        $envelope = @{schema='echo-caretaker-key-v1'; provider='venice';
+        $envelope = @{schema='echo-caretaker-key-v1'; provider=$Provider;
             protection='Windows-DPAPI-CurrentUser'; created_at=[DateTime]::UtcNow.ToString('o');
             ciphertext_b64=[Convert]::ToBase64String($cipher)} | ConvertTo-Json -Compress
         $encoded = [Text.Encoding]::UTF8.GetBytes($envelope)
