@@ -1,0 +1,30 @@
+[
+  {
+    "case_id": "enamel-process",
+    "query": "以前咱们讨论过珐琅画的制作流程，具体怎么做？",
+    "record_id": "synthetic-enamel",
+    "content": "珐琅画制作规则：先用掐丝工具固定轮廓，再填彩砂，最后封层。",
+    "quote": "先用掐丝工具固定轮廓，再填彩砂，最后封层。"
+  },
+  {
+    "case_id": "thermometers",
+    "query": "我那两台测温仪要怎样比较？",
+    "record_id": "synthetic-meters",
+    "content": "两台测温仪的区别：甲号适合室内，乙号带防水探头，留在户外。",
+    "quote": "甲号适合室内，乙号带防水探头，留在户外。"
+  },
+  {
+    "case_id": "robot-actions",
+    "query": "以前聊过玩具机器人，动作和功能都有哪些？",
+    "record_id": "synthetic-robot",
+    "content": "玩具机器人动作规划：空闲点头，走路摆臂，接收指令时亮绿灯。",
+    "quote": "空闲点头，走路摆臂，接收指令时亮绿灯。"
+  },
+  {
+    "case_id": "calendar-control",
+    "query": "2031年5月6日工作坊做了什么？",
+    "record_id": "synthetic-day",
+    "content": "2031年5月6日，工作坊清点了两盒彩砂。",
+    "quote": "工作坊清点了两盒彩砂。"
+  }
+]

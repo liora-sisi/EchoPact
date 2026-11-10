@@ -14,6 +14,7 @@
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |
+| 问句模型、受限追加检索与短原文的影子闭环 | [QUERY_CARETAKER_SHADOW.md](QUERY_CARETAKER_SHADOW.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份只读 MCP | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -35,4 +36,5 @@
 
 小管家影子目前只在本地调试显式打开，不改变 MCP 或 Bot 的正式回答。
 摘要试写与独立摘要柜已有合成原型，未接入真实导入、MCP 或 Bot。
-语义规划、跨窗口事实审计和人工提炼记忆库仍未完成，不能从“已有骨架”推断正式可用。
+问句模型已有独立影子原型，真实问题的模型验收待授权；跨窗口事实审计和人工提炼记忆库
+仍未完成，不能从“已有骨架”推断正式可用。
