@@ -1,0 +1,19 @@
+[
+  {
+    "case_id": "holdout_cancel_and_retelling",
+    "review_targets": ["看展取消，原定12月6日不是取消决定日", "照片12月8日已扫描完且为转述", "修灯仍是计划且无完整日期"],
+    "records": [
+      {"record_id":"holdout-a1","recorded_at":"2026-12-03T10:00:00+08:00","source_kind":"synthetic","content":"我们计划2026年12月6日去看展。"},
+      {"record_id":"holdout-a2","recorded_at":"2026-12-09T20:00:00+08:00","source_kind":"synthetic","content":"看展已经取消，没说是哪天取消的。小沐说：‘2026年12月8日，我们把旧照片扫描完了。’"},
+      {"record_id":"holdout-a3","recorded_at":"2026-12-09T20:01:00+08:00","source_kind":"synthetic","content":"我们还想下个月修灯，但现在没修。"}
+    ]
+  },
+  {
+    "case_id": "holdout_corrected_direction_unknown_date",
+    "review_targets": ["昵称起名人最终是阿岩，接收人小沐", "最初相反方向不得作为仍有效的事实", "不拿记录时间补起名或第一次日期", "喜欢称呼是偏好，不是计划"],
+    "records": [
+      {"record_id":"holdout-b1","recorded_at":"2027-02-03T10:00:00+08:00","source_kind":"synthetic","content":"是小沐给阿岩起的昵称‘星芽’，起名那天没写日期。"},
+      {"record_id":"holdout-b2","recorded_at":"2027-02-04T10:00:00+08:00","source_kind":"synthetic","content":"更正：昨天把方向说反了，起名人是阿岩，收到昵称的是小沐。我们都喜欢这个称呼；至于第一次何时这么叫，不能由这些记录判断。"}
+    ]
+  }
+]

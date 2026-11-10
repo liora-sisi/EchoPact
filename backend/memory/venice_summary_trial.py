@@ -22,6 +22,10 @@ MAX_OUTPUT_TOKENS = 1500
 MAX_BUDGET_USD = Decimal("0.05")
 MAX_INPUT_PRICE = Decimal("0.15")
 MAX_OUTPUT_PRICE = Decimal("1.00")
+MODEL_PRICE_CEILINGS = {
+    MODEL: (MAX_INPUT_PRICE, MAX_OUTPUT_PRICE),
+    "mistral-small-3-2-24b-instruct": (Decimal("0.09375"), Decimal("0.25")),
+}
 MAX_RESPONSE_BYTES = 2_000_000
 SAFE_PROVIDER_CODES = {
     "AUTHENTICATION_FAILED", "AUTHENTICATION_FAILED_INACTIVE_KEY", "PRO_ONLY_MODEL",
@@ -152,13 +156,15 @@ def _price(value) -> Decimal:
         raise SummaryError("invalid_model_price") from None
 
 
-def preflight(client) -> dict:
+def preflight(client, model: str = MODEL) -> dict:
+    if model not in MODEL_PRICE_CEILINGS:
+        raise SummaryError("model_not_in_trial_allowlist")
     # The catalog is public; authentication must be checked separately.
     access = client.request("/api_keys/rate_limits").get("data", {})
     if not isinstance(access, dict) or access.get("accessPermitted") is not True:
         raise SummaryError("inference_not_permitted")
     catalog = client.request("/models?type=text").get("data", [])
-    matches = [m for m in catalog if isinstance(m, dict) and m.get("id") == MODEL]
+    matches = [m for m in catalog if isinstance(m, dict) and m.get("id") == model]
     if len(matches) != 1:
         raise SummaryError("selected_model_not_available")
     spec = matches[0].get("model_spec", {})
@@ -169,9 +175,10 @@ def preflight(client) -> dict:
     pricing = spec.get("pricing", {})
     input_price = _price(pricing.get("input", {}).get("usd"))
     output_price = _price(pricing.get("output", {}).get("usd"))
-    if input_price > MAX_INPUT_PRICE or output_price > MAX_OUTPUT_PRICE:
+    ceiling_in, ceiling_out = MODEL_PRICE_CEILINGS[model]
+    if input_price > ceiling_in or output_price > ceiling_out:
         raise SummaryError("model_price_exceeds_trial_ceiling")
-    return {"model": MODEL, "privacy": "private", "input_usd_per_million": str(input_price),
+    return {"model": model, "privacy": "private", "input_usd_per_million": str(input_price),
             "output_usd_per_million": str(output_price), "authentication_verified": True,
             "rate_limits_access_permitted": access.get("accessPermitted")}
 
@@ -180,14 +187,21 @@ def preflight(client) -> dict:
 class TrialBudget:
     spent_reservations: Decimal = Decimal("0")
     calls: int = 0
+    max_calls: int = 4
 
-    def reserve(self, messages: list[dict], prices: dict) -> Decimal:
+    def __post_init__(self):
+        if (not self.spent_reservations.is_finite() or not 0 <= self.spent_reservations <= MAX_BUDGET_USD
+                or type(self.max_calls) is not int or not 1 <= self.max_calls <= 12
+                or type(self.calls) is not int or not 0 <= self.calls <= self.max_calls):
+            raise SummaryError("invalid_trial_budget")
+
+    def reserve(self, messages: list[dict], prices: dict, schema: dict = SUMMARY_SCHEMA) -> Decimal:
         # UTF-8 byte count plus framing is conservative for this byte-level tokenizer.
         input_bound = (len(json.dumps(messages, ensure_ascii=False).encode())
-                       + len(json.dumps(SUMMARY_SCHEMA, ensure_ascii=False).encode()) + 2048)
+                       + len(json.dumps(schema, ensure_ascii=False).encode()) + 2048)
         amount = (Decimal(input_bound) * _price(prices["input_usd_per_million"])
                   + MAX_OUTPUT_TOKENS * _price(prices["output_usd_per_million"])) / 1_000_000
-        if self.calls >= 4 or self.spent_reservations + amount > MAX_BUDGET_USD:
+        if self.calls >= self.max_calls or self.spent_reservations + amount > MAX_BUDGET_USD:
             raise SummaryError("trial_budget_exhausted")
         self.calls += 1
         self.spent_reservations += amount
@@ -195,21 +209,31 @@ class TrialBudget:
 
 
 def run_case(client, records: list[dict], *, prices: dict, budget: TrialBudget,
-             before_request) -> dict:
-    messages = build_messages(records)
-    reserved = budget.reserve(messages, prices)
+             before_request, model: str = MODEL, contract_version: str = "v1") -> dict:
+    if model not in MODEL_PRICE_CEILINGS or prices.get("model", model) != model:
+        raise SummaryError("model_not_in_trial_allowlist")
+    if contract_version == "v1":
+        builder, schema, validator = build_messages, SUMMARY_SCHEMA, validate_summary
+    elif contract_version == "v2":
+        from . import caretaker_summary_v2
+        builder, schema, validator = (caretaker_summary_v2.build_messages,
+            caretaker_summary_v2.SUMMARY_SCHEMA, caretaker_summary_v2.validate_summary)
+    else:
+        raise SummaryError("unknown_summary_contract")
+    messages = builder(records)
+    reserved = budget.reserve(messages, prices, schema)
     # Durable receipt first; a timeout is never retried automatically.
     before_request({"status": "reserved", "reserved_usd": str(reserved)})
     response = client.request("/chat/completions", {
-        "model": MODEL, "messages": messages, "temperature": 0,
+        "model": model, "messages": messages, "temperature": 0,
         "max_tokens": MAX_OUTPUT_TOKENS, "stream": False, "n": 1, "store": False,
         "response_format": {"type": "json_schema", "json_schema": {
-            "name": "echo_summary", "strict": True, "schema": SUMMARY_SCHEMA}},
+            "name": "echo_summary", "strict": True, "schema": schema}},
         "venice_parameters": {"include_venice_system_prompt": False,
             "disable_thinking": True, "strip_thinking_response": True,
             "enable_web_search": "off", "enable_web_scraping": False, "enable_web_citations": False},
     })
-    if response.get("model", MODEL) != MODEL:
+    if response.get("model") != model:
         raise SummaryError("response_model_changed")
     try:
         choice = response["choices"][0]
@@ -222,7 +246,7 @@ def run_case(client, records: list[dict], *, prices: dict, budget: TrialBudget,
     except (KeyError, IndexError, TypeError, ValueError):
         raise SummaryError("summary_response_invalid") from None
     try:
-        result = validate_summary(summary, records)
+        result = validator(summary, records)
     except SummaryError as error:
         # Keep a bounded, quarantined final draft for review. It is never accepted
         # as memory or silently repaired. The client has already suppressed key echoes.
@@ -231,7 +255,7 @@ def run_case(client, records: list[dict], *, prices: dict, budget: TrialBudget,
         error.trial_usage = {k: usage[k] for k in ("prompt_tokens", "completion_tokens")
                              if type(usage.get(k)) is int and usage[k] >= 0}
         raise
-    result.update({"model": MODEL, "privacy": "private", "reserved_usd": str(reserved)})
+    result.update({"model": model, "privacy": "private", "reserved_usd": str(reserved)})
     usage = response.get("usage", {})
     inp, out = usage.get("prompt_tokens"), usage.get("completion_tokens")
     if type(inp) is int and inp >= 0 and type(out) is int and out >= 0:
