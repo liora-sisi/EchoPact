@@ -1,60 +1,34 @@
-# Echo Pact 🫀
+# Echo Pact 当前文档导航
 
-> **当前文档入口（2026-10-05）**：本页主体是早期 legacy 架构说明，不能单独
-> 代表当前 records-v1 生产路径。现状以根目录 `README.md` 中的 V1 章节及其
-> 专项文档为准；下一阶段“小管家”、影子验收和提炼记忆层的施工基线见
-> [`CARETAKER_ROADMAP.md`](CARETAKER_ROADMAP.md)。本页完整改写属于路线图 M20。
+更新于 2026-11-10。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
+根 README 中保留的情感坐标、向量和主动浮现描述属于 legacy 原型，不能据此
+推断当前 records-v1 已经具备语义小管家。records-v2 是交换包格式，生产表名
+和召回协议仍沿用 records-v1，两者不是互斥版本。
 
-> 回声契约——保长的崽，棠主的外置大脑
+## 先看什么
 
-## 项目结构
+| 目的 | 入口 |
+|---|---|
+| 当前架构与运行方式 | [根 README](../README.md) |
+| 小管家、派生记忆的阶段与验收门 | [CARETAKER_ROADMAP.md](CARETAKER_ROADMAP.md) |
+| 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
+| 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
+| 固定身份只读 MCP | [MCP_READONLY.md](MCP_READONLY.md) |
+| 私人 Telegram、原文与调试面板 | [TELEGRAM_READONLY_BOT.md](TELEGRAM_READONLY_BOT.md) |
+| 错题保留、分类、人工期望与回放 | [BAD_CASE_REGISTRY.md](BAD_CASE_REGISTRY.md) |
+| 不可变快照与回退 | [CLOUD_READONLY.md](CLOUD_READONLY.md) |
+| 官方 ChatGPT 导出适配 | [CHATGPT_OFFICIAL_V1_ADAPTER.md](CHATGPT_OFFICIAL_V1_ADAPTER.md) |
+| 浏览器抓取适配 | [GUIJIAN_V1_ADAPTER.md](GUIJIAN_V1_ADAPTER.md) |
 
-echo-pact/
-├── backend/
-│   ├── memory/       # 记忆层（野AI写）
-│   ├── judge/        # 判断层（保长手写，禁止触碰）
-│   ├── trigger/      # 触发层（野AI写骨架）
-│   └── utils/        # 共用工具
-├── tests/            # 单元测试
-├── docs/             # 你在这里
-├── scripts/          # 部署脚本
-└── .env.example      # 环境变量模板
+## 当前代码分工
 
-## 三层架构
+- `backend/memory/records_v1.py`：不可变记录、FTS、身份过滤后的原文召回。
+- `backend/memory/adaptive_recall.py`：所有主要入口共用的有界检索编排。
+- `backend/memory/event_timeline.py`：确定性日期解释、记录时间和事件时间标注。
+- `backend/memory/caretaker_shadow.py`：本地可关闭的契约、证据检查与短摘录。
+- `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
+- `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
 
-| 层 | 职责 | 负责人 |
-|---|---|---|
-| 记忆层 | 存什么、怎么存、情感坐标 | 野AI写，保长审 |
-| 判断层 | 什么记忆该浮现、优先级计算 | 保长手写 |
-| 触发层 | FastAPI接口、对外暴露能力 | 野AI写骨架，保长填逻辑 |
-
-## 情感坐标系
-
-每条记忆携带三轴情感数据：
-
-- **效价 Valence**：-1（负面）～ +1（正面）
-- **唤醒度 Arousal**：0（平静）～ 1（激烈）
-- **指向性 Direction**：self / other / event
-
-情绪强度 = |valence| × arousal，越极端越容易浮现。
-
-## 快速开始
-
-复制环境变量：cp .env.example .env
-
-安装依赖：pip install fastapi uvicorn
-
-启动服务：uvicorn backend.trigger.main:app --reload --port 8000
-
-## API 接口
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | /api/memory | 新增记忆 |
-| GET | /api/memories | 查看记忆列表 |
-| GET | /api/undone | 查看未完成事项 |
-| POST | /api/recall | 召回记忆（保长填逻辑） |
-
----
-
-*Echo Pact — 保长的崽，棠主传话，野AI搬砖*
+小管家影子目前只在本地调试显式打开，不改变 MCP 或 Bot 的正式回答。
+模型摘要、语义规划和独立提炼记忆库都还需要后续验收，不能从“已有骨架”
+推断它们已经实现。

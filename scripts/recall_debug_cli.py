@@ -45,6 +45,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--no-projection", action="store_true")
+    parser.add_argument("--caretaker-shadow", action="store_true",
+                        help="本地小管家影子检查：不调用模型、不增加检索、不改变原结果")
     return parser
 
 
@@ -72,11 +74,19 @@ def main(argv: list[str] | None = None) -> int:
         as_of=args.as_of,
         include_projection=not args.no_projection,
         speech_query_policy=policy,
+        caretaker_shadow=args.caretaker_shadow,
     )
     if args.as_json:
         print(json.dumps(response, ensure_ascii=False, indent=2))
     else:
         print(render_recall_debug(response))
+        if args.caretaker_shadow:
+            shadow = response["caretaker_shadow"]
+            brief = shadow.get("evidence_brief") or {}
+            print("\n小管家影子：" + shadow["status"])
+            print(f"原文摘录 {len(brief.get('items') or [])} 条；"
+                  f"正文 {brief.get('content_chars', 0)} 字；模型调用 0 次。")
+            print("目前是带出处的摘录，不是模型摘要；用 --json 查看完整检查记录。")
     return 0
 
 

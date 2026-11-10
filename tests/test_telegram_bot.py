@@ -244,6 +244,32 @@ def test_outsider_and_non_private_chat_are_silently_rejected(tmp_path):
     assert recall.queries == []
 
 
+def test_unresolved_calendar_is_shown_without_calling_model_and_remains_a_badcase(tmp_path, monkeypatch):
+    from backend.memory.recall_debug import run_recall_debug
+
+    db = _database(tmp_path, [_record("source", "chatgpt-official-export-v1", "合成原文")])
+    query = "2026年2月30日我们做了什么？"
+    packet = run_recall_debug(query, db_path=str(db), agent_id=OWNER)
+    calls = []
+    answerer = FakeAnswerer()
+    def unexpected(*args):
+        calls.append(args)
+        raise AssertionError("clarification must not call the answer model")
+    monkeypatch.setattr(answerer, "answer", unexpected)
+    bot, telegram, recall, bad_cases = _bot(tmp_path, answerer=answerer)
+    monkeypatch.setattr(recall, "recall", lambda _: packet)
+    assert bot.handle_update(_update(query)) == "answered"
+    assert calls == []
+    assert "没有开始检索" in telegram.sent[-1][1]
+    assert "嘴被捂住" not in telegram.sent[-1][1]
+    assert bot.handle_update(_update("/why", update_id=2)) == "why_explained"
+    assert "本轮没有检索或调用脑袋" in "\n".join(text for _, text in telegram.sent)
+    assert bot.handle_update(_update("/badcase", update_id=3)) == "bad_case_saved"
+    saved = json.loads(next(bad_cases.root.glob("bad-case-*.json")).read_text(encoding="utf-8"))
+    assert saved["model_status"] == "skipped_clarification"
+    assert saved["recall"]["query_clarification"]["reason"] == "calendar_scope_unresolved"
+
+
 def test_allowed_text_gets_model_answer_and_model_failure_is_explicit(tmp_path):
     bot, telegram, recall, _ = _bot(tmp_path, answerer=FakeAnswerer())
     assert bot.handle_update(_update("我最近手腕怎么样")) == "answered"

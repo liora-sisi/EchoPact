@@ -105,13 +105,13 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             )
 
-            def runner(query: str) -> dict:
+            def runner(query: str, reference_instant: str | None) -> dict:
                 return run_recall_debug(
                     query,
                     db_path=args.db,
                     agent_id=args.agent_id,
                     limit=args.limit,
-                    as_of=args.as_of,
+                    as_of=reference_instant,
                     include_projection=not args.no_projection,
                     speech_query_policy=policy,
                 )
@@ -123,7 +123,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             result = {
                 "replayed": [
-                    registry.replay(case_id, runner=runner) for case_id in case_ids
+                    registry.replay(case_id, context_runner=runner, as_of=args.as_of)
+                    for case_id in case_ids
                 ]
             }
     except (BadCaseRegistryError, OSError, json.JSONDecodeError) as exc:

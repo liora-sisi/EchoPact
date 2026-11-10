@@ -135,7 +135,7 @@ _FULL_DATE_RE = re.compile(
     r"(?P<day>\d{1,2})(?:日|号)?(?!\d)"
 )
 _MONTH_DAY_RE = re.compile(
-    r"(?<![\d年])(?P<month>\d{1,2})[-/.月](?P<day>\d{1,2})"
+    r"(?<![\dA-Za-z_.])(?P<month>\d{1,2})[-/.月](?P<day>\d{1,2})"
     r"(?:日|号)?(?!\d)"
 )
 _CJK_MONTH_DAY_RE = re.compile(
@@ -276,28 +276,70 @@ def _absolute_query_date(
                 full_match.group(0),
             )
         except ValueError:
-            return None, None
-
-    if reference_date is None:
-        return None, None
+            return None, full_match.group(0)
     numeric_match = _MONTH_DAY_RE.search(compact)
     cjk_match = _CJK_MONTH_DAY_RE.search(compact)
     if numeric_match:
         month = int(numeric_match.group("month"))
         day = int(numeric_match.group("day"))
-        matched = numeric_match.group(0)
+        match = numeric_match
     elif cjk_match:
         month = _small_cjk_number(cjk_match.group("month"))
         day = _small_cjk_number(cjk_match.group("day"))
-        matched = cjk_match.group(0)
+        match = cjk_match
         if month is None or day is None:
             return None, None
     else:
         return None, None
+    year, matched = _calendar_year(compact, match, reference_date)
+    if year is None:
+        return None, matched
     try:
-        return datetime(reference_date.year, month, day).date(), matched
+        return datetime(year, month, day).date(), matched
     except ValueError:
-        return None, None
+        return None, matched
+
+
+def _calendar_year(
+    compact: str, match: re.Match[str], reference_date: Optional[date],
+) -> tuple[Optional[int], str]:
+    """Keep a source-written year attached to its month/day or named day."""
+
+    prefix = compact[:match.start()]
+    explicit = re.search(r"(20\d{2})年$", prefix)
+    if explicit:
+        return int(explicit.group(1)), explicit.group(0) + match.group(0)
+    relative = re.search(r"(前年|去年|今年|明年)$", prefix)
+    if relative:
+        offset = {"前年": -2, "去年": -1, "今年": 0, "明年": 1}[relative.group(1)]
+        year = reference_date.year + offset if reference_date else None
+        return year, relative.group(0) + match.group(0)
+    return (reference_date.year if reference_date else None), match.group(0)
+
+
+def _calendar_expressions(compact: str) -> List[str]:
+    """Detect multiple scopes before any first-match parser discards one.
+
+    Ranges and compound date questions need a planner; until supported, preserve
+    every date and request clarification rather than silently choosing one.
+    """
+
+    spans: List[tuple[int, int]] = []
+    expressions: List[str] = []
+    patterns = (
+        _FULL_DATE_RE, _MONTH_DAY_RE, _CJK_MONTH_DAY_RE,
+        re.compile("|".join(re.escape(item) for item in _NAMED_CALENDAR_MARKERS)),
+        re.compile(r"最近一个月|过去一个月|上个月|上(?:周|星期)[一二三四五六日天]?|今天|昨天|前天|昨晚"),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(compact):
+            if any(match.start() < end and start < match.end() for start, end in spans):
+                continue
+            spans.append(match.span())
+            _, expression = _calendar_year(compact, match, None)
+            if expression not in expressions:
+                expressions.append(expression)
+    return expressions
 
 
 def _named_calendar_expression(compact: str) -> Optional[str]:
@@ -312,9 +354,11 @@ def _named_calendar_date(
     reference_date: Optional[date],
 ) -> tuple[Optional[date], Optional[str]]:
     marker = _named_calendar_expression(compact)
-    if marker is None or reference_date is None:
-        return None, marker
-    return _NAMED_CALENDAR_DATES.get(reference_date.year, {}).get(marker), marker
+    if marker is None:
+        return None, None
+    match = re.search(re.escape(marker), compact)
+    year, expression = _calendar_year(compact, match, reference_date)
+    return _NAMED_CALENDAR_DATES.get(year, {}).get(marker), expression
 
 
 def resolve_query_calendar_scope(
@@ -338,6 +382,27 @@ def resolve_query_calendar_scope(
         parsed.astimezone(_CHENGDU_TIMEZONE) if parsed is not None else None
     )
     reference_date = local_reference.date() if local_reference else None
+    expressions = _calendar_expressions(compact)
+
+    def unresolved(status: str, expression: Optional[str]) -> Dict[str, Any]:
+        return {
+            "status": status,
+            "reference_at": _utc_iso(parsed) if parsed else None,
+            "reference_at_local": local_reference.isoformat() if local_reference else None,
+            "reference_source": reference_source,
+            "display_timezone": CHENGDU_TIMEZONE_NAME,
+            "matched_expression": expression,
+            "detected_expressions": expressions,
+            "resolved_on": None,
+            "resolved_start_on": None,
+            "resolved_end_on": None,
+            "filter_start_at": None,
+            "filter_end_at_exclusive": None,
+            "used_for_record_filtering": False,
+        }
+
+    if len(expressions) > 1:
+        return unresolved("unresolved_multiple_calendar_scopes", " / ".join(expressions))
     absolute_date, absolute_expression = _absolute_query_date(
         compact, reference_date
     )
@@ -345,7 +410,7 @@ def resolve_query_calendar_scope(
     if absolute_date is None and named_date is not None:
         absolute_date = named_date
         absolute_expression = named_expression
-    if not markers and absolute_date is None and named_expression is None:
+    if not markers and absolute_expression is None and named_expression is None:
         return {
             "status": "not_requested",
             "reference_at": None,
@@ -360,37 +425,15 @@ def resolve_query_calendar_scope(
             "used_for_record_filtering": False,
         }
 
-    if parsed is None and absolute_date is None:
-        return {
-            "status": "unresolved_missing_timezone_aware_reference",
-            "reference_at": None,
-            "reference_at_local": None,
-            "reference_source": reference_source,
-            "matched_expression": named_expression or markers[0],
-            "resolved_on": None,
-            "resolved_start_on": None,
-            "resolved_end_on": None,
-            "filter_start_at": None,
-            "filter_end_at_exclusive": None,
-            "used_for_record_filtering": False,
-        }
+    expression = absolute_expression or named_expression or markers[0]
+    if parsed is None and absolute_date is None and not re.match(r"20\d{2}[年/.-]", expression):
+        return unresolved("unresolved_missing_timezone_aware_reference", expression)
 
     if named_expression is not None and absolute_date is None:
-        return {
-            "status": "unresolved_unsupported_named_calendar_year",
-            "reference_at": _utc_iso(parsed) if parsed is not None else None,
-            "reference_at_local": (
-                local_reference.isoformat() if local_reference else None
-            ),
-            "reference_source": reference_source,
-            "matched_expression": named_expression,
-            "resolved_on": None,
-            "resolved_start_on": None,
-            "resolved_end_on": None,
-            "filter_start_at": None,
-            "filter_end_at_exclusive": None,
-            "used_for_record_filtering": False,
-        }
+        return unresolved("unresolved_unsupported_named_calendar_year", named_expression)
+
+    if absolute_expression is not None and absolute_date is None:
+        return unresolved("unresolved_invalid_calendar_date", absolute_expression)
 
     resolved_on = None
     resolved_start = None

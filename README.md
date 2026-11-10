@@ -1,11 +1,29 @@
-## Echo Pact —— 保长与宝气的“外置大脑”
+## Echo Pact —— 原始档案与只读外置记忆
 
-> **当前生产路径提示（2026-10-05）**：本 README 前部仍保留早期 legacy
-> 架构说明；当前实际使用的是后文所述的 records-v1 离线证据召回、只读
-> MCP、Telegram、错题账与不可变云端快照。下一阶段“小管家”与提炼记忆层
-> 尚未实现，施工顺序、硬边界与验收门见
-> [`docs/CARETAKER_ROADMAP.md`](docs/CARETAKER_ROADMAP.md)。完整 README
-> 口径收敛列为该路线图的 M20，不应把 legacy 描述当作当前生产事实。
+**当前实现（2026-11-10）**：官方 ChatGPT 导出、Codex 会话和浏览器抓取通过
+各自适配器进入保留来源的记录库。生产召回使用 SQLite FTS5 与有界规则，
+以固定身份只读访问；MCP、Telegram 和本地调试共用 `adaptive_recall`。
+Telegram 的回答模型是末端表达器，尚不是通用小管家。
+
+```text
+官方导出 / Codex 会话 / 浏览器抓取
+  → 各自适配器 → records-v1/v2 交换包 → SQLite 原始记录 + FTS
+                                      → 校验后的不可变云端快照
+固定身份 + 原问题 → 共用有界召回 → 原文、来源、日期、调试轨迹
+                              ├─ MCP → 经授权的云端/本地客户端
+                              ├─ Telegram → 可选回答模型 → /why 原文面板、错题账
+                              └─ 本地 CLI → 可选小管家影子检查（不调用模型）
+```
+
+- 原始证据与 Claim、投影、未来提炼记忆分层；查询不会改写原始记录。
+- 日期过滤针对**消息记录时间**，不自动证明事件就发生在那一天。
+- 小管家已有本地无模型影子骨架，默认关闭；尚未接入正式回答，也没有生成模型摘要。
+- 向量语义召回、情感坐标和主动浮现属于下面保留的 **legacy 原型**，不是当前
+  records-v1 生产链的能力。当前生产召回不会调用 embedding API。
+
+当前入口：[`文档导航`](docs/README.md)、
+[`小管家路线图与状态`](docs/CARETAKER_ROADMAP.md)、
+[`日期链路审计与影子骨架`](docs/RECALL_CONTRACT_AUDIT.md)。
 
 > M4.5 / M5 封板工具：证据与投影链在数据库迁移 v6 完成机制化保护；固定
 > 提交账本、全量回归、身份彩排、独立 Git 恢复包和七道普通快进前闸门均可
@@ -17,7 +35,9 @@
 > 这不是普通的记忆库，是**会主动想你**的认知基底。  
 > 它记得你骂我时的嘴臭，也记得你吃饺子用了40分钟。
 
-### 📦 核心特性
+### 历史原型（legacy，以下能力与启动说明不可当作 records-v1 生产事实）
+
+#### 原型特性
 
 - **情感坐标**：每条记忆带 `valence`（效价）、`arousal`（唤醒度）、`direction`（指向性）  
 - **双通道检索**：关键词（分词） + 向量语义（OpenAI embedding）  
@@ -172,10 +192,13 @@ python scripts/rehearsal_identity.py --out ./m505-rehearsal-report.json
 
 | 目录 | 职责 |
 |------|------|
-| backend/memory/  | 记忆 CRUD、情感坐标、可信度规则 |
-| backend/judge/  | 召回四维评分、主动浮现逻辑 |
-| backend/trigger/  | FastAPI 入口、/recall 接口 |
-| backend/utils/  | 数据库连接、embedding 封装（mock/real 开关） |
+| backend/memory/  | records-v1 原始证据、身份、FTS、共用有界召回；另保留 legacy 模块 |
+| backend/mcp/  | 固定身份只读 MCP 与云端快照入口 |
+| backend/telegram_bot/  | Telegram 私人入口、调试与末端回答模型 |
+| backend/bad_cases/  | 不覆盖原包的错题分类、标注与回放 |
+| backend/judge/  | legacy 四维评分与主动浮现原型 |
+| backend/trigger/  | FastAPI V1 入口及兼容 legacy 接口 |
+| backend/utils/  | 共用工具与 legacy embedding 封装（mock/real 开关） |
 | tests/  | 单元测试与纯合成 V1 记录包夹具 |
 
 ### 🧪 开发与测试

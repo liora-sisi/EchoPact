@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.bad_cases.registry import BadCaseRegistry, BadCaseRegistryError
+from backend.bad_cases.registry import BadCaseRegistry, BadCaseRegistryError, replay_reference_time
 
 
 def _raw_case(
@@ -221,3 +221,31 @@ def test_fixed_status_requires_a_fix_reference(tmp_path):
 
     with pytest.raises(BadCaseRegistryError, match="fix reference"):
         registry.review(case_id, status="fixed", note="not enough")
+
+
+def test_replay_freezes_captured_clock_instead_of_replay_day(tmp_path):
+    raw_root = tmp_path / "private" / "bad_cases"
+    raw = _raw_case(raw_root, query="上周三我们做了什么？")
+    registry = BadCaseRegistry(raw_root, tmp_path / "private" / "registry")
+    registry.initialize()
+    calls = []
+    def runner(query, as_of):
+        calls.append((query, as_of))
+        return {"recall_debug": {"top_k": []}}
+    replay = registry.replay(raw.stem, context_runner=runner,
+                             now=lambda: "2026-11-10T02:00:00Z")
+    assert calls == [("上周三我们做了什么？", "2026-09-20T01:02:03+00:00")]
+    assert replay["reference_time"]["source"] == "capture_time_proxy"
+    assert replay["verdict"] == "unscored"
+
+
+def test_replay_prefers_query_clock_and_allows_explicit_override():
+    packet = {"captured_at": "2026-11-10T00:00:00Z", "recall": {
+        "temporal_scope": {"reference_at": "2026-10-29T23:30:00+08:00"},
+    }}
+    assert replay_reference_time(packet) == {
+        "as_of": "2026-10-29T15:30:00+00:00", "source": "captured_query_clock",
+    }
+    assert replay_reference_time(packet, "2026-09-01T00:00:00Z")["source"] == "explicit_override"
+    with pytest.raises(BadCaseRegistryError):
+        replay_reference_time(packet, "2026-09-01")

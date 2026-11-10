@@ -67,6 +67,14 @@ record IDs, source labels, coverage, and SHA-256 fingerprints of previews, but
 does not duplicate recalled private text.  Cases without reviewed expectations
 remain `unscored`; they are observations, not false passes.
 
+The CLI freezes the original question clock: stored `temporal_scope.reference_at`,
+then the timeline query clock, then `captured_at` as an explicitly labelled
+capture-time proxy. `--as-of` is an explicit override. Relative-date cases without
+any reliable clock fail closed instead of silently using the replay date.
+Each replay reports `reference_time`; the original packet stays unchanged.
+The legacy one-argument library runner remains supported and is labelled
+`legacy_runner_managed`, without claiming that the registry froze its clock.
+
 ## 4. Keep fixed cases visible
 
 ```powershell

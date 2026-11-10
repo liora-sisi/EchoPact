@@ -60,6 +60,37 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def replay_reference_time(
+    packet: Mapping[str, Any], override: Optional[str] = None,
+) -> Dict[str, Optional[str]]:
+    """Use the captured query clock, never the day a regression happens to run.
+
+    Older packets lack a query clock. Their capture time is an explicit proxy,
+    not a claim that the question was asked at exactly that instant.
+    """
+
+    recall = packet.get("recall") or {}
+    temporal = recall.get("temporal_scope") or {}
+    timeline_clock = (recall.get("event_timeline") or {}).get("query_clock") or {}
+    candidates = [(override, "explicit_override")] if override is not None else [
+        (temporal.get("reference_at"), "captured_query_clock"),
+        (timeline_clock.get("reference_at"), "captured_timeline_clock"),
+        (packet.get("captured_at"), "capture_time_proxy"),
+    ]
+    for value, source in candidates:
+        if not isinstance(value, str) or not value:
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is not None:
+            return {"as_of": parsed.astimezone(timezone.utc).isoformat(), "source": source}
+    if override is not None:
+        raise BadCaseRegistryError("replay as_of must be a timezone-aware timestamp")
+    return {"as_of": None, "source": "unavailable"}
+
+
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -425,13 +456,25 @@ class BadCaseRegistry:
         self,
         case_id: str,
         *,
-        runner: Callable[[str], Mapping[str, Any]],
+        runner: Optional[Callable[[str], Mapping[str, Any]]] = None,
+        context_runner: Optional[Callable[[str, Optional[str]], Mapping[str, Any]]] = None,
+        as_of: Optional[str] = None,
         now: Callable[[], str] = _utc_now,
     ) -> Dict[str, Any]:
         card = self.load_card(case_id)
         raw, _ = self.load_raw(self.bad_case_root / card["source_file"])
         query = _user_query(raw)
-        response = runner(query)
+        if (runner is None) == (context_runner is None):
+            raise BadCaseRegistryError("provide exactly one replay runner")
+        reference = replay_reference_time(raw, as_of)
+        if context_runner is not None:
+            from backend.memory.event_timeline import query_uses_relative_time
+
+            if reference["as_of"] is None and query_uses_relative_time(query):
+                raise BadCaseRegistryError("relative-date replay needs a captured clock or explicit as_of")
+            response = context_runner(query, reference["as_of"])
+        else:
+            response = runner(query)
         if not isinstance(response, Mapping):
             raise BadCaseRegistryError("replay runner must return a mapping")
         debug = response.get("recall_debug") if isinstance(response, Mapping) else None
@@ -457,6 +500,9 @@ class BadCaseRegistry:
             "schema_version": REPLAY_SCHEMA_VERSION,
             "case_id": case_id,
             "replayed_at": replayed_at,
+            "reference_time": reference if context_runner is not None else {
+                "as_of": None, "source": "legacy_runner_managed",
+            },
             "status_at_replay": card.get("status"),
             "verdict": verdict,
             "expectations": expectations,

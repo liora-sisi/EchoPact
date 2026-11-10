@@ -68,6 +68,7 @@ def run_recall_debug(
     as_of: Optional[str] = None,
     include_projection: bool = True,
     speech_query_policy: Optional[SpeechQueryRescuePolicy] = None,
+    caretaker_shadow: bool = False,
 ) -> Dict[str, Any]:
     """Run the real adaptive retriever with an opt-in local debug trace."""
 
@@ -83,6 +84,10 @@ def run_recall_debug(
         debug=True,
     )
     response["debug_panel_schema_version"] = RECALL_DEBUG_PANEL_SCHEMA_VERSION
+    if caretaker_shadow:
+        from .caretaker_shadow import attach_caretaker_shadow
+
+        response = attach_caretaker_shadow(response, query=query, limit=limit)
     return response
 
 
@@ -203,7 +208,10 @@ def render_recall_debug(response: Mapping[str, Any]) -> str:
         clarification = response.get("query_clarification") or {}
         temporal = response.get("temporal_coverage") or {}
         if clarification.get("status") == "required":
-            lines.append("- Query缺少明确主题，候选在进入公开结果前被整体压住。")
+            if clarification.get("reason") == "calendar_scope_unresolved":
+                lines.append("- " + clarification["message"])
+            else:
+                lines.append("- Query缺少明确主题，候选在进入公开结果前被整体压住。")
         elif temporal.get("coverage_gap"):
             lines.append("- 查询时间超出当前数据覆盖范围，旧记录没有冒充新证据。")
         else:

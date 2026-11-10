@@ -16,7 +16,7 @@ import copy
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .event_collection import (
@@ -26,6 +26,7 @@ from .event_collection import (
 )
 from .event_timeline import (
     build_event_timeline,
+    query_uses_relative_time,
     resolve_query_calendar_scope,
     suppress_event_timeline_for_coverage_gap,
 )
@@ -36,6 +37,8 @@ from .named_collection import (
 )
 from .recall_projection import recall_with_projection
 from .records_v1 import (
+    RECALL_SCHEMA_VERSION,
+    _connect_readonly,
     _explicit_query_anchors,
     _focused_query_segments,
     _natural_scene_query_anchors,
@@ -963,7 +966,13 @@ def _apply_temporal_coverage_guard(
         if isinstance(coverage, Mapping)
         else None
     )
-    latest_date = str(latest)[:10] if latest else None
+    # Compare calendar dates in the same timezone. A late UTC record may already
+    # belong to the following Chengdu day; slicing its UTC string hid that day.
+    latest_instant = _parse_utc(latest)
+    latest_date = (
+        latest_instant.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+        if latest_instant else None
+    )
     outside = bool(latest_date and requested_date > latest_date)
     response["temporal_coverage"] = {
         "schema_version": TEMPORAL_COVERAGE_SCHEMA_VERSION,
@@ -1351,6 +1360,19 @@ def adaptive_recall(
 ) -> Dict[str, Any]:
     """Return one bounded memory packet from a small internal recall plan."""
 
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("limit must be an integer between 1 and 100")
+    if as_of is not None and _parse_utc(as_of) is None:
+        raise ValueError("as_of must be a timezone-aware timestamp")
+
+    # All entry points (MCP, Telegram, CLI, direct API) share this fallback.
+    # Resolving only in the MCP wrapper left the Bot without a reference year.
+    if as_of is None and query_uses_relative_time(query):
+        as_of = datetime.now(timezone.utc).isoformat()
+        reference_time_source = "recall_server_clock"
+
     collection_intent, _ = plan_event_collection_passes(query)
     named_collection_intent, _ = plan_named_collection_passes(query)
     meaning_subject = _meaning_subject(query)
@@ -1382,6 +1404,46 @@ def adaptive_recall(
         reference_time_source,
         used_for_record_filtering=True,
     )
+    if str(query_clock.get("status", "")).startswith("unresolved_"):
+        # No retrieval passes may escape an explicit but unresolved date scope.
+        # Still validate the fixed identity and expose only its visible coverage.
+        from .identity import visible_coverage
+
+        conn = _connect_readonly(db_path)
+        try:
+            coverage = visible_coverage(conn, agent_id)
+        finally:
+            conn.close()
+        return {
+            "schema_version": RECALL_SCHEMA_VERSION,
+            "query": query,
+            "recall_mode": "sqlite_calendar_scope_unresolved",
+            "coverage": coverage,
+            "memories": [],
+            "record_time_filter": {"applied": False},
+            "temporal_scope": {**query_clock, "outside_scope_retellings": []},
+            "query_clarification": {
+                "status": "required",
+                "reason": "calendar_scope_unresolved",
+                "suggested_action": "provide one supported calendar date with its year",
+                "message": (
+                    "日期范围还没解释清楚，这次没有开始检索。"
+                    "先限定为一个明确日期（哪年几月几日）；这不代表库里没有记录。"
+                ),
+            },
+            "adaptive_recall": {
+                "schema_version": ADAPTIVE_RECALL_SCHEMA_VERSION,
+                "query_passes_used": 0,
+                "query_pass_budget": MAX_ADAPTIVE_QUERY_PASSES,
+                "passes": [],
+                "budget_exhausted": False,
+            },
+            **({"recall_debug": {
+                "schema_version": RECALL_DEBUG_SCHEMA_VERSION,
+                "passes": [], "top_k": [], "exclusions": [],
+                "stop_reason": query_clock["status"],
+            }} if debug else {}),
+        }
     scope_start = query_clock.get("filter_start_at")
     scope_end = query_clock.get("filter_end_at_exclusive")
     scope_applied = bool(

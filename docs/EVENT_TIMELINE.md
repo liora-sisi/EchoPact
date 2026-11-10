@@ -50,9 +50,14 @@ With a reliable reference instant, `今天`、`昨天`、`前天`、`昨晚`、`
 `上周` / `上星期`, `上个月`, and `最近一个月` / `过去一个月` resolve against
 `Asia/Shanghai`. `上个月` means the previous calendar month; the latter two
 mean a rolling calendar month ending on the reference date. A missing
-reference remains `unresolved_missing_timezone_aware_reference`. The local MCP
-gateway supplies its own Chengdu server clock only when a relative phrase is
-present and the caller omitted `as_of`. The resolved day/week/month becomes a
+reference remains `unresolved_missing_timezone_aware_reference` in the pure
+resolver. The shared adaptive recall layer supplies a timezone-aware server
+clock when a query needs a reference and the caller omitted `as_of`, including
+Telegram and CLI. The existing MCP clock is preserved when supplied. Invalid
+dates, unsupported named years and multiple calendar expressions stop before
+retrieval instead of falling back to unrestricted search. Explicit calendar
+years and relative-year prefixes take precedence over the reference year.
+See [the cross-entry contract audit](RECALL_CONTRACT_AUDIT.md). The resolved day/week/month becomes a
 half-open UTC filter over primary record timestamps
 (`used_for_record_filtering=true`). This proves only that a returned message was
 recorded inside the requested calendar scope; it does not prove the real-world

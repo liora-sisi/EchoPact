@@ -318,6 +318,7 @@ class BadCaseStore:
                     "coverage",
                     "record_time_filter",
                     "temporal_scope",
+                    "query_clarification",
                     "event_timeline",
                     "event_recall",
                     "memories",
@@ -484,6 +485,7 @@ def _model_status_label(status: str) -> str:
         "ok": "脑袋已正常回答",
         "failed": "证据已尝试送入脑袋，但模型调用失败",
         "not_configured": "脑袋未配置，本轮只有 Echo 召回",
+        "skipped_clarification": "日期待澄清，本轮没有检索或调用脑袋",
     }.get(status, f"未知状态：{status}")
 
 
@@ -530,7 +532,7 @@ def render_mobile_recall_debug(interaction: Interaction) -> list[str]:
     }
     model_limit = interaction.model_evidence_limit or 0
     sent_count = min(model_limit, len(memories))
-    if interaction.model_status == "not_configured":
+    if interaction.model_status in {"not_configured", "skipped_clarification"}:
         sent_count = 0
     sent_record_ids = {
         str(item.get("record_id"))
@@ -800,7 +802,12 @@ class EchoTelegramBot:
 
         model_status = "not_configured"
         answer = _fallback_answer(recall)
-        if self.answerer is not None:
+        clarification = recall.get("query_clarification") or {}
+        if (clarification.get("status") == "required"
+                and clarification.get("reason") == "calendar_scope_unresolved"):
+            answer = clarification["message"]
+            model_status = "skipped_clarification"
+        elif self.answerer is not None:
             try:
                 answer = self.answerer.answer(text, recall)
                 model_status = "ok"
