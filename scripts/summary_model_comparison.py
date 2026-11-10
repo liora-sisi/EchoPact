@@ -21,7 +21,7 @@ from backend.memory.caretaker_summary_v2 import SYSTEM_PROMPT, SUMMARY_SCHEMA, b
 from backend.memory import caretaker_summary_v2, caretaker_summary_v3, caretaker_summary_v4
 from backend.memory.summary_trial_budget import BudgetLedger
 from backend.memory.venice_summary_trial import (
-    MODEL_PRICE_CEILINGS, TrialBudget, VeniceClient, preflight, read_dpapi_key, run_case,
+    MAX_BUDGET_USD, MODEL_PRICE_CEILINGS, TrialBudget, VeniceClient, preflight, read_dpapi_key, run_case,
 )
 
 
@@ -93,10 +93,11 @@ def run_comparison(client, cases, report, output_dir, ledger):
     prices = {model: preflight(client, model) for model in selected_models(report)}
     report["preflight"] = prices
     report["inherited_reserved_usd"] = str(ledger.total)
-    budget = TrialBudget(spent_reservations=ledger.total, max_calls=12)
+    report["budget_limit_usd"] = str(ledger.limit)
+    budget = TrialBudget(spent_reservations=ledger.total, max_calls=12, limit_usd=ledger.limit)
     attempted = {(r["case_id"], r["model"]) for r in report["cases"]}
     # Check feasibility for ALL remaining cells before making any model request.
-    preview = TrialBudget(spent_reservations=ledger.total, max_calls=12)
+    preview = TrialBudget(spent_reservations=ledger.total, max_calls=12, limit_usd=ledger.limit)
     for case in cases:
         for model in prices:
             if (case["case_id"], model) in attempted:
@@ -150,15 +151,22 @@ def main(argv=None):
     contract = CONTRACTS[version]
     models = [MISTRAL] if args.evidence_repair_probe else list(MODEL_PRICE_CEILINGS)
     if not args.allow_live_api:
-        preview = TrialBudget(max_calls=12)
+        inherited, limit = Decimal("0"), MAX_BUDGET_USD
+        if args.budget_ledger:
+            with BudgetLedger(args.budget_ledger) as ledger:
+                inherited, limit = ledger.total, ledger.limit
+        preview = TrialBudget(spent_reservations=inherited, max_calls=12, limit_usd=limit)
         for case in cases:
             for model in models:
                 inp, out = MODEL_PRICE_CEILINGS[model]
                 preview.reserve(contract.build_messages(case["records"]), {
                     "input_usd_per_million": str(inp), "output_usd_per_million": str(out)}, contract.SUMMARY_SCHEMA)
         print(json.dumps({"mode": "dry_run", "models": models, "cases": len(cases),
-            "model_calls": 0, "contract": version, "planned_calls": len(cases)*len(models), "new_reservation_ceiling_usd": str(preview.spent_reservations),
-            "cumulative_budget_usd": "0.05", "requires_existing_budget_ledger": True}))
+            "model_calls": 0, "contract": version, "planned_calls": len(cases)*len(models),
+            "new_reservation_ceiling_usd": str(preview.spent_reservations - inherited),
+            "cumulative_reserved_usd": str(inherited), "remaining_reservation_usd": str(limit - inherited),
+            "projected_cumulative_reserved_usd": str(preview.spent_reservations),
+            "cumulative_budget_usd": str(limit), "requires_existing_budget_ledger": True}))
         return 0
     if not all((args.key_file, args.output_dir, args.budget_ledger)):
         parser.error("live comparison requires key-file, a new output-dir and existing budget-ledger")
@@ -176,6 +184,7 @@ def main(argv=None):
     write_json(args.output_dir / "contract.json", {"system_prompt": contract.SYSTEM_PROMPT, "schema": contract.SUMMARY_SCHEMA})
     try:
         with BudgetLedger(args.budget_ledger) as ledger:
+            report["budget_limit_usd"] = str(ledger.limit)
             report["cumulative_reserved_usd"] = str(ledger.total)
             try:
                 if args.continue_unattempted_from:
@@ -185,6 +194,7 @@ def main(argv=None):
                 run_comparison(client, cases, report, args.output_dir, ledger)
             finally:
                 report["cumulative_reserved_usd"] = str(ledger.total)
+                report["remaining_reservation_usd"] = str(ledger.limit - ledger.total)
     except SummaryError as error:
         report.update(status="stopped_no_retry", error_code=str(error))
     except Exception:

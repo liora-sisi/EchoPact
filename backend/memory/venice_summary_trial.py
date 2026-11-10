@@ -20,6 +20,9 @@ MODEL = "qwen3-5-35b-a3b"
 BASE_URL = "https://api.venice.ai/api/v1"
 MAX_OUTPUT_TOKENS = 1500
 MAX_BUDGET_USD = Decimal("0.05")
+# Existing callers keep the original default. Only an explicitly updated ledger
+# may select the newly approved cumulative ceiling; never reset prior spending.
+MAX_SUPPORTED_BUDGET_USD = Decimal("0.10")
 MAX_INPUT_PRICE = Decimal("0.15")
 MAX_OUTPUT_PRICE = Decimal("1.00")
 MODEL_PRICE_CEILINGS = {
@@ -188,9 +191,12 @@ class TrialBudget:
     spent_reservations: Decimal = Decimal("0")
     calls: int = 0
     max_calls: int = 4
+    limit_usd: Decimal = MAX_BUDGET_USD
 
     def __post_init__(self):
-        if (not self.spent_reservations.is_finite() or not 0 <= self.spent_reservations <= MAX_BUDGET_USD
+        if (not isinstance(self.limit_usd, Decimal) or not self.limit_usd.is_finite()
+                or not 0 < self.limit_usd <= MAX_SUPPORTED_BUDGET_USD
+                or not self.spent_reservations.is_finite() or not 0 <= self.spent_reservations <= self.limit_usd
                 or type(self.max_calls) is not int or not 1 <= self.max_calls <= 12
                 or type(self.calls) is not int or not 0 <= self.calls <= self.max_calls):
             raise SummaryError("invalid_trial_budget")
@@ -201,7 +207,7 @@ class TrialBudget:
                        + len(json.dumps(schema, ensure_ascii=False).encode()) + 2048)
         amount = (Decimal(input_bound) * _price(prices["input_usd_per_million"])
                   + MAX_OUTPUT_TOKENS * _price(prices["output_usd_per_million"])) / 1_000_000
-        if self.calls >= self.max_calls or self.spent_reservations + amount > MAX_BUDGET_USD:
+        if self.calls >= self.max_calls or self.spent_reservations + amount > self.limit_usd:
             raise SummaryError("trial_budget_exhausted")
         self.calls += 1
         self.spent_reservations += amount

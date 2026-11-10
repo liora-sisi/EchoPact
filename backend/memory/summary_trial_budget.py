@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 from .caretaker_summary import SummaryError
-from .venice_summary_trial import MAX_BUDGET_USD
+from .venice_summary_trial import MAX_SUPPORTED_BUDGET_USD
 
 
 class BudgetLedger:
@@ -33,13 +33,26 @@ class BudgetLedger:
         try:
             self.data = json.loads(self.path.read_text(encoding="utf-8"))
             if (not isinstance(self.data, dict) or self.data.get("schema") != "echo-summary-budget-v1"
-                    or self.data.get("limit_usd") != "0.05" or not isinstance(self.data.get("reservations"), list)):
+                    or not isinstance(self.data.get("reservations"), list)):
                 raise ValueError
             self.total  # Validate the inherited reservations before any key read or API request.
         except Exception:
             self.__exit__(None, None, None)
             raise SummaryError("invalid_existing_budget_ledger") from None
         return self
+
+    @property
+    def limit(self) -> Decimal:
+        try:
+            value = self.data["limit_usd"]
+            if not isinstance(value, str):
+                raise ValueError
+            limit = Decimal(value)
+            if not limit.is_finite() or not 0 < limit <= MAX_SUPPORTED_BUDGET_USD:
+                raise ValueError
+            return limit
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            raise SummaryError("invalid_existing_budget_ledger") from None
 
     @property
     def total(self) -> Decimal:
@@ -49,7 +62,7 @@ class BudgetLedger:
             if any(not x.is_finite() or x < 0 for x in values):
                 raise ValueError
             total = sum(values, Decimal("0"))
-            if total > MAX_BUDGET_USD:
+            if total > self.limit:
                 raise ValueError
             return total
         except (KeyError, TypeError, ValueError, InvalidOperation):
@@ -57,7 +70,7 @@ class BudgetLedger:
 
     def reserve(self, *, amount: Decimal, run_id: str, model: str, case_id: str):
         if (self.lock_fd is None or not amount.is_finite() or amount <= 0
-                or self.total + amount > MAX_BUDGET_USD):
+                or self.total + amount > self.limit):
             raise SummaryError("trial_budget_exhausted")
         self.data["reservations"].append({"run_id": run_id, "model": model, "case_id": case_id,
             "reserved_usd": str(amount), "at": datetime.now(timezone.utc).isoformat()})

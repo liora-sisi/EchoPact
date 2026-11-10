@@ -219,3 +219,72 @@ def test_explicit_continuation_skips_timeout_and_preserves_old_evidence(tmp_path
     assert continued["status"] == "awaiting_human_review_with_missing"
     assert continued["cases"][0] == previous["cases"][0]
     assert client.calls[0]["model"] == MODELS[1]
+
+
+@pytest.mark.parametrize("limit", ["NaN", "Infinity", "0", "-0.1", "0.1001", 0.1])
+def test_ledger_rejects_invalid_or_above_authorized_ceiling(tmp_path, limit):
+    path = seed(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["limit_usd"] = limit
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(SummaryError, match="invalid_existing_budget_ledger"):
+        with BudgetLedger(path):
+            pytest.fail("invalid limit accepted")
+
+
+def test_explicit_raised_limit_keeps_prior_reservations_and_default_stays_small(tmp_path):
+    path = seed(tmp_path, prior="0.04412392500")
+    client = FakeComparisonClient(path)
+    cases = load_cases()
+    with BudgetLedger(path) as ledger:
+        assert ledger.limit == Decimal("0.05")
+        with pytest.raises(SummaryError, match="budget_exhausted"):
+            run_comparison(client, cases, {"run_id": "old", "cases": []}, tmp_path, ledger)
+        assert not client.calls and ledger.total == Decimal("0.04412392500")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["limit_usd"] = "0.10"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    report = {"run_id": "expanded", "cases": []}
+    with BudgetLedger(path) as ledger:
+        run_comparison(client, cases, report, tmp_path, ledger)
+        assert ledger.limit == Decimal("0.10")
+        assert Decimal("0.05") < ledger.total < Decimal("0.10")
+        assert ledger.data["prior_reserved_usd"] == "0.04412392500"
+    assert len(client.calls) == 12 and report["budget_limit_usd"] == "0.10"
+    assert TrialBudget().limit_usd == Decimal("0.05")
+
+
+def test_expanded_budget_still_blocks_before_call_and_reservation(tmp_path):
+    path = seed(tmp_path, prior="0.0999")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["limit_usd"] = "0.10"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    client = FakeComparisonClient(path)
+    with BudgetLedger(path) as ledger:
+        with pytest.raises(SummaryError, match="budget_exhausted"):
+            ledger.reserve(amount=Decimal("0.001"), run_id="over", model=MODELS[1], case_id="one")
+        with pytest.raises(SummaryError, match="budget_exhausted"):
+            run_comparison(client, CASES, {"run_id": "over", "cases": []}, tmp_path, ledger)
+        assert not client.calls and not ledger.data["reservations"]
+    with pytest.raises(SummaryError, match="invalid_trial_budget"):
+        TrialBudget(limit_usd=Decimal("0.11"))
+    with pytest.raises(SummaryError, match="budget_exhausted"):
+        TrialBudget(spent_reservations=Decimal("0.0999"), limit_usd=Decimal("0.10")).reserve(
+            build_messages(CASES[0]["records"]), {
+                "input_usd_per_million": "0.09375", "output_usd_per_million": "0.25"})
+
+
+def test_offline_preview_reads_actual_limit_without_touching_ledger_or_key(tmp_path):
+    path = seed(tmp_path, prior="0.04412392500")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["limit_usd"] = "0.10"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    original = path.read_bytes()
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run([sys.executable, str(root / "scripts/summary_model_comparison.py"),
+        "--evidence-repair-probe", "--budget-ledger", str(path), "--key-file", "missing-key"],
+        check=True, capture_output=True, text=True, encoding="utf-8")
+    preview = json.loads(done.stdout)
+    assert preview["cumulative_budget_usd"] == "0.10" and preview["model_calls"] == 0
+    assert Decimal(preview["remaining_reservation_usd"]) == Decimal("0.05587607500")
+    assert path.read_bytes() == original and not path.with_name(path.name + ".lock").exists()
