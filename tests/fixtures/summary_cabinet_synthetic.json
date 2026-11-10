@@ -1,0 +1,30 @@
+[
+  {
+    "source_namespace": "synthetic-gpt", "room_id": "finished-lamp",
+    "review_targets": ["修好橘灯确已完成，日期为2032年5月6日", "不补原因、次数或其他日期"],
+    "records": [{"record_id":"m1","recorded_at":"2032-05-08T09:00:00+08:00","source_kind":"synthetic","content":"2032年5月6日，我们已经把橘灯修好了。"}],
+    "reference_summary": {"status":"ok","facts":[{"text":"2032年5月6日修好了橘灯。","event_status":"happened","statement_role":"direct","event_date":"2032-05-06","planned_date":null,"evidence_ids":["s1"],"supersedes":null}],"uncertainties":[],"refusal_reason":null}
+  },
+  {
+    "source_namespace": "synthetic-codex", "room_id": "tea-preference",
+    "review_targets": ["白舟喜欢红茶是偏好、且为转述", "没有日期也应保留，不能变成计划"],
+    "records": [{"record_id":"m1","recorded_at":"2032-05-08T10:00:00+08:00","source_kind":"synthetic","content":"白舟说，他喜欢喝不加糖的红茶。"}],
+    "reference_summary": {"status":"ok","facts":[{"text":"白舟说他喜欢不加糖的红茶。","event_status":"not_applicable","statement_role":"retelling","event_date":null,"planned_date":null,"evidence_ids":["s1"],"supersedes":null}],"uncertainties":[],"refusal_reason":null}
+  },
+  {
+    "source_namespace": "synthetic-gpt", "room_id": "cancelled-garden",
+    "review_targets": ["植物园计划已取消，原定日不是取消决定日", "保留跨段证据，不把旧计划继续当当前计划"],
+    "records": [
+      {"record_id":"m1","recorded_at":"2032-05-01T08:00:00+08:00","source_kind":"synthetic","content":"计划2032年5月9日去植物园。"},
+      {"record_id":"m2","recorded_at":"2032-05-11T08:00:00+08:00","source_kind":"synthetic","content":"植物园的计划取消了，取消决定是哪天没记。"}],
+    "reference_summary": {"status":"ok","facts":[{"text":"原定2032年5月9日的植物园计划已取消。","event_status":"cancelled","statement_role":"direct","event_date":null,"planned_date":"2032-05-09","evidence_ids":["s1","s2"],"supersedes":null}],"uncertainties":["取消决定的日期未记录。"],"refusal_reason":null}
+  },
+  {
+    "source_namespace": "synthetic-browser", "room_id": "corrected-nickname",
+    "review_targets": ["最终方向南乔给岑野起小灯塔，旧相反方向独立保留", "起名已发生但日期未知，不补记述日"],
+    "records": [
+      {"record_id":"m1","recorded_at":"2032-05-01T09:00:00+08:00","source_kind":"synthetic","content":"我记得是岑野给南乔起了昵称‘小灯塔’，具体哪天没有记。"},
+      {"record_id":"m2","recorded_at":"2032-05-02T09:00:00+08:00","source_kind":"synthetic","content":"刚把方向讲反了。实际上是南乔给岑野起的这个昵称。"}],
+    "reference_summary": {"status":"ok","facts":[{"text":"据更正，南乔给岑野起了昵称‘小灯塔’。","event_status":"happened","statement_role":"correction","event_date":null,"planned_date":null,"evidence_ids":["s1","s2","s3"],"supersedes":{"text":"原先说岑野给南乔起了昵称‘小灯塔’。","evidence_ids":["s1"]}}],"uncertainties":["起名的具体日期未记录。"],"refusal_reason":null}
+  }
+]
