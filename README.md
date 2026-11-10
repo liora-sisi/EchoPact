@@ -36,6 +36,9 @@ Telegram 的回答模型是末端表达器，尚不是通用小管家。
 OpenAI 同题对照的接法、预算与进度见 [试验说明](docs/OPENAI_SUMMARY_COMPARISON.md)；
 默认离线，不改变生产入口。
 
+助手使用侧已加入[自然问法与上下文负担基线](docs/ASSISTANT_RECALL_BASELINE.md)：
+用本地真实问题核对原话是否命中、需要几轮、返回多少文字；只读运行，不调用模型。
+
 > M4.5 / M5 封板工具：证据与投影链在数据库迁移 v6 完成机制化保护；固定
 > 提交账本、全量回归、身份彩排、独立 Git 恢复包和七道普通快进前闸门均可
 > 重复执行。详见 [`docs/MILESTONE_RELEASE.md`](docs/MILESTONE_RELEASE.md)。

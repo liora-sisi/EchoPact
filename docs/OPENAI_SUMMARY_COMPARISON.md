@@ -84,3 +84,6 @@ python scripts/openai_summary_comparison.py --allow-live-api --resume `
 
 下一步先解决转述与缺口表达，再用助手真实遇到的错题设计自然问法和上下文负担基线。
 真实问题可在本地先验，发送真实证据给外部供应商仍须遵守已有最小数据边界与授权。
+
+后续进展：已先建立并跑完[助手自然问法基线](ASSISTANT_RECALL_BASELINE.md)，真实问题
+只在本机检索，外部调用为零。本页原有摘要成绩及漏项不变，尚未把自然问法接入模型。
