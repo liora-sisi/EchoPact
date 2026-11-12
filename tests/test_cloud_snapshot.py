@@ -377,6 +377,20 @@ def test_cloud_launcher_preserves_m6_recall_contract_and_stays_readonly(tmp_path
         assert "adaptive_recall" in positive
         assert "event_timeline" in positive
 
+        brief = _exchange(process, {
+            "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+            "params": {"name": "recall_context", "arguments": {**positive_arguments, "detail": "brief"}},
+        })["result"]["structuredContent"]
+        item = brief["memories"][0]
+        expanded = _exchange(process, {
+            "jsonrpc": "2.0", "id": 32, "method": "tools/call",
+            "params": {"name": "expand_record", "arguments": {
+                "record_id": item["record_id"], "expected_content_sha256": item["content_sha256"],
+            }},
+        })["result"]["structuredContent"]
+        assert expanded["content"] == positive["memories"][0]["content"]
+        assert expanded["record"]["authority"] == "synthetic-unverified"
+
         future_gap = _exchange(
             process,
             {

@@ -15,12 +15,20 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
+from backend.mcp.recall_packets import (
+    MAX_RECORD_ID_CHARS,
+    brief_result,
+    content_hash,
+    json_bytes,
+    record_page,
+    tool_result,
+)
 from backend.memory.adaptive_recall import adaptive_recall
 from backend.memory.event_timeline import (
     CHENGDU_TIMEZONE_NAME,
     query_uses_relative_time,
 )
-from backend.memory.identity import visible_coverage
+from backend.memory.identity import IdentityError, can_read_record, visible_coverage
 from backend.memory.records_v1 import _connect_readonly
 from backend.memory.speech_query_rescue import SpeechQueryRescuePolicy
 
@@ -36,7 +44,7 @@ SUPPORTED_PROTOCOL_VERSIONS = {
     "2024-11-05",
     "2024-10-07",
 }
-SERVER_VERSION = "0.1.2"
+SERVER_VERSION = "0.2.0"
 MAX_QUERY_CHARS = 2_000
 MAX_RESULT_LIMIT = 10
 MAX_CONTENT_CHARS = 4_000
@@ -87,7 +95,14 @@ SERVER_INSTRUCTIONS = (
     "source_cutoff_at, coverage_gap and conflict metadata as evidence boundaries. "
     "Never present unverified archive text as a user-confirmed fact. The server "
     "cannot write, delete, migrate or change identity; it returns only records "
-    "visible to its fixed startup agent."
+    "visible to its fixed startup agent. Start retrieval with detail='brief' "
+    "to receive a bounded candidate list. Previews are not generated summaries "
+    "or complete evidence. Use expand_record with the selected record_id and "
+    "expected_content_sha256 to read that exact original, following next_offset "
+    "only when needed. Never re-search to stand in for an exact expansion. "
+    "Use detail='full' for the existing audit view when omitted context, "
+    "timeline, conflict or collection details matter. A brief with "
+    "metadata_incomplete requires the full audit view before interpretation."
 )
 
 
@@ -108,7 +123,9 @@ TOOLS = (
             "evidence, optional Claim annotations, and a conservative "
             "multi-occurrence event_collection when the query explicitly asks "
             "for several related events, or named_collection when it asks for "
-            "the count and names of a category of things."
+            "the count and names of a category of things. Prefer detail='brief' "
+            "for an initial bounded list, then expand_record for exact original "
+            "text. detail='full' retains the existing audit response."
         ),
         "inputSchema": {
             "type": "object",
@@ -144,8 +161,45 @@ TOOLS = (
                     "default": True,
                     "description": "Attach visible Claim/conflict annotations.",
                 },
+                "detail": {
+                    "type": "string",
+                    "enum": ["full", "brief"],
+                    "default": "full",
+                    "description": "Prefer brief for discovery; full is the compatible audit view.",
+                },
             },
             "required": ["query"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "expand_record",
+        "title": "Read an exact Echo Pact original record",
+        "description": (
+            "Read one visible immutable original by record_id, without searching "
+            "or adding neighbours. Pass its brief content_sha256 as "
+            "expected_content_sha256; a changed original fails closed. Follow "
+            "next_offset for another bounded page only if needed. Offsets count "
+            "Unicode code points, not bytes. Rechecks visibility on every call."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "record_id": {"type": "string", "minLength": 1, "maxLength": MAX_RECORD_ID_CHARS},
+                "expected_content_sha256": {
+                    "type": "string", "pattern": "^[0-9a-f]{64}$",
+                    "description": "Content fingerprint from brief or the previous page; required for nonzero offset.",
+                },
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "length": {"type": "integer", "minimum": 1, "maximum": MAX_CONTENT_CHARS, "default": 2000},
+            },
+            "required": ["record_id"],
             "additionalProperties": False,
         },
         "annotations": {
@@ -264,7 +318,7 @@ class ReadonlyGateway:
         self.coverage()
 
     def recall(self, arguments: Mapping[str, Any]) -> Dict[str, Any]:
-        allowed = {"query", "limit", "as_of", "include_projection"}
+        allowed = {"query", "limit", "as_of", "include_projection", "detail"}
         unknown = sorted(set(arguments) - allowed)
         if unknown:
             raise ValueError("unknown arguments: " + ", ".join(unknown))
@@ -284,6 +338,9 @@ class ReadonlyGateway:
         include_projection = arguments.get("include_projection", True)
         if not isinstance(include_projection, bool):
             raise ValueError("include_projection must be a boolean")
+        detail = arguments.get("detail", "full")
+        if detail not in ("full", "brief"):
+            raise ValueError("detail must be full or brief")
 
         result = adaptive_recall(
             query,
@@ -296,7 +353,45 @@ class ReadonlyGateway:
             reference_time_source=reference_time_source,
             speech_query_policy=self.speech_query_policy,
         )
-        return _bounded_result(result)
+        return brief_result(result) if detail == "brief" else _bounded_result(result)
+
+    def expand(self, arguments: Mapping[str, Any]) -> Dict[str, Any]:
+        if set(arguments) - {"record_id", "expected_content_sha256", "offset", "length"}:
+            raise ValueError("unknown expand_record arguments")
+        record_id = _required_text(arguments.get("record_id"), "record_id")
+        if len(record_id) > MAX_RECORD_ID_CHARS or json_bytes(record_id) > 512:
+            raise ValueError("record_id exceeds its size limit")
+        offset, length = arguments.get("offset", 0), arguments.get("length", 2000)
+        if type(offset) is not int or not 0 <= offset <= 2**63 - 1:
+            raise ValueError("offset must be a non-negative bounded integer")
+        if type(length) is not int or not 1 <= length <= MAX_CONTENT_CHARS:
+            raise ValueError(f"length must be between 1 and {MAX_CONTENT_CHARS}")
+        expected = arguments.get("expected_content_sha256")
+        if expected is not None and (
+            not isinstance(expected, str) or len(expected) != 64
+            or any(char not in "0123456789abcdef" for char in expected)
+        ):
+            raise ValueError("expected_content_sha256 must be a lowercase SHA-256 fingerprint")
+        if offset and expected is None:
+            raise ValueError("nonzero offset requires expected_content_sha256")
+
+        conn = _connect_readonly(self.db_path)
+        try:
+            # One read snapshot for lookup, ACL replay and original. No migration,
+            # writable cache or duplicated permission logic is involved.
+            conn.execute("BEGIN")
+            row = conn.execute("SELECT id FROM records_v1 WHERE record_id = ?", (record_id,)).fetchone()
+            if row is None or not can_read_record(conn, self.agent_id, row["id"]):
+                raise ValueError("record unavailable")
+            record = dict(conn.execute("SELECT * FROM records_v1 WHERE id = ?", (row["id"],)).fetchone())
+            if expected is not None and content_hash(record["content"]) != expected:
+                raise ValueError("record fingerprint changed; obtain a fresh preview")
+            return record_page(record, offset=offset, length=length)
+        except IdentityError:
+            # Disabled identity, hidden row and absent row reveal no existence.
+            raise ValueError("record unavailable") from None
+        finally:
+            conn.close()
 
 
 def tool_definitions() -> list[Dict[str, Any]]:
@@ -304,17 +399,7 @@ def tool_definitions() -> list[Dict[str, Any]]:
 
 
 def _tool_result(payload: Mapping[str, Any], *, is_error: bool = False) -> Dict[str, Any]:
-    structured = dict(payload)
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": json.dumps(structured, ensure_ascii=False, separators=(",", ":")),
-            }
-        ],
-        "structuredContent": structured,
-        "isError": is_error,
-    }
+    return tool_result(payload, is_error=is_error)
 
 
 def _safe_error(message: str) -> Dict[str, Any]:
@@ -367,6 +452,8 @@ class StdioMcpServer:
                     raise ValueError("tool arguments must be an object")
                 if name == "recall_context":
                     result = _tool_result(self.gateway.recall(arguments))
+                elif name == "expand_record":
+                    result = _tool_result(self.gateway.expand(arguments))
                 elif name == "memory_coverage":
                     if arguments:
                         raise ValueError("memory_coverage accepts no arguments")

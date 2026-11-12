@@ -6,8 +6,8 @@ server.  It is an adapter, not a second memory database.
 ## Safety contract
 
 - STDIO only: the process does not listen on a network port.
-- Tools are limited to `recall_context` and `memory_coverage`.
-- Both tools advertise MCP read-only, non-destructive and closed-world hints.
+- Tools are limited to `recall_context`, `expand_record` and `memory_coverage`.
+- All tools advertise MCP read-only, non-destructive and closed-world hints.
 - The agent identity is fixed at process startup.  Tool callers cannot provide
   or switch `agent_id`.
 - SQLite is opened with `mode=ro` and `PRAGMA query_only`.
@@ -58,7 +58,7 @@ args = ["D:\\path\\to\\EchoPact\\scripts\\echo_pact_mcp.py"]
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 required = false
-enabled_tools = ["recall_context", "memory_coverage"]
+enabled_tools = ["recall_context", "expand_record", "memory_coverage"]
 
 [mcp_servers.echo_pact.env]
 ECHO_PACT_MCP_DB_PATH = "D:\\private\\path\\records.sqlite3"
@@ -121,8 +121,9 @@ An invitation or future plan alone is context, not proof that the event occurred
 
 ### `recall_context`
 
-Inputs: `query`, optional `limit` (1-10), optional `as_of`, and optional
-`include_projection`.  The response preserves Echo Pact's evidence and coverage
+Inputs: `query`, optional `limit` (1-10), optional `as_of`, optional
+`include_projection`, and `detail` (`full` or `brief`, default `full` for existing
+clients). The full response preserves Echo Pact's evidence and coverage
 contract.  `confidence` remains a deterministic evidence score, not a
 probability.  Unverified archive records do not become confirmed facts merely
 because they were recalled. The underlying SQLite recall is precision-first:
@@ -136,6 +137,80 @@ and anchors supported relative phrases. When a relative phrase is present and
 the caller omits `as_of`, the local MCP gateway supplies its own trustworthy
 `Asia/Shanghai` server clock; it never derives the reference from a recalled
 message timestamp.
+
+### Bounded discovery and exact expansion (2026-11-13)
+
+For assistant discovery, start with `detail="brief"`. This is a deterministic
+candidate list, **not a model-written summary**. It uses the same search and
+identity as full mode. Its allowlist prevents timeline nodes, debug traces,
+context records and mirror provenance bodies from flooding the response.
+
+- The entire compact UTF-8 JSON payload is at most **12,000 bytes**. The MCP
+  result object, including both its text and structured copies, is at most
+  **28,000 bytes** (excluding the JSON-RPC envelope). These are byte limits,
+  not token estimates. The full audit response retains its existing behavior.
+- Each candidate includes its exact ID, source channel/kind, message time,
+  verification/authority, cutoff/conflict marker, heuristic confidence when
+  available, original text length, SHA-256, and at most 120 original characters.
+  It intentionally defers long source references and branch metadata to expansion.
+- Preview offsets count Unicode code points. `content_chars` and the fingerprint
+  are computed **before** full-mode truncation; `content_truncated` says whether
+  the preview omits any original text. Nonzero context/claim/phase counts indicate
+  supporting material in the full audit view, not extra independent support.
+- Under pressure, previews shrink first, then the lowest-ranked candidates are
+  dropped with an explicit `omitted.memory_count`. The first ten candidates keep
+  their search order; brief mode does not invent a new ranking.
+- Coverage gaps, date filtering and clarification requirements survive. Outside
+  date-scope retellings remain separately counted, never promoted to primary
+  evidence. Timeline omissions include a conflict/correction count. Missing
+  metadata values are explicitly listed and `metadata_incomplete` requires an
+  audit before interpretation. Ordinary omitted sections are listed separately.
+- A preview alone must not support a quotation, exhaustive count, absolute first
+  occurrence, or final truth judgment. `created_at` remains message time.
+
+Use `expand_record` to obtain one selected **original**, without running another
+search. Inputs are `record_id`, optional `expected_content_sha256`, `offset`
+(default 0) and `length` (default 2,000; maximum 4,000 code points).
+
+```json
+{"query":"a natural memory question","limit":5,"detail":"brief"}
+```
+
+Copy a returned `record_id` and `content_sha256` into the expansion arguments:
+
+```text
+expand_record(record_id=<selected ID>, expected_content_sha256=<returned hash>)
+```
+
+The page includes original text, provenance, `content_chars`, `offset`,
+`end_offset`, `next_offset`, and the original content fingerprint. Request the
+next page only if needed, retaining the fingerprint; a nonzero offset requires
+it. Pages have a **16,000-byte JSON cap** and can be shorter than `length` for
+escaped or multibyte text. Joining successive pages reconstructs the exact
+original. Offset at EOF returns an empty final page; beyond EOF is an error.
+
+Every call rechecks the fixed identity's current visibility in one read-only
+SQLite transaction. Missing, hidden and disabled-agent reads report the same
+`record unavailable` error. Revocation between pages takes effect on the next
+call; stale fingerprints fail closed. This is not a permission token or cache.
+It returns no neighbouring records, generated summary, or Claim text.
+
+For contextual contradictions, time annotations, mirror members or collection
+audits, use `detail="full"` deliberately. The response budget does not upgrade
+retrieval relevance or model understanding. Existing clients that omit `detail`
+still get full mode; refresh their tool catalog after deployment, and include
+`expand_record` if they use a tool allowlist. Both local and cloud launchers use
+the same contract. Telegram and caretaker shadow defaults are unchanged.
+
+This completes the bounded-list idea reviewed in [Wangshu's PR #1](https://github.com/liora-sisi/EchoPact/pull/1)
+with whole-packet limits, original-length accuracy and exact expansion. Four
+frozen local acceptance cases retained all ten candidates: full responses of
+84,315–111,536 characters became 7,956–8,881-character briefs; every expanded
+original matched byte-for-byte, and the database hash stayed unchanged.
+These are output-size/identity checks, not a claim that all four retrieval
+questions now find their intended answer. No model API calls were used.
+
+### Full audit metadata
 
 Every adaptive response includes `source_provenance` over the returned
 `memories`. Room Ferry and Codex rows retain their original source, authority,

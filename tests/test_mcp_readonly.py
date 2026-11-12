@@ -96,6 +96,7 @@ def test_tool_contract_is_read_only_and_has_no_identity_argument():
     tools = tool_definitions()
     assert {tool["name"] for tool in tools} == {
         "recall_context",
+        "expand_record",
         "memory_coverage",
     }
     for tool in tools:
@@ -403,6 +404,7 @@ def test_stdio_mcp_handshake_and_calls_are_compatible(mcp_db):
         )
         assert {tool["name"] for tool in listed["result"]["tools"]} == {
             "recall_context",
+            "expand_record",
             "memory_coverage",
         }
 
@@ -422,6 +424,22 @@ def test_stdio_mcp_handshake_and_calls_are_compatible(mcp_db):
         assert called["result"]["structuredContent"]["memories"][0][
             "record_id"
         ] == "mcp-001"
+        brief = _exchange(process, {
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {"name": "recall_context", "arguments": {
+                "query": "FERRY-MCP-2042", "detail": "brief",
+            }},
+        })["result"]["structuredContent"]
+        item = brief["memories"][0]
+        expanded = _exchange(process, {
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": {"name": "expand_record", "arguments": {
+                "record_id": item["record_id"],
+                "expected_content_sha256": item["content_sha256"],
+            }},
+        })["result"]
+        assert expanded["isError"] is False
+        assert expanded["structuredContent"]["content"] == called["result"]["structuredContent"]["memories"][0]["content"]
     finally:
         process.stdin.close()
         process.wait(timeout=10)
@@ -447,3 +465,163 @@ def test_tool_argument_validation_does_not_echo_query(mcp_db):
     rendered = json.dumps(response, ensure_ascii=False)
     assert "PRIVATE-SYNTHETIC" not in rendered
     assert OUTSIDER not in rendered
+
+
+def test_brief_budget_covers_metadata_and_mcp_text_duplication():
+    import copy
+    from backend.mcp.recall_packets import (
+        MAX_BRIEF_JSON_BYTES, MAX_BRIEF_MCP_RESULT_BYTES, brief_result, json_bytes, tool_result,
+    )
+    raw = {
+        "memories": [dict(_record(f"large-{n}", "长😀\n\"\\" * 2000, "2026-08-01T00:00:00Z"),
+                          conversation_context=[{"content": "CONTEXT-SECRET" * 5000}]) for n in range(10)],
+        "event_timeline": {"mentions": [{"content_excerpt": "TIMELINE-SECRET" * 5000,
+                                           "preserve_even_when_ordinary_limit_reached": True}] * 100},
+        "source_provenance": {"evidence_records": [{"source_ref": "PROVENANCE-SECRET" * 5000}] * 100},
+        "recall_debug": {"body": "DEBUG-SECRET" * 5000},
+        "temporal_scope": {"status": "resolved_calendar_scope", "filter_start_at": "2026-07-31T16:00:00Z",
+                           "filter_end_at_exclusive": "2026-08-01T16:00:00Z",
+                           "outside_scope_retellings": [{"content": "OUTSIDE-SECRET" * 5000}]},
+        "coverage": {"coverage_gap": True, "coverage_status": "verified_cutoff_unknown"},
+    }
+    before = copy.deepcopy(raw)
+    brief = brief_result(raw)
+    assert raw == before
+    assert json_bytes(brief) <= MAX_BRIEF_JSON_BYTES
+    assert json_bytes(tool_result(brief)) <= MAX_BRIEF_MCP_RESULT_BYTES
+    rendered = json.dumps(brief, ensure_ascii=False)
+    assert "SECRET" not in rendered
+    assert len(brief["memories"]) == 10
+    assert brief["coverage"] == raw["coverage"]
+    assert brief["temporal_scope"]["filter_start_at"] == "2026-07-31T16:00:00Z"
+    assert brief["temporal_scope"]["outside_scope_retellings_omitted"] == 1
+    assert brief["event_timeline"]["conflict_or_correction_mentions_omitted"] == 100
+    assert brief["memories"][0]["content_chars"] == 10_000
+    assert brief["memories"][0]["content_truncated"] is True
+    assert brief["memories"][0]["content_sha256"] == hashlib.sha256(raw["memories"][0]["content"].encode()).hexdigest()
+
+
+def test_brief_oversize_metadata_is_explicit_and_does_not_corrupt_ids():
+    from backend.mcp.recall_packets import brief_result, json_bytes, MAX_BRIEF_JSON_BYTES
+    raw = {"memories": [dict(_record(f"record-{n}", "preview", "2026-08-01T00:00:00Z"),
+                              authority="x" * 40_000, source_ref="x" * 40_000) for n in range(10)]}
+    raw["memories"].append(_record("x" * 300, "not-expandable", "2026-08-01T00:00:00Z"))
+    brief = brief_result(raw)
+    assert json_bytes(brief) <= MAX_BRIEF_JSON_BYTES
+    assert brief["metadata_incomplete"] is True
+    assert brief["omitted"]["memory_count"] >= 1
+    for item in brief["memories"]:
+        assert "authority" not in item and "authority" in item["fields_omitted"]
+        assert item["record_id"].startswith("record-")
+
+
+def test_brief_full_parity_and_exact_unicode_pagination(mcp_db, monkeypatch):
+    from backend.mcp import readonly_server
+    gateway = ReadonlyGateway(str(mcp_db), OWNER)
+    before = _sha256(mcp_db)
+    args = {"query": "长内容回归", "include_projection": False}
+    full = gateway.recall(args)
+    assert full == gateway.recall({**args, "detail": "full"})
+    brief = gateway.recall({**args, "detail": "brief"})
+    item = brief["memories"][0]
+    assert item["record_id"] == full["memories"][0]["record_id"]
+    assert item["content_chars"] == full["memories"][0]["content_chars"]
+    assert item["content_chars"] > len(full["memories"][0]["content"])
+    assert item["verified"] is False
+    assert item["source_channel"] == "other"
+
+    def no_search(*args, **kwargs):
+        pytest.fail("exact expansion must not perform another recall")
+    monkeypatch.setattr(readonly_server, "adaptive_recall", no_search)
+    parts, offset = [], 0
+    while offset is not None:
+        page = gateway.expand({"record_id": item["record_id"], "expected_content_sha256": item["content_sha256"],
+                               "offset": offset, "length": 311})
+        assert page["record"]["record_id"] == item["record_id"]
+        assert page["offset"] == offset
+        assert page["end_offset"] == offset + len(page["content"])
+        parts.append(page["content"])
+        offset = page["next_offset"]
+    original = "".join(parts)
+    assert original == "长内容回归 " + "甲" * (MAX_CONTENT_CHARS + 80)
+    assert hashlib.sha256(original.encode()).hexdigest() == item["content_sha256"]
+    assert _sha256(mcp_db) == before
+
+
+def test_exact_expansion_hidden_absent_disabled_and_revoked_are_unavailable(mcp_db):
+    from backend.memory.identity import grant_access, revoke_access, set_agent_enabled
+    outsider = ReadonlyGateway(str(mcp_db), OUTSIDER)
+    for record_id in ("mcp-001", "does-not-exist", "' OR 1=1 --"):
+        with pytest.raises(ValueError, match="^record unavailable$"):
+            outsider.expand({"record_id": record_id})
+    grant_access("mcp-002", OUTSIDER, actor="test", db_path=str(mcp_db))
+    first = outsider.expand({"record_id": "mcp-002", "length": 10})
+    with sqlite3.connect(mcp_db) as conn:
+        grant_seq = conn.execute("SELECT MAX(event_seq) FROM record_visibility_events WHERE event_kind = 'grant'").fetchone()[0]
+    revoke_access("mcp-002", OUTSIDER, grant_seq, actor="test", db_path=str(mcp_db))
+    with pytest.raises(ValueError, match="^record unavailable$"):
+        outsider.expand({"record_id": "mcp-002", "offset": first["next_offset"],
+                         "expected_content_sha256": first["content_sha256"]})
+    set_agent_enabled(OWNER, False, actor="test", db_path=str(mcp_db))
+    with pytest.raises(ValueError, match="^record unavailable$"):
+        ReadonlyGateway(str(mcp_db), OWNER).expand({"record_id": "mcp-001"})
+
+
+@pytest.mark.parametrize("args", [
+    {"offset": -1}, {"offset": True}, {"offset": 0.5}, {"offset": 2**100},
+    {"length": 0}, {"length": MAX_CONTENT_CHARS + 1}, {"length": False},
+    {"offset": 1}, {"expected_content_sha256": "invalid"}, {"agent_id": OUTSIDER},
+])
+def test_expand_rejects_invalid_inputs_before_database_open(monkeypatch, args):
+    from backend.mcp import readonly_server
+    monkeypatch.setattr(readonly_server, "_connect_readonly", lambda *args: pytest.fail("must validate first"))
+    with pytest.raises(ValueError):
+        ReadonlyGateway("unused", OWNER).expand({"record_id": "mcp-001", **args})
+
+
+def test_expand_fingerprint_mismatch_and_bounds(mcp_db):
+    gateway = ReadonlyGateway(str(mcp_db), OWNER)
+    with pytest.raises(ValueError, match="fingerprint changed"):
+        gateway.expand({"record_id": "mcp-001", "expected_content_sha256": "0" * 64})
+    first = gateway.expand({"record_id": "mcp-001"})
+    at_end = gateway.expand({"record_id": "mcp-001", "offset": first["content_chars"],
+                             "expected_content_sha256": first["content_sha256"]})
+    assert at_end["content"] == "" and at_end["next_offset"] is None
+    with pytest.raises(ValueError, match="exceeds record length"):
+        gateway.expand({"record_id": "mcp-001", "offset": first["content_chars"] + 1,
+                        "expected_content_sha256": first["content_sha256"]})
+
+
+def test_record_page_is_exact_and_byte_bounded_with_escaped_text():
+    from backend.mcp.recall_packets import MAX_RECORD_JSON_BYTES, json_bytes, record_page
+    content = "\x00😀\n\"\\" * 3000
+    record = _record("unicode-page", content, "2026-08-01T00:00:00Z")
+    offset, parts = 0, []
+    while offset is not None:
+        page = record_page(record, offset=offset, length=4000)
+        assert json_bytes(page) <= MAX_RECORD_JSON_BYTES
+        assert page["content"] == content[offset:page["end_offset"]]
+        assert page["end_offset"] > offset
+        parts.append(page["content"])
+        offset = page["next_offset"]
+    assert "".join(parts) == content
+
+
+def test_brief_keeps_unresolved_and_outside_coverage_honest(mcp_db):
+    gateway = ReadonlyGateway(str(mcp_db), OWNER)
+    unresolved = gateway.recall({"query": "2026年2月30日做了什么？", "detail": "brief"})
+    assert unresolved["memories"] == []
+    assert unresolved["query_clarification"]["reason"] == "calendar_scope_unresolved"
+    assert unresolved["record_time_filter"]["applied"] is False
+    outside = gateway.recall({"query": "2027年1月1日做了什么？", "detail": "brief"})
+    assert outside["memories"] == []
+    assert outside["coverage"]["coverage_gap"] is True
+    assert outside["temporal_coverage"]["status"] == "outside_imported_coverage"
+
+
+@pytest.mark.parametrize("detail", [None, "summary", True, [], {}])
+def test_invalid_detail_rejected_before_search(monkeypatch, detail):
+    from backend.mcp import readonly_server
+    monkeypatch.setattr(readonly_server, "adaptive_recall", lambda *args, **kw: pytest.fail("must validate first"))
+    with pytest.raises(ValueError, match="detail"):
+        ReadonlyGateway("unused", OWNER).recall({"query": "synthetic", "detail": detail})

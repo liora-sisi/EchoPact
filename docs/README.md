@@ -1,6 +1,6 @@
 # Echo Pact 当前文档导航
 
-更新于 2026-11-10。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
+更新于 2026-11-13。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
 根 README 中保留的情感坐标、向量和主动浮现描述属于 legacy 原型，不能据此
 推断当前 records-v1 已经具备语义小管家。records-v2 是交换包格式，生产表名
 和召回协议仍沿用 records-v1，两者不是互斥版本。
@@ -17,7 +17,7 @@
 | 问句模型、受限追加检索与短原文的影子闭环 | [QUERY_CARETAKER_SHADOW.md](QUERY_CARETAKER_SHADOW.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
-| 固定身份只读 MCP | [MCP_READONLY.md](MCP_READONLY.md) |
+| 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
 | 私人 Telegram、原文与调试面板 | [TELEGRAM_READONLY_BOT.md](TELEGRAM_READONLY_BOT.md) |
 | 错题保留、分类、人工期望与回放 | [BAD_CASE_REGISTRY.md](BAD_CASE_REGISTRY.md) |
 | 不可变快照与回退 | [CLOUD_READONLY.md](CLOUD_READONLY.md) |
