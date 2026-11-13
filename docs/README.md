@@ -18,6 +18,7 @@
 | 模型筛选短证据、逐字引用、合成对照与不足回退 | [EVIDENCE_SELECTOR_SHADOW.md](EVIDENCE_SELECTOR_SHADOW.md) |
 | 类别补查、相邻纠正保留与小证据提案 | [OBJECT_RECALL_SHADOW.md](OBJECT_RECALL_SHADOW.md) |
 | 原文先后、纠正与旧稿辨认、短包完整性与合成成绩 | [OBJECT_EVIDENCE_REVIEW.md](OBJECT_EVIDENCE_REVIEW.md) |
+| 问句、检索、证据复核的整链小样与入口差别 | [CARETAKER_PIPELINE_SHADOW.md](CARETAKER_PIPELINE_SHADOW.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -36,6 +37,7 @@
 - `backend/memory/evidence_selector.py`：问句影子之后的可选语义筛选；模型只判候选，原文和出处由本地校验。
 - `backend/memory/object_recall_shadow.py`：冻结本机档案的对象比较补查；不调用模型，不替换原路线。
 - `backend/memory/object_evidence_review.py`：匿名顺序窗口与可选对象复核；失败回退、关联证据完整展示，仍为隔离试验。
+- `backend/memory/caretaker_pipeline.py`：同库同身份的整链影子入口；一次规划、至多一次证据复核，短包与完整审计分开。
 - `backend/memory/summary_cabinet.py`：独立合成摘要柜；生成器仅在写入侧注入，查询与展开不调用模型。
 - `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
 - `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
@@ -44,3 +46,5 @@
 摘要试写与独立摘要柜已有合成原型，未接入真实导入、MCP 或 Bot。
 问句模型已完成获准的真实三问试跑，两个已标目标找回一个，并补上零主题线索的短包检查；
 语义筛选已补独立合成考试；对象召回、真实题质量、跨窗口事实审计和人工提炼记忆库仍待完成，尚未正式放行。
+整链入口新增两道虚构题实际模型小样及一次旧真实题的零调用重放；前者两题预设检查通过，
+后者保留已核纠正及对象歧义。M24 整链考试已开始，正式接入仍未放行。

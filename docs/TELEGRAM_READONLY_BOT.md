@@ -84,6 +84,15 @@ ordinary replies, this deliberately sends private recalled text through the
 configured private Telegram chat and remains protected by the user-ID and
 private-chat whitelist.
 
+### This panel is not the MCP shortlist
+
+The bot still sends bounded original excerpts directly to its answer model.
+It does not use MCP `detail="brief"`, selective `expand_record`, or the isolated
+caretaker pipeline. `/why` explains that original-excerpt path; it is not a
+preview of what an assistant sees when explicitly choosing the new MCP brief
+mode. That MCP list contains short source previews, not generated archive
+summaries. See [the separate pipeline trial and entry-point comparison](CARETAKER_PIPELINE_SHADOW.md).
+
 ## Bad cases
 
 After any answered question, send:

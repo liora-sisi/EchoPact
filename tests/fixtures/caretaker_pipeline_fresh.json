@@ -1,0 +1,27 @@
+[
+  {
+    "case_id": "planter-revision",
+    "query": "那两只花盆怎么区分来着？",
+    "plan": {"status": "planned", "intent": "comparison", "topic_terms": ["花盆"]},
+    "expected_route": "object",
+    "expected_sufficiency": "sufficient",
+    "expected_gap": "none",
+    "records": [
+      {"id": "planter-draft", "role": "assistant", "position": 0, "content": "花盆《霜白》旧稿写成了蓝边，花盆《海蓝》写成了白边。", "selected": false},
+      {"id": "planter-correction", "role": "user", "position": 1, "content": "更正一下：《霜白》是白边，《海蓝》才是蓝边。两只都放在北窗。", "selected": true, "required": ["《霜白》是白边", "《海蓝》才是蓝边"]}
+    ]
+  },
+  {
+    "case_id": "puzzle-storage",
+    "query": "咱们拼图收起来的做法还记得吗？",
+    "plan": {"status": "planned", "intent": "procedure", "topic_terms": ["拼图"]},
+    "expected_route": "general",
+    "expected_sufficiency": "sufficient",
+    "expected_gap": "none",
+    "records": [
+      {"id": "puzzle-chat", "role": "assistant", "position": 0, "content": "今天聊了拼图，摆满了桌子，图案很好看。", "selected": false},
+      {"id": "puzzle-rule", "role": "user", "position": 1, "content": "拼图收纳规则：先把边框片放蓝袋，主体片放白袋，最后把袋子装回方盒。", "selected": true, "required": ["边框片放蓝袋", "主体片放白袋", "装回方盒"]},
+      {"id": "blocks-rule", "role": "user", "position": 4, "content": "积木收纳规则：所有积木混放进圆桶。", "selected": false}
+    ]
+  }
+]
