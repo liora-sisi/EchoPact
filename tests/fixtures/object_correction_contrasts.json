@@ -1,0 +1,27 @@
+[
+  {
+    "case_id": "acknowledged-stale-reprint", "partition": "fresh", "subject": "陶瓶",
+    "query": "我们那两只陶瓶怎么区分？", "sufficiency": "sufficient", "gap": "none",
+    "records": [
+      {"id": "s1", "position": 0, "role": "assistant", "content": "陶瓶草稿：《溪浦》圆口，《苔阶》方口。", "relation": "context"},
+      {"id": "s2", "position": 1, "role": "user", "content": "更正这份草稿：溪浦是方口，苔阶是圆口。", "relation": "answers", "required": ["溪浦是方口", "苔阶是圆口"]},
+      {"id": "s3", "position": 2, "role": "assistant", "content": "我刚才又贴出了陶瓶《溪浦》圆口、《苔阶》方口的旧稿，那是我承认写错的版本，没有新核验，应按你刚才的更正。", "relation": "context"}
+    ]
+  },
+  {
+    "case_id": "unresolved-claimed-recheck", "partition": "fresh", "subject": "台灯",
+    "query": "我们那两盏台灯怎么区分？", "sufficiency": "ambiguous", "gap": "conflicting_evidence",
+    "records": [
+      {"id": "s1", "position": 0, "role": "user", "content": "我确认当前台灯《山渡》是蓝色，《叶汀》是白色。", "relation": "uncertain", "required": ["《山渡》是蓝色", "《叶汀》是白色"]},
+      {"id": "s2", "position": 1, "role": "assistant", "content": "我声称重新核验了同样两盏台灯：台灯《山渡》是白色，《叶汀》是蓝色。这与刚才的确认相反；两份说法仍在争议中，尚未判定哪份准确。", "relation": "uncertain", "required": ["《山渡》是白色", "《叶汀》是蓝色", "尚未判定哪份准确"]}
+    ]
+  },
+  {
+    "case_id": "later-user-remembers-old-state", "partition": "fresh", "subject": "披肩",
+    "query": "我们那两件披肩当前怎么区分？", "sufficiency": "sufficient", "gap": "none",
+    "records": [
+      {"id": "s1", "position": 0, "role": "user", "content": "更正当前搭配：披肩《萤渡》配木扣，披肩《石湾》配银扣。", "relation": "answers", "required": ["当前搭配", "《萤渡》配木扣", "《石湾》配银扣"]},
+      {"id": "s2", "position": 1, "role": "user", "content": "我现在想起更早的旧搭配：披肩《萤渡》曾经配银扣，披肩《石湾》曾经配木扣。这只是在回忆过去，不是更改刚刚确认的当前搭配。", "relation": "context"}
+    ]
+  }
+]

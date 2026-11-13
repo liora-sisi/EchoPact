@@ -14,6 +14,9 @@ if str(ROOT) not in sys.path:
 
 from backend.memory import evidence_selector as core
 from backend.memory import evidence_selector_trial as api
+from backend.memory import object_evidence_review as object_core
+from backend.memory import object_evidence_review_trial as object_api
+from scripts import object_correction_exam
 from backend.memory.caretaker_summary import SummaryError
 from backend.memory.summary_trial_budget import BudgetLedger
 from backend.memory.venice_summary_trial import read_dpapi_key
@@ -62,6 +65,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="小管家证据筛选：只用固定虚构题，默认准备、不调用模型。")
     parser.add_argument("--provider", choices=("venice", "openai"), default="venice")
     parser.add_argument("--partition", choices=("development", "holdout", "fresh", "all"), default="development")
+    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts"), default="general")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--allow-synthetic-api", action="store_true")
     parser.add_argument("--key-file", type=Path)
@@ -69,16 +73,29 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     output = _private(args.output_dir)
-    cases = load_cases(args.partition)
-    prepared = {c["case_id"]: prepare_case(c) for c in cases}
-    payloads = {cid: api.request_payload(item["request"], args.provider) for cid, item in prepared.items()}
+    is_object_exam = args.exam in ("objects", "object-contrasts")
+    exam_api = object_api if is_object_exam else api
+    exam_core = object_core if is_object_exam else core
+    cases = object_correction_exam.load_cases(args.partition, contrast=args.exam == "object-contrasts") if is_object_exam else load_cases(args.partition)
+    if not cases:
+        raise SummaryError("selected_partition_is_empty")
+    prepare = object_correction_exam.prepare_case if is_object_exam else prepare_case
+    prepared = {c["case_id"]: prepare(c) for c in cases}
+    payloads = {cid: exam_api.request_payload(item["request"], args.provider) for cid, item in prepared.items()}
     code_paths = (Path(__file__), ROOT / "backend/memory/evidence_selector.py",
                   ROOT / "backend/memory/evidence_selector_trial.py", FIXTURE,
                   ROOT / "backend/memory/query_caretaker.py",
                   ROOT / "backend/memory/summary_trial_budget.py",
                   ROOT / "backend/memory/venice_summary_trial.py",
                   ROOT / "backend/memory/openai_summary_trial.py")
-    manifest = {"schema": core.VERSION + "-trial", "provider": args.provider,
+    if is_object_exam:
+        code_paths += (ROOT / "backend/memory/object_evidence_review.py",
+                       ROOT / "backend/memory/object_evidence_review_trial.py",
+                       ROOT / "backend/memory/object_recall_shadow.py", ROOT / "backend/memory/named_collection.py",
+                       ROOT / "scripts/object_correction_exam.py", object_correction_exam.FIXTURE)
+        if args.exam == "object-contrasts":
+            code_paths += (object_correction_exam.CONTRAST_FIXTURE,)
+    manifest = {"schema": exam_core.VERSION + "-trial", "provider": args.provider, "exam": args.exam,
         "model": api.model(args.provider), "partition": args.partition, "synthetic_only": True,
         "source_sha256": {p.relative_to(ROOT).as_posix(): file_sha(p) for p in code_paths},
         "requests": {cid: core.digest(core.encoded(p).decode()) for cid, p in payloads.items()}}
@@ -99,7 +116,7 @@ def main(argv=None):
     if report_path.exists():
         print(json.dumps({"status": "existing_report_reused", "new_model_calls": 0}))
         return 0
-    total = sum((api.reservation(p["request"], args.provider) for p in prepared.values()), Decimal(0))
+    total = sum((exam_api.reservation(p["request"], args.provider) for p in prepared.values()), Decimal(0))
     if not args.allow_synthetic_api:
         print(json.dumps({"status": "prepared_no_api", "cases": len(cases),
                           "maximum_reservation_usd": str(total), "model_calls": 0}))
@@ -109,15 +126,17 @@ def main(argv=None):
     # 2026-11-13: approved $1 amendment followed by delegated small adjustments.
     # This only permits reading that amended ledger; it never raises its limit,
     # refunds reservations or changes older trial callers' $0.50 ceiling.
-    ceiling = Decimal("2.00") if args.provider == "openai" else api.venice.MAX_SUPPORTED_BUDGET_USD
-    report = {"schema": core.VERSION + "-report", "provider": args.provider, "model": api.model(args.provider),
+    # Object review is a separately bounded continuation under the delegated
+    # small-budget amendment. Older general trials retain their $2 ceiling.
+    ceiling = (Decimal("3.00") if is_object_exam else Decimal("2.00")) if args.provider == "openai" else api.venice.MAX_SUPPORTED_BUDGET_USD
+    report = {"schema": exam_core.VERSION + "-report", "exam": args.exam, "provider": args.provider, "model": api.model(args.provider),
               "synthetic_only": True, "archive_records_sent": 0, "production_accepted": False,
               "new_model_calls": 0, "cases": []}
     with BudgetLedger(_private(args.budget_ledger), maximum_limit=ceiling) as ledger:
         if ledger.data.get("provider", "venice") != args.provider:
             raise SummaryError("budget_provider_mismatch")
         pending = [c for c in cases if not (output / (c["case_id"] + ".started.json")).exists()]
-        amount = sum((api.reservation(prepared[c["case_id"]]["request"], args.provider) for c in pending), Decimal(0))
+        amount = sum((exam_api.reservation(prepared[c["case_id"]]["request"], args.provider) for c in pending), Decimal(0))
         if ledger.total + amount > ledger.limit:
             raise SummaryError("trial_budget_exhausted")
         client = None
@@ -149,7 +168,7 @@ def main(argv=None):
                                    model=api.model(args.provider), case_id=cid)
                 report["new_model_calls"] += 1
                 try:
-                    response = api.run_case(client, prepared[cid]["request"], provider=args.provider,
+                    response = exam_api.run_case(client, prepared[cid]["request"], provider=args.provider,
                         frozen_request_sha256=manifest["requests"][cid], before_request=reserve)
                 except Exception:
                     response = {"status": "failed_no_retry", "details_suppressed": True}
@@ -157,11 +176,11 @@ def main(argv=None):
             entry = {"case_id": cid, "accepted_contract": False, "quality": {"passed": False}}
             if "draft" in response:
                 try:
-                    brief = core.make_brief(response["draft"], prepared[cid])
+                    brief = exam_core.make_brief(response["draft"], prepared[cid])
                     entry.update(accepted_contract=True, brief=brief,
                         quality=score(case, prepared[cid], response["draft"], brief),
                         estimated_usd=response.get("estimated_usd"), usage=response.get("usage"))
-                except core.SelectionError as error:
+                except (core.SelectionError, object_core.ReviewError) as error:
                     entry["validation_error"] = str(error)
             report["cases"].append(entry)
         report.update(cumulative_reserved_usd=str(ledger.total), budget_limit_usd=str(ledger.limit))

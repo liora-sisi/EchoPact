@@ -21,7 +21,7 @@ class BudgetLedger:
 
     def __init__(self, path: Path, *, maximum_limit=MAX_SUPPORTED_BUDGET_USD):
         if (not isinstance(maximum_limit, Decimal) or not maximum_limit.is_finite()
-                or not 0 < maximum_limit <= Decimal("2.00")):
+                or not 0 < maximum_limit <= Decimal("3.00")):
             raise SummaryError("invalid_trial_budget_ceiling")
         self.maximum_limit = maximum_limit
         self.path = path
