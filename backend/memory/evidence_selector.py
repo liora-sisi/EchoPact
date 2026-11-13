@@ -14,7 +14,7 @@ from itertools import zip_longest
 
 from . import query_caretaker as planner
 
-VERSION = "echo-evidence-selector-shadow-v3"
+VERSION = "echo-evidence-selector-shadow-v4"
 MAX_CANDIDATES = 12
 MAX_EXCERPT_CHARS = 400
 MAX_INPUT_BYTES = 24_000
@@ -64,6 +64,14 @@ class SelectionError(ValueError):
     pass
 
 
+# Recognize only the complete legacy file/line citation form. Bracketed prose,
+# escaped/code text and citation-shaped text invented by the model stay literal.
+_ARCHIVE_CITATION = re.compile(
+    r"【[0-9]{1,6}:[0-9]{1,6}†[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+    r"†L[1-9][0-9]{0,6}(?:-L[1-9][0-9]{0,6})?】"
+)
+
+
 def encoded(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
@@ -94,6 +102,20 @@ def _emphasis_projection(text):
     return "".join(text[i] for i in offsets), offsets, openings, closings
 
 
+def _citation_projection(text):
+    """Locate an omitted source citation, then restore it in the returned slice.
+
+    Source-only projection: do not erase a model's added or altered citations.
+    Every retained character still maps to its original source offset.
+    """
+    plain, offsets, openings, closings = _emphasis_projection(text)
+    if "`" in text or "\\" in text:
+        return plain, offsets, openings, closings
+    removed = {i for match in _ARCHIVE_CITATION.finditer(text) for i in range(*match.span())}
+    offsets = [i for i in offsets if i not in removed]
+    return "".join(text[i] for i in offsets), offsets, openings, closings
+
+
 def resolve_quote(text, hint):
     """Return an exact source slice; a model's copied string is only a hint."""
     if not isinstance(hint, str) or not hint.strip() or len(hint) > MAX_QUOTE_CHARS:
@@ -104,8 +126,18 @@ def resolve_quote(text, hint):
     plain, offsets, openings, closings = _emphasis_projection(text)
     needle, *_ = _emphasis_projection(hint)
     start = _unique_position(plain, needle) if needle.strip() else None
+    method = "paired_emphasis_restored_from_source"
     if start is None or plain == text and needle == hint:
-        raise SelectionError("quote_not_unique_verbatim")
+        # Only a complete citation omitted from the source can use this path.
+        # The final quote includes that citation; no cleaned-up model text is
+        # substituted into the evidence, even when the model only dropped markup.
+        if _ARCHIVE_CITATION.search(hint) or not _ARCHIVE_CITATION.search(text):
+            raise SelectionError("quote_not_unique_verbatim")
+        projected, offsets, openings, closings = _citation_projection(text)
+        start = _unique_position(projected, needle) if needle.strip() else None
+        if start is None or projected == plain:
+            raise SelectionError("quote_not_unique_verbatim")
+        method = "source_citation_restored_from_source"
     source_start = offsets[start]
     source_end = offsets[start + len(needle) - 1] + 1
     source_start = openings.get(source_start, source_start)
@@ -113,7 +145,7 @@ def resolve_quote(text, hint):
     quote = text[source_start:source_end]
     if len(quote) > MAX_QUOTE_CHARS:
         raise SelectionError("resolved_quote_too_long")
-    return quote, source_start, "paired_emphasis_restored_from_source"
+    return quote, source_start, method
 
 
 def _metadata(row):

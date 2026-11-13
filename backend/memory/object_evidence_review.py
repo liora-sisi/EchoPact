@@ -11,7 +11,7 @@ import re
 from . import evidence_selector as selection
 from . import object_recall_shadow as scout
 
-VERSION = "echo-object-evidence-review-v2"
+VERSION = "echo-object-evidence-review-v3"
 MAX_WINDOWS = 24
 SYSTEM_PROMPT = selection.SYSTEM_PROMPT + """
 本次还可能有 source_order_windows。每组 candidate_ids 是本机按同一原始对话分支位置核验的发言先后。

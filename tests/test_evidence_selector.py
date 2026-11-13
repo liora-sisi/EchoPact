@@ -143,6 +143,49 @@ def test_quote_recovery_never_changes_words_spacing_code_or_ambiguous_occurrence
         core.resolve_quote(source, hint)
 
 
+def test_omitted_legacy_citation_is_restored_with_exact_source_offsets():
+    citation = "【2:1†notes.md†L4-L7】"
+    source = "前话。\n**陶杯先晾干**" + citation + "，再上釉。\n后话。"
+    hint = "陶杯先晾干，再上釉。"
+    quote, offset, method = core.resolve_quote(source, hint)
+    assert quote == "**陶杯先晾干**" + citation + "，再上釉。"
+    assert source[offset:offset + len(quote)] == quote
+    assert method == "source_citation_restored_from_source"
+    prepared = core.prepare(shadow([record("s1", source)]), query=QUESTION)
+    draft = answer(prepared)
+    draft["judgments"][0]["quote"] = hint
+    brief = core.make_brief(draft, prepared)
+    assert brief["items"][0]["text"] == quote
+    reference = brief["items"][0]["references"][0]
+    assert source[reference["quote_start"]:reference["quote_end"]] == quote
+    assert reference["quote_resolution"] == method
+
+
+@pytest.mark.parametrize("source,hint", [
+    ("先晾干【2:1†notes.md†L4-L7】，不烧制。", "先晾干，烧制。"),
+    ("晾三天【2:1†notes.md†L4-L7】，再上釉。", "晾一天，再上釉。"),
+    ("先晾干【2:1†notes.md†L4-L7】。\n再上釉。", "先晾干。 再上釉。"),
+    ("先晾干【2:1†notes.md†L4-L7】，再上釉。", "先晾干!再上釉。"),
+    ("先晾干【2:1†notes.md†L4-L7】，再上釉。先晾干【3:2†other.md†L8】，再上釉。", "先晾干，再上釉。"),
+    ("先晾干【尚未确认】，再上釉。", "先晾干，再上釉。"),
+    ("先晾干【2:1†未确认†L4-L7】，再上釉。", "先晾干，再上釉。"),
+    ("`先晾干【2:1†notes.md†L4-L7】，再上釉。`", "`先晾干，再上釉。`"),
+    (r"先晾干\【2:1†notes.md†L4-L7】，再上釉。", r"先晾干\，再上釉。"),
+    ("先晾干【2:1†notes.md†L4-L7】，再上釉。", "先晾干【2:1†forged.md†L4-L7】，再上釉。"),
+    ("先晾干，再上釉。", "先晾干【2:1†notes.md†L4-L7】，再上釉。"),
+])
+def test_citation_recovery_rejects_word_changes_prose_code_ambiguity_and_forged_sources(source, hint):
+    with pytest.raises(core.SelectionError):
+        core.resolve_quote(source, hint)
+
+
+def test_restored_citation_still_counts_towards_quote_limit():
+    hint = "甲" * 150 + "乙" * 150
+    source = "甲" * 150 + "【2:1†notes.md†L4-L7】" + "乙" * 150
+    with pytest.raises(core.SelectionError, match="resolved_quote_too_long"):
+        core.resolve_quote(source, hint)
+
+
 def test_known_conflict_cannot_drop_one_side():
     prepared = core.prepare(shadow([
         record("s1", "陶杯晾一天。", conflict_group_id="g"),
