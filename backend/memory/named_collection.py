@@ -312,8 +312,13 @@ def detect_named_collection_intent(query: str) -> Optional[NamedCollectionIntent
 
 
 def _topic_terms(intent: NamedCollectionIntent) -> List[str]:
-    aliases = _PUBLIC_SUBJECT_ALIASES.get(intent.subject, (intent.subject,))
-    return _unique_text((intent.subject, *aliases))
+    return list(public_subject_aliases(intent.subject))
+
+
+def public_subject_aliases(subject: str) -> tuple[str, ...]:
+    """Ordinary category wording only; never private names or inferred objects."""
+    aliases = _PUBLIC_SUBJECT_ALIASES.get(subject, (subject,))
+    return tuple(_unique_text((subject, *aliases)))
 
 
 def plan_named_collection_passes(

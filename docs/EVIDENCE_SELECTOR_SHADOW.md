@@ -144,3 +144,7 @@ python scripts/evidence_selection_trial.py --provider openai --partition all --o
 下一关是对象候选生成、别名辨认及证据不足时的有界补查。A 的目标不在候选里，
 不得用“筛选器已通过”掩盖召回缺口。M21B 的摘要作者质量仍是独立待修项；M24 正式
 接入门未通过，不改服务、数据、正式 MCP 默认行为或 Telegram。
+
+随后本机[对象补查试验](OBJECT_RECALL_SHADOW.md)已把 A 的缺失目标送进新的短候选提案，
+完整纠正引文和相关草稿一起保留。新提案未送模型，不能把候选命中当作筛选质量已过关；
+上表仍是原固定试卷的实际成绩，不回写旧结果。
