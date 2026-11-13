@@ -15,6 +15,7 @@
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |
 | 问句模型、受限追加检索与短原文的影子闭环 | [QUERY_CARETAKER_SHADOW.md](QUERY_CARETAKER_SHADOW.md) |
+| 模型筛选短证据、逐字引用、合成对照与不足回退 | [EVIDENCE_SELECTOR_SHADOW.md](EVIDENCE_SELECTOR_SHADOW.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -30,6 +31,7 @@
 - `backend/memory/adaptive_recall.py`：所有主要入口共用的有界检索编排。
 - `backend/memory/event_timeline.py`：确定性日期解释、记录时间和事件时间标注。
 - `backend/memory/caretaker_shadow.py`：本地可关闭的契约、证据检查与短摘录。
+- `backend/memory/evidence_selector.py`：问句影子之后的可选语义筛选；模型只判候选，原文和出处由本地校验。
 - `backend/memory/summary_cabinet.py`：独立合成摘要柜；生成器仅在写入侧注入，查询与展开不调用模型。
 - `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
 - `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
@@ -37,4 +39,4 @@
 小管家影子目前只在本地调试显式打开，不改变 MCP 或 Bot 的正式回答。
 摘要试写与独立摘要柜已有合成原型，未接入真实导入、MCP 或 Bot。
 问句模型已完成获准的真实三问试跑，两个已标目标找回一个，并补上零主题线索的短包检查；
-对象辨认、语义筛选、跨窗口事实审计和人工提炼记忆库仍未完成，尚未正式放行。
+语义筛选已补独立合成考试；对象召回、真实题质量、跨窗口事实审计和人工提炼记忆库仍待完成，尚未正式放行。
