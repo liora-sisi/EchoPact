@@ -20,6 +20,7 @@
 | 原文先后、纠正与旧稿辨认、短包完整性与合成成绩 | [OBJECT_EVIDENCE_REVIEW.md](OBJECT_EVIDENCE_REVIEW.md) |
 | 问句、检索、证据复核的整链小样与入口差别 | [CARETAKER_PIPELINE_SHADOW.md](CARETAKER_PIPELINE_SHADOW.md) |
 | 归属、对象歧义、干扰与缺证四道新题的模型结果 | [CARETAKER_PIPELINE_CHALLENGE.md](CARETAKER_PIPELINE_CHALLENGE.md) |
+| 真实旧题、当前短目录、逐字出处与新问法对照 | [CARETAKER_REAL_EVALUATION.md](CARETAKER_REAL_EVALUATION.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -39,6 +40,7 @@
 - `backend/memory/object_recall_shadow.py`：冻结本机档案的对象比较补查；不调用模型，不替换原路线。
 - `backend/memory/object_evidence_review.py`：匿名顺序窗口与可选对象复核；失败回退、关联证据完整展示，仍为隔离试验。
 - `backend/memory/caretaker_pipeline.py`：同库同身份的整链影子入口；一次规划、至多一次证据复核，短包与完整审计分开。
+- `backend/memory/caretaker_evaluation.py`：在本机分别计量目录可展开、已核原话可见及出处正确性，不把部分目标当成完整答案。
 - `backend/memory/summary_cabinet.py`：独立合成摘要柜；生成器仅在写入侧注入，查询与展开不调用模型。
 - `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
 - `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
@@ -54,3 +56,4 @@
 随后修复部分受限问法漏拦与“有什么不同”误拦，短包显式报告回退原因；
 旧虚构题换问法回归完成两次模型调用并保留歧义，完整检查 915 项通过。
 当前集中推进查询管家；自动摘要作者仍为独立待验工作线。
+真实六问对照已完成本机冻结与旧回复重放；固定新增材料的模型考试尚未执行，见真实对照说明。
