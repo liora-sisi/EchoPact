@@ -113,4 +113,22 @@ def test_amended_ceiling_requires_existing_ledger_and_older_callers_stay_bounded
         ledger.reserve(amount=Decimal("0.468168"), run_id="test", model="test", case_id="test")
         assert ledger.total == Decimal("0.950440")
     with pytest.raises(SummaryError, match="ceiling"):
-        BudgetLedger(path, maximum_limit=Decimal("3.01"))
+        BudgetLedger(path, maximum_limit=Decimal("4.01"))
+
+
+def test_four_dollar_challenge_ceiling_preserves_prior_reservations_and_old_callers(tmp_path):
+    path = tmp_path / "budget.json"
+    old = {"run_id": "earlier", "reserved_usd": "0.184508"}
+    data = {"schema": "echo-summary-budget-v1", "provider": "openai", "limit_usd": "4.00",
+            "prior_reserved_usd": "2.641344", "reservations": [old]}
+    path.write_text(json.dumps(data))
+    with pytest.raises(SummaryError, match="invalid_existing"):
+        with BudgetLedger(path, maximum_limit=Decimal("3.00")):
+            pytest.fail("older caller cannot inherit a higher ceiling")
+    with BudgetLedger(path, maximum_limit=Decimal("4.00")) as ledger:
+        assert ledger.total == Decimal("2.825852")
+        ledger.reserve(amount=Decimal("0.52"), run_id="challenge", model="synthetic", case_id="fixed")
+        assert ledger.total == Decimal("3.345852")
+        assert ledger.data["reservations"][0] == old
+        with pytest.raises(SummaryError, match="exhausted"):
+            ledger.reserve(amount=Decimal("0.70"), run_id="too-much", model="synthetic", case_id="blocked")

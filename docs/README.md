@@ -1,6 +1,6 @@
 # Echo Pact 当前文档导航
 
-更新于 2026-11-13。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
+更新于 2026-11-18。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
 根 README 中保留的情感坐标、向量和主动浮现描述属于 legacy 原型，不能据此
 推断当前 records-v1 已经具备语义小管家。records-v2 是交换包格式，生产表名
 和召回协议仍沿用 records-v1，两者不是互斥版本。
@@ -19,6 +19,7 @@
 | 类别补查、相邻纠正保留与小证据提案 | [OBJECT_RECALL_SHADOW.md](OBJECT_RECALL_SHADOW.md) |
 | 原文先后、纠正与旧稿辨认、短包完整性与合成成绩 | [OBJECT_EVIDENCE_REVIEW.md](OBJECT_EVIDENCE_REVIEW.md) |
 | 问句、检索、证据复核的整链小样与入口差别 | [CARETAKER_PIPELINE_SHADOW.md](CARETAKER_PIPELINE_SHADOW.md) |
+| 归属、对象歧义、干扰与缺证四道新题的模型结果 | [CARETAKER_PIPELINE_CHALLENGE.md](CARETAKER_PIPELINE_CHALLENGE.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -48,3 +49,5 @@
 语义筛选已补独立合成考试；对象召回、真实题质量、跨窗口事实审计和人工提炼记忆库仍待完成，尚未正式放行。
 整链入口新增两道虚构题实际模型小样及一次旧真实题的零调用重放；前者两题预设检查通过，
 后者保留已核纠正及对象歧义。M24 整链考试已开始，正式接入仍未放行。
+2026-11-18 再跑四道预先冻结的虚构整链题，实际八次模型调用，预设检查 4/4；
+有限样本与未解决的真实题分别报告，不把新题通过当作 M24 全面通过。
