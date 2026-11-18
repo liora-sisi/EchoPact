@@ -24,6 +24,10 @@ def _brief_rows(brief):
         else:
             for ref in references:
                 yield "selected_quote", {**ref, "content": item.get("text", "")}
+    for bundle in brief.get("source_order_context", []):
+        for item in bundle.get("items", []):
+            for ref in item.get("references", []):
+                yield "source_context_quote", {**ref, "content": item.get("text", "")}
 
 
 def verify_brief(brief, resolve_record):
@@ -48,7 +52,7 @@ def verify_brief(brief, resolve_record):
                 reasons.append("speaker_mismatch")
             if row.get("created_at", row.get("recorded_at")) != source.get("created_at"):
                 reasons.append("record_time_mismatch")
-            first, last = (("quote_start", "quote_end") if channel == "selected_quote"
+            first, last = (("quote_start", "quote_end") if channel in ("selected_quote", "source_context_quote")
                            else ("excerpt_start", "excerpt_end"))
             start, end, text = row.get(first), row.get(last), row.get("content")
             content = source.get("content")
@@ -59,7 +63,9 @@ def verify_brief(brief, resolve_record):
         checked.append({"record_id": row.get("record_id"), "channel": channel,
                         "valid": not reasons, "reasons": reasons})
     # Empty packets have no bad citations, but this is never an answer pass.
-    orphan_items = sum("references" in item and not item["references"] for item in brief.get("items", []))
+    items = [*brief.get("items", []), *(item for bundle in brief.get("source_order_context", [])
+                                       for item in bundle.get("items", []))]
+    orphan_items = sum("references" in item and not item["references"] for item in items)
     return {"references_checked": len(checked), "orphan_items": orphan_items,
             "all_references_valid": all(c["valid"] for c in checked) and not orphan_items,
             "checks": checked}
@@ -106,6 +112,8 @@ def measure_case(result, *, targets, directory, resolve_record):
         "directory_evidence": directory_score,
         "directory_target_ids_expandable": [t["record_id"] for t in targets if _identity(t) in available],
         "caretaker_evidence": selected_score,
+        "caretaker_selected_evidence": baseline._score(targets, [r for r in valid_rows if r[0] != "source_context_quote"]),
+        "caretaker_context_evidence": baseline._score(targets, [r for r in valid_rows if r[0] == "source_context_quote"]),
         "gained_target_ids": sorted(after - before), "lost_target_ids": sorted(before - after),
         "provenance": provenance,
         "directory_ids_subset_of_same_query_original": directory_ids <= original_ids,

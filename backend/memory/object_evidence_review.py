@@ -11,8 +11,9 @@ import re
 from . import evidence_selector as selection
 from . import object_recall_shadow as scout
 
-VERSION = "echo-object-evidence-review-v3"
+VERSION = "echo-object-evidence-review-v4"
 MAX_WINDOWS = 24
+MAX_ORDER_CONTEXT_ITEMS = 6  # Separate from six model selections; same whole-packet byte cap.
 SYSTEM_PROMPT = selection.SYSTEM_PROMPT + """
 本次还可能有 source_order_windows。每组 candidate_ids 是本机按同一原始对话分支位置核验的发言先后。
 组内从先到后；不同组之间没有给出全局先后，可能是不同分支。候选数组和编号只表示展示顺序，绝不是时间。
@@ -137,44 +138,100 @@ def prepare(scanned):
 def make_brief(draft, prepared):
     validate_request(prepared["request"])
     brief = selection.make_brief(draft, prepared)
-    # The ordinary selector truncates at an item/byte budget. If that leaves
-    # only half of a selected source window or known conflict group, withhold
-    # the remaining half too. Do not make a dispute appear one-sided merely
-    # because its other side occupied the seventh slot. Unselected context is
-    # still unselected; this is a presentation safeguard, not a truth decision.
-    selected = {j["candidate_id"] for j in draft["judgments"] if j["relation"] in ("answers", "uncertain")}
-    components = [{cid} for cid in selected]
-    groups = [set(w["candidate_ids"]) & selected for w in prepared["request"]["source_order_windows"]]
-    conflict_ids = {r.get("conflict_group_id") for r in prepared["local"].values()} - {None, ""}
-    groups.extend({cid for cid in selected if prepared["local"][cid].get("conflict_group_id") == g}
-                  for g in conflict_ids)
-    for group in groups:
-        if not group:
-            continue
-        touching = [c for c in components if c & group]
-        components = [c for c in components if not c & group] + [set.union(group, *touching)]
-    lookup = {scout._identity(r): cid for cid, r in prepared["local"].items()}
-    visible = {lookup[scout._identity(ref)] for item in brief["items"] for ref in item["references"]}
-    partial = [c for c in components if c & visible and not c <= visible]
-    remove = set.union(set(), *partial) & visible
-    if remove:
-        kept = []
-        for item in brief["items"]:
-            references = [r for r in item["references"] if lookup[scout._identity(r)] not in remove]
-            if references:
-                kept.append({**item, "references": references})
-        brief["items"] = kept
-        brief["omitted_selected"] += len(remove)
-        brief["duplicate_display_count"] = sum(len(i["references"]) - 1 for i in kept)
-        brief["needs_more_evidence"] = True
-    brief["partial_groups_withheld"] = len(partial)
     brief["schema_version"] = VERSION + "-brief"
     brief["source_order_windows_used"] = len(prepared["request"]["source_order_windows"])
     brief["limitations"].append("source_order_is_not_event_time_or_truth")
     brief["needs_more_evidence"] |= prepared.get("object_scout_needs_more") is not False
+    _retain_order_context(brief, draft, prepared)
     if len(selection.encoded(brief)) > selection.MAX_BRIEF_BYTES:
         raise ReviewError("ordered_brief_budget_exceeded")
     return brief
+
+
+def _retain_order_context(brief, draft, prepared):
+    """A model's 'context' label cannot silently remove a nearby correction.
+
+    Preserve whole connected source windows, without deciding which speaker is
+    right. Companions are explicitly LOCAL context, never model-selected answers.
+    Allocate complete groups in the model's original selection order. If a
+    group cannot fit, withhold it; later singleton hits cannot displace the
+    companions of an earlier selected group. Do not interpret ranking as time.
+    """
+    local = prepared["local"]
+    lookup = {scout._identity(row): cid for cid, row in local.items()}
+    judgments = {j["candidate_id"]: j for j in draft["judgments"] if j["relation"] in ("answers", "uncertain")}
+    selected = set(judgments)
+    priority = {cid: index for index, cid in enumerate(judgments)}
+    components = [{cid} for cid in local]
+    groups = [set(w["candidate_ids"]) for w in prepared["request"]["source_order_windows"]]
+    conflicts = {r.get("conflict_group_id") for r in local.values()} - {None, ""}
+    groups.extend({cid for cid, row in local.items() if row.get("conflict_group_id") == conflict}
+                  for conflict in conflicts)
+    for group in groups:
+        touching = [c for c in components if c & group]
+        components = [c for c in components if not c & group] + [set.union(group, *touching)]
+    order = {cid: index for index, cid in enumerate(local)}
+    components = [group for group in components if group & selected]
+    components.sort(key=lambda group: min(priority[cid] for cid in group & selected))
+    brief["items"] = []
+    brief["source_order_context"] = []
+    brief["order_context_groups_withheld"] = 0
+    brief["partial_groups_withheld"] = 0
+    brief["limitations"].append("local_order_context_is_not_an_answer_or_a_truth_judgment")
+
+    def source_item(cid, *, companion=False):
+        source = local[cid]
+        if companion:
+            quote, relative, method, relation = source["text"], 0, "local_exact_order_context", "context"
+        else:
+            quote, relative, method = selection.resolve_quote(source["text"], judgments[cid]["quote"])
+            relation = judgments[cid]["relation"]
+        ref = {k: source[k] for k in ("record_id", "source_kind", "conversation_id", "role",
+            "created_at", "conflict_group_id", "observed_content_sha256", "source_truncated")}
+        start = source["excerpt_start"] + relative
+        ref.update(quote_start=start, quote_end=start + len(quote), quote_resolution=method)
+        return {"text": quote, "relation": relation, "references": [ref]}
+
+    def display_key(item):
+        ref = item["references"][0]
+        return None if ref["source_truncated"] else (
+            ref["observed_content_sha256"], ref["created_at"], ref["role"], ref["conflict_group_id"],
+            item["relation"], item["text"])
+
+    for group in components:
+        wanted = group & selected
+        companions = group - selected
+        proposed = copy.deepcopy(brief)
+        for cid in sorted(wanted, key=priority.get):
+            item = source_item(cid)
+            key = display_key(item)
+            same = next((old for old in proposed["items"] if key is not None and display_key(old) == key), None)
+            if same is None:
+                proposed["items"].append(item)
+            else:
+                same["references"].extend(item["references"])
+        if companions:
+            proposed["source_order_context"].append({
+                "for_record_ids": [local[cid]["record_id"] for cid in sorted(wanted, key=order.get)],
+                "basis": "verified_source_order_windows_not_semantic_truth",
+                "source_order_windows": [{"record_ids": [local[cid]["record_id"] for cid in w["candidate_ids"]]}
+                    for w in prepared["request"]["source_order_windows"] if set(w["candidate_ids"]) <= group],
+                "items": [source_item(cid, companion=True) for cid in sorted(companions, key=order.get)]})
+        context_count = sum(len(b["items"]) for b in proposed["source_order_context"])
+        if (len(proposed["items"]) > selection.MAX_ITEMS or context_count > MAX_ORDER_CONTEXT_ITEMS
+                or len(selection.encoded(proposed)) > selection.MAX_BRIEF_BYTES - 256):
+            brief["partial_groups_withheld"] += int(len(wanted) > 1)
+            brief["order_context_groups_withheld"] += int(bool(companions))
+            brief["needs_more_evidence"] = True
+            continue
+        brief["items"] = proposed["items"]
+        brief["source_order_context"] = proposed["source_order_context"]
+    visible = {lookup[scout._identity(ref)] for item in brief["items"] for ref in item["references"]}
+    brief["omitted_selected"] = len(selected - visible)
+    brief["duplicate_display_count"] = sum(len(i["references"]) - 1 for i in brief["items"])
+    brief["needs_more_evidence"] |= bool(brief["omitted_selected"] or brief["source_order_context"])
+    if brief["source_order_context"] or brief["order_context_groups_withheld"]:
+        brief["evidence_status"] = "model_judgment_with_local_order_context_review_required"
 
 
 def refine_object_shadow(scanned, *, fallback_brief, reviewer=None):

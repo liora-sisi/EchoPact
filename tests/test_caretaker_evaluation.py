@@ -111,3 +111,15 @@ def test_same_text_does_not_merge_independent_provenance_checks():
     assert report["caretaker_evidence"]["status"] == "all_targets_visible"
     assert report["provenance"]["references_checked"] == 2
     assert not report["provenance"]["all_references_valid"] and not report["release_eligible"]
+
+
+def test_retained_local_context_is_visible_but_not_credited_to_model_selection():
+    result, directory = setup()
+    item = result["brief"]["items"].pop()
+    item["relation"] = "context"
+    result["brief"]["source_order_context"] = [{"for_record_ids": ["other"], "items": [item]}]
+    report = measure(result, directory)
+    assert report["caretaker_evidence"]["status"] == report["caretaker_context_evidence"]["status"] == "all_targets_visible"
+    assert report["caretaker_selected_evidence"]["status"] == "target_evidence_missing"
+    assert report["provenance"]["all_references_valid"]
+    assert report["caretaker_evidence"]["targets"][0]["channels"] == ["source_context_quote"]
