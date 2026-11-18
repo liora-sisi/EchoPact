@@ -12,7 +12,7 @@ import re
 from .event_timeline import resolve_query_calendar_scope
 from .caretaker_shadow import build_shadow_packet
 
-VERSION = "echo-query-caretaker-shadow-v2"
+VERSION = "echo-query-caretaker-shadow-v3"
 MAX_PAYLOAD_CHARS = 8000
 MAX_CONTENT_CHARS = 2400
 MAX_EXTRA_QUERIES = 2
@@ -33,15 +33,29 @@ SCHEMA = {"type": "object", "additionalProperties": False,
                                          "items": {"type": "string", "minLength": 2, "maxLength": 20}}},
           "required": ["status", "intent", "topic_terms"]}
 PROCEDURE = ("怎么", "如何", "做法", "规则", "格式", "样式", "动作", "功能", "步骤", "规划")
-COMPARISON = ("区分", "区别", "比较", "对比", "不同")
+COMPARISON = ("区分", "区别", "比较", "对比", "不同", "不一样")
 # Conservative first-version routing. Unsupported constraints stay entirely on
 # the original gateway path; rewrites cannot erase them.
-CONSTRAINTS = ("第一次", "最早", "最后", "最近", "首次", "上次", "之前", "之后", "以来",
-               "哪天", "哪一天", "什么时候", "多久", "几次", "几点", "几号", "取消", "更正",
-               "否认", "没", "不", "别找", "别查", "别搜", "排除", "除外", "只有", "仅", "原话", "逐字", "原句", "我说", "你说",
-               "谁说", "谁给", "谁为", "起名", "命名", "叫我", "叫你", "官方", "浏览器",
-               "codex", "chatgpt", "kimi", "deepseek", "gpt", "来源", "房间", "号房", "本地", "云端",
-               "上周", "下周", "本周", "这周", "这几天", "那天", "去年", "今年", "明年")
+CONSTRAINT_CUES = {
+    "order_or_count": ("第一次", "最早", "最后", "最近", "首次", "上次", "之前", "之后", "以来",
+        "几次", "头一回", "头一次", "第一回", "初次", "最初", "一开始", "上回", "前一次", "末次"),
+    "event_time": ("哪天", "哪一天", "什么时候", "多久", "几点", "几号", "什么日子", "什么时间",
+        "何时", "哪年", "哪一年", "哪月", "哪个月", "哪周", "多长时间"),
+    "negation_or_revision": ("取消", "更正", "否认", "没", "不", "别找", "别查", "别搜", "排除", "除外", "只有", "仅"),
+    "exact_wording": ("原话", "逐字", "原句"),
+    "speaker_or_relationship": ("我说", "你说", "谁说", "谁给", "谁为", "起名", "命名", "叫我", "叫你"),
+    "source_scope": ("官方", "浏览器", "codex", "chatgpt", "kimi", "deepseek", "gpt", "来源", "房间", "号房", "本地", "云端"),
+    "relative_time": ("上周", "下周", "本周", "这周", "这几天", "那天", "去年", "今年", "明年"),
+}
+# Only mask unmistakable comparison-question phrases for the negation check.
+# Never strip all occurrences of 不同: 不同意 and a separate 不/别 remain constraints.
+COMPARISON_QUESTION = re.compile(r"(?:有(?:什么|哪些|啥|何)|哪里|哪儿)(?:不同(?!意|步)|不一样)")
+PERSON = r"(?:我们|你们|他们|她们|我|你|他|她|谁|老公|老婆)"
+RELATION_ACTION = re.compile(
+    PERSON + r"(?:曾经|当时|以前|后来|亲自|已经|特意|刚刚|曾|又|还|先|刚){0,2}"
+    r"(?:送|赠|借给|还给|带|陪|帮|让|喊|称呼|邀请|委托|答应)"
+    + r"|" + PERSON + r"(?:向|对|替|为|给)" + PERSON
+    + r"|" + PERSON + r"(?:把|将)[^，。！？?!；;\n]{1,24}?(?:给|送|交|留|借|还)" + PERSON)
 STOP_TERMS = {"以前", "我们", "你们", "记得", "怎么", "怎么做", "如何", "什么", "说过", "那个东西", "那件事"}
 
 
@@ -56,14 +70,34 @@ def validate_question(query):
         raise PlannerError("question_not_allowed")
 
 
-def eligibility(query, as_of):
+def assess_question(query, as_of):
+    """Bounded routing cues, not a complete parser or a factual judgment.
+
+    A detected constraint prevents ALL model stages from erasing it. The
+    original gateway still owns retrieval and may itself need better recall.
+    """
     validate_question(query)
     scope = resolve_query_calendar_scope(query, as_of, "caller_as_of")
+    reasons = []
     if scope["status"] != "not_requested":
-        return "calendar_original_only"
-    if any(t in query.lower() for t in CONSTRAINTS) or re.search(r'["“”「」『』《》]|\d', query):
-        return "constrained_question_original_only"
-    return "eligible"
+        reasons.append("calendar_scope")
+    lowered = query.lower()
+    for kind, cues in CONSTRAINT_CUES.items():
+        text = COMPARISON_QUESTION.sub("", lowered) if kind == "negation_or_revision" else lowered
+        if any(cue in text for cue in cues):
+            reasons.append(kind)
+    if RELATION_ACTION.search(query) and "speaker_or_relationship" not in reasons:
+        reasons.append("speaker_or_relationship")
+    if re.search(r'["“”「」『』《》]|\d', query):
+        reasons.append("quoted_or_numbered")
+    decision = ("calendar_original_only" if "calendar_scope" in reasons else
+                "constrained_question_original_only" if reasons else "eligible")
+    return {"decision": decision, "reasons": reasons,
+            "assessment": "bounded_cues_not_complete_language_understanding"}
+
+
+def eligibility(query, as_of):
+    return assess_question(query, as_of)["decision"]
 
 
 def validate_plan(plan, query):
@@ -188,12 +222,17 @@ def evidence_brief(original, passes, *, query, plan=None):
     return result
 
 
-def _fallback_brief(original, query, limit):
+def _fallback_brief(original, query, limit, guard=None):
     brief = build_shadow_packet(original, query=query, limit=limit)["evidence_brief"]
     brief = copy.deepcopy(brief)
     # Bound the entire payload as well as the source excerpts. Coverage can be
     # large, so keep its gap flag and leave full coverage in the original packet.
     brief["coverage"] = {"coverage_gap": bool((original.get("coverage") or {}).get("coverage_gap"))}
+    if guard is not None:
+        # The consuming assistant sees why a restricted question bypassed the
+        # caretaker; the full unchanged first retrieval stays in local audit.
+        brief["question_guard"] = copy.deepcopy(guard)
+        brief["limitations"].append("question_constraints_preserved_not_resolved_by_caretaker")
     while _size(brief) > MAX_PAYLOAD_CHARS and brief["items"]:
         row = brief["items"].pop()
         brief["content_chars"] -= len(row["text"])
@@ -213,9 +252,12 @@ def run_shadow(query, *, as_of, limit, runner, planner=None):
               "planner_status": "disabled", "planner_attempts": 0, "plan": None,
               "brief": _fallback_brief(original, query, limit)}
     try:
-        eligible = eligibility(query, as_of)
+        guard = assess_question(query, as_of)
+        result["question_guard"] = guard
+        eligible = guard["decision"]
         if eligible != "eligible":
             result["planner_status"] = eligible
+            result["brief"] = _fallback_brief(original, query, limit, guard)
             return result
         if planner is None:
             return result
