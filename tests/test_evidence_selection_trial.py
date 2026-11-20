@@ -113,7 +113,7 @@ def test_amended_ceiling_requires_existing_ledger_and_older_callers_stay_bounded
         ledger.reserve(amount=Decimal("0.468168"), run_id="test", model="test", case_id="test")
         assert ledger.total == Decimal("0.950440")
     with pytest.raises(SummaryError, match="ceiling"):
-        BudgetLedger(path, maximum_limit=Decimal("4.01"))
+        BudgetLedger(path, maximum_limit=Decimal("5.01"))
 
 
 def test_four_dollar_challenge_ceiling_preserves_prior_reservations_and_old_callers(tmp_path):
@@ -132,3 +132,24 @@ def test_four_dollar_challenge_ceiling_preserves_prior_reservations_and_old_call
         assert ledger.data["reservations"][0] == old
         with pytest.raises(SummaryError, match="exhausted"):
             ledger.reserve(amount=Decimal("0.70"), run_id="too-much", model="synthetic", case_id="blocked")
+
+
+def test_five_dollar_recheck_keeps_old_reservations_and_requires_explicit_caller_limit(tmp_path):
+    path = tmp_path / "budget.json"
+    old = {"run_id": "earlier", "reserved_usd": "0.274936"}
+    data = {"schema": "echo-summary-budget-v1", "provider": "openai", "limit_usd": "5.00",
+            "prior_reserved_usd": "3.686872", "reservations": [old]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    before = path.read_bytes()
+    for ceiling in ("0.50", "2.00", "3.00", "4.00"):
+        with pytest.raises(SummaryError, match="invalid_existing"):
+            with BudgetLedger(path, maximum_limit=Decimal(ceiling)):
+                pytest.fail("earlier caller must not inherit the amended limit")
+        assert path.read_bytes() == before
+    with BudgetLedger(path, maximum_limit=Decimal("5.00")) as ledger:
+        assert ledger.total == Decimal("3.961808")
+        ledger.reserve(amount=Decimal("0.317376"), run_id="recheck", model="synthetic", case_id="fixed")
+        assert ledger.total == Decimal("4.279184")
+        assert ledger.data["reservations"][0] == old
+        with pytest.raises(SummaryError, match="exhausted"):
+            ledger.reserve(amount=Decimal("0.73"), run_id="blocked", model="synthetic", case_id="blocked")
