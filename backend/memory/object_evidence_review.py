@@ -11,7 +11,7 @@ import re
 from . import evidence_selector as selection
 from . import object_recall_shadow as scout
 
-VERSION = "echo-object-evidence-review-v4"
+VERSION = "echo-object-evidence-review-v5"
 MAX_WINDOWS = 24
 MAX_ORDER_CONTEXT_ITEMS = 6  # Separate from six model selections; same whole-packet byte cap.
 SYSTEM_PROMPT = selection.SYSTEM_PROMPT + """
@@ -24,6 +24,10 @@ SYSTEM_PROMPT = selection.SYSTEM_PROMPT + """
 但后来抄录旧稿、回忆过去、转述他人都不能冒充新的事实修订。助手重复错误或说“已改好”本身也不能证明改对了。
 不能只按 user/assistant 身份自动判真，也不能只按更正这个词判真；要核对对象、适用范围与实际内容。
 不同分支、不同对象或缺乏足够顺序证据的矛盾，仍然保留 uncertain 和相应的歧义，不能偷偷挑一边。
+更正了一个名称或某个属性，不等于问题所指的整组对象已经对齐。先核对每一件完整对象与其描述的关联。
+如果更正推翻了旧的对象对应、却没有补齐问题所需的对象身份，更正本身标 uncertain 并保留关键原话，
+gap=object_identity；不能因为它没有给出完整答案就标 context 丢掉，也不能继续用被推翻的旧对应回答。
+反过来，原文明示同一组对象且更正后足以回答当前问题时，可以 sufficient；不要一见更正就永远报歧义。
 """
 
 

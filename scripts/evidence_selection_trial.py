@@ -24,10 +24,11 @@ from scripts.assistant_recall_baseline import _private, file_sha
 from scripts.summary_cabinet_trial import write_json
 
 FIXTURE = ROOT / "tests/fixtures/evidence_selection_synthetic.json"
+SCOPE_FIXTURE = ROOT / "tests/fixtures/evidence_scope_synthetic.json"
 
 
-def load_cases(partition):
-    cases = json.loads(FIXTURE.read_text(encoding="utf-8"))
+def load_cases(partition, *, scope=False):
+    cases = json.loads((SCOPE_FIXTURE if scope else FIXTURE).read_text(encoding="utf-8"))
     return [c for c in cases if partition == "all" or c["partition"] == partition]
 
 
@@ -65,7 +66,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="小管家证据筛选：只用固定虚构题，默认准备、不调用模型。")
     parser.add_argument("--provider", choices=("venice", "openai"), default="venice")
     parser.add_argument("--partition", choices=("development", "holdout", "fresh", "all"), default="development")
-    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts"), default="general")
+    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts", "scope-general", "scope-objects"), default="general")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--allow-synthetic-api", action="store_true")
     parser.add_argument("--key-file", type=Path)
@@ -73,10 +74,13 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     output = _private(args.output_dir)
-    is_object_exam = args.exam in ("objects", "object-contrasts")
+    is_object_exam = args.exam in ("objects", "object-contrasts", "scope-objects")
+    is_scope_exam = args.exam in ("scope-general", "scope-objects")
     exam_api = object_api if is_object_exam else api
     exam_core = object_core if is_object_exam else core
-    cases = object_correction_exam.load_cases(args.partition, contrast=args.exam == "object-contrasts") if is_object_exam else load_cases(args.partition)
+    cases = (object_correction_exam.load_cases(args.partition, contrast=args.exam == "object-contrasts",
+                                             scope=args.exam == "scope-objects")
+             if is_object_exam else load_cases(args.partition, scope=args.exam == "scope-general"))
     if not cases:
         raise SummaryError("selected_partition_is_empty")
     prepare = object_correction_exam.prepare_case if is_object_exam else prepare_case
@@ -88,6 +92,8 @@ def main(argv=None):
                   ROOT / "backend/memory/summary_trial_budget.py",
                   ROOT / "backend/memory/venice_summary_trial.py",
                   ROOT / "backend/memory/openai_summary_trial.py")
+    if args.exam == "scope-general":
+        code_paths += (SCOPE_FIXTURE,)
     if is_object_exam:
         code_paths += (ROOT / "backend/memory/object_evidence_review.py",
                        ROOT / "backend/memory/object_evidence_review_trial.py",
@@ -95,6 +101,8 @@ def main(argv=None):
                        ROOT / "scripts/object_correction_exam.py", object_correction_exam.FIXTURE)
         if args.exam == "object-contrasts":
             code_paths += (object_correction_exam.CONTRAST_FIXTURE,)
+        if args.exam == "scope-objects":
+            code_paths += (object_correction_exam.SCOPE_FIXTURE,)
     manifest = {"schema": exam_core.VERSION + "-trial", "provider": args.provider, "exam": args.exam,
         "model": api.model(args.provider), "partition": args.partition, "synthetic_only": True,
         "source_sha256": {p.relative_to(ROOT).as_posix(): file_sha(p) for p in code_paths},
@@ -129,6 +137,10 @@ def main(argv=None):
     # Object review is a separately bounded continuation under the delegated
     # small-budget amendment. Older general trials retain their $2 ceiling.
     ceiling = (Decimal("3.00") if is_object_exam else Decimal("2.00")) if args.provider == "openai" else api.venice.MAX_SUPPORTED_BUDGET_USD
+    # The new fixed synthetic scope exam may use the already amended $4 ledger.
+    # No ledger mutation/limit increase and no change to earlier exam ceilings.
+    if is_scope_exam and args.provider == "openai":
+        ceiling = Decimal("4.00")
     report = {"schema": exam_core.VERSION + "-report", "exam": args.exam, "provider": args.provider, "model": api.model(args.provider),
               "synthetic_only": True, "archive_records_sent": 0, "production_accepted": False,
               "new_model_calls": 0, "cases": []}

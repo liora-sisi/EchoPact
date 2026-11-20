@@ -10,11 +10,15 @@ from backend.memory import object_evidence_review as review
 
 FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_correction_synthetic.json"
 CONTRAST_FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_correction_contrasts.json"
+SCOPE_FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_identity_scope_synthetic.json"
 AS_OF = "2031-05-07T00:00:00Z"
 
 
-def load_cases(partition, *, contrast=False):
-    cases = json.loads((CONTRAST_FIXTURE if contrast else FIXTURE).read_text(encoding="utf-8"))
+def load_cases(partition, *, contrast=False, scope=False):
+    if contrast and scope:
+        raise ValueError("fixed_exam_modes_are_exclusive")
+    fixture = SCOPE_FIXTURE if scope else CONTRAST_FIXTURE if contrast else FIXTURE
+    cases = json.loads(fixture.read_text(encoding="utf-8"))
     return [c for c in cases if partition == "all" or c["partition"] == partition]
 
 

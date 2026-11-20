@@ -80,7 +80,7 @@ def test_invalid_order_payload_is_rejected_before_provider(mutation):
         api.request_payload(request, "openai")
 
 
-@pytest.mark.parametrize("c", exam.load_cases("all") + exam.load_cases("all", contrast=True), ids=lambda c: c["case_id"])
+@pytest.mark.parametrize("c", exam.load_cases("all") + exam.load_cases("all", contrast=True) + exam.load_cases("all", scope=True), ids=lambda c: c["case_id"])
 def test_synthetic_gold_is_scoreable_and_never_enters_payload(c):
     scanned = exam.build_scout(c)
     before = copy.deepcopy(scanned)

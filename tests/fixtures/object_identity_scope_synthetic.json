@@ -1,0 +1,22 @@
+[
+  {
+    "case_id": "correction-leaves-object-unresolved", "partition": "development",
+    "query": "我们那两盏阅读灯怎么区分，各自叫什么，灯罩是什么样？", "subject": "阅读灯",
+    "sufficiency": "ambiguous", "gap": "object_identity",
+    "records": [
+      {"id": "draft", "position": 0, "role": "assistant", "content": "我给我们的两盏阅读灯写了登记：阅读灯《雾港》是金属灯罩，阅读灯《琥珀》是磨砂玻璃灯罩。", "relation": "context"},
+      {"id": "correction", "position": 1, "role": "user", "content": "你把琥珀当成另一盏阅读灯了。琥珀是给雾港选的4片滤色膜；原记录只确定雾港的灯罩是磨砂玻璃。另一盏还没对上，我还没有告诉你它叫什么或灯罩是什么。", "relation": "uncertain", "required": ["琥珀是给雾港选的4片滤色膜", "雾港的灯罩是磨砂玻璃", "另一盏还没对上", "还没有告诉你"]},
+      {"id": "progress", "position": 2, "role": "assistant", "content": "雾港那张阅读灯登记卡还没整好，等会再继续整理。", "relation": "context"}
+    ]
+  },
+  {
+    "case_id": "correction-resolves-named-objects", "partition": "development",
+    "query": "雾港和白帆这两盏阅读灯怎么区分，灯罩各是什么？", "subject": "阅读灯",
+    "sufficiency": "sufficient", "gap": "none",
+    "records": [
+      {"id": "draft", "position": 0, "role": "assistant", "content": "阅读灯登记：《雾港》是金属灯罩，《白帆》是磨砂玻璃灯罩。", "relation": "context"},
+      {"id": "correction", "position": 1, "role": "user", "content": "更正同一对阅读灯的登记：雾港是磨砂玻璃灯罩，白帆是金属灯罩。这就是这两盏的最终确认。", "relation": "answers", "required": ["雾港是磨砂玻璃灯罩", "白帆是金属灯罩"]},
+      {"id": "quoted-old-draft", "position": 2, "role": "assistant", "content": "以下只是把阅读灯当时的旧错误登记抄回来，不能当新修订：‘雾港是金属灯罩，白帆是磨砂玻璃灯罩’。", "relation": "context"}
+    ]
+  }
+]

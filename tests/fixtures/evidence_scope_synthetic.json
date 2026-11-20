@@ -1,0 +1,22 @@
+[
+  {
+    "case_id": "general-rule-not-one-batch", "partition": "development",
+    "query": "咖啡冲煮平时按什么通用约定来做？", "terms": ["咖啡"],
+    "sufficiency": "sufficient", "gap": "none",
+    "records": [
+      {"id": "rule", "content": "咖啡冲煮的通用约定是：先用热水润湿滤纸，倒掉润纸水，再加咖啡粉。每次粉量按人数另定。", "relation": "answers", "required": ["先用热水润湿滤纸", "倒掉润纸水", "再加咖啡粉", "每次粉量按人数另定"]},
+      {"id": "batch", "content": "这次咖啡讲解用30克咖啡粉，分两段注水；30克只针对这一批演示，不是每次的固定量。", "relation": "context"},
+      {"id": "progress", "content": "咖啡演示说明还在整理中，稍后发你。", "relation": "context"}
+    ]
+  },
+  {
+    "case_id": "one-batch-not-general-rule", "partition": "development",
+    "query": "这批咖啡演示的用粉量和注水安排是什么？", "terms": ["咖啡"],
+    "sufficiency": "sufficient", "gap": "none",
+    "records": [
+      {"id": "rule", "content": "咖啡冲煮的通用约定是：先用热水润湿滤纸，倒掉润纸水，再加咖啡粉。每次粉量按人数另定。", "relation": "context"},
+      {"id": "batch", "content": "这次咖啡讲解用30克咖啡粉，分两段注水；30克只针对这一批演示，不是每次的固定量。", "relation": "answers", "required": ["这次咖啡讲解", "30克咖啡粉", "分两段注水", "只针对这一批演示", "不是每次的固定量"]},
+      {"id": "progress", "content": "咖啡演示说明还在整理中，稍后发你。", "relation": "context"}
+    ]
+  }
+]

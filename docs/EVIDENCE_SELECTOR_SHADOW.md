@@ -2,8 +2,9 @@
 
 2026-11-13，从 `5fe9812` 的短清单 / 按编号展开接续。
 工作分支：`codex/caretaker-evidence-selection-2026-11-13`。
-核心协议现为 `echo-evidence-selector-shadow-v4`；本页首轮模型成绩仍属于原有 v2/v3。
-v4 是后续对象纠正试验中的本机引用还原修复，模型提示不变。默认关闭，未接入正式 MCP 或 Bot。
+核心协议现为 `echo-evidence-selector-shadow-v5`；本页首轮模型成绩仍属于原有 v2/v3。
+v4 是后续对象纠正试验中的本机引用还原修复，当时模型提示不变。
+v5 校准适用范围及对象纠正，见[四题诊断与限制](CARETAKER_SCOPE_CALIBRATION.md)。默认关闭，未接入正式 MCP 或 Bot。
 
 ## 修的具体问题
 
