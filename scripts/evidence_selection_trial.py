@@ -47,10 +47,19 @@ def prepare_case(case):
 
 def score(case, prepared, draft, brief):
     gold = {r["id"]: r for r in case["records"]}
+    # A fixed exam may treat two non-selected labels as equivalent in advance.
+    # It may never relax a required answer/uncertain label into discarded text.
+    for row in gold.values():
+        if "allowed_relations" in row and (
+                row["relation"] not in ("context", "irrelevant")
+                or not isinstance(row["allowed_relations"], list)
+                or len(row["allowed_relations"]) != 2
+                or set(row["allowed_relations"]) != {"context", "irrelevant"}):
+            raise SummaryError("invalid_optional_nonanswer_labels")
     mismatches = []
     for judgment in draft["judgments"]:
         rid = prepared["local"][judgment["candidate_id"]]["record_id"]
-        if judgment["relation"] != gold[rid]["relation"]:
+        if judgment["relation"] not in gold[rid].get("allowed_relations", [gold[rid]["relation"]]):
             mismatches.append({"record_id": rid, "field": "relation"})
         if any(text not in judgment["quote"] for text in gold[rid].get("required", [])):
             mismatches.append({"record_id": rid, "field": "required_quote"})
@@ -66,7 +75,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="小管家证据筛选：只用固定虚构题，默认准备、不调用模型。")
     parser.add_argument("--provider", choices=("venice", "openai"), default="venice")
     parser.add_argument("--partition", choices=("development", "holdout", "fresh", "all"), default="development")
-    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts", "scope-general", "scope-objects"), default="general")
+    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts", "scope-general", "scope-objects", "identity-phrasing"), default="general")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--allow-synthetic-api", action="store_true")
     parser.add_argument("--key-file", type=Path)
@@ -74,12 +83,12 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     output = _private(args.output_dir)
-    is_object_exam = args.exam in ("objects", "object-contrasts", "scope-objects")
+    is_object_exam = args.exam in ("objects", "object-contrasts", "scope-objects", "identity-phrasing")
     is_scope_exam = args.exam in ("scope-general", "scope-objects")
     exam_api = object_api if is_object_exam else api
     exam_core = object_core if is_object_exam else core
     cases = (object_correction_exam.load_cases(args.partition, contrast=args.exam == "object-contrasts",
-                                             scope=args.exam == "scope-objects")
+                                             scope=args.exam == "scope-objects", phrasing=args.exam == "identity-phrasing")
              if is_object_exam else load_cases(args.partition, scope=args.exam == "scope-general"))
     if not cases:
         raise SummaryError("selected_partition_is_empty")
@@ -103,6 +112,8 @@ def main(argv=None):
             code_paths += (object_correction_exam.CONTRAST_FIXTURE,)
         if args.exam == "scope-objects":
             code_paths += (object_correction_exam.SCOPE_FIXTURE,)
+        if args.exam == "identity-phrasing":
+            code_paths += (object_correction_exam.PHRASING_FIXTURE,)
     manifest = {"schema": exam_core.VERSION + "-trial", "provider": args.provider, "exam": args.exam,
         "model": api.model(args.provider), "partition": args.partition, "synthetic_only": True,
         "source_sha256": {p.relative_to(ROOT).as_posix(): file_sha(p) for p in code_paths},
@@ -141,6 +152,8 @@ def main(argv=None):
     # No ledger mutation/limit increase and no change to earlier exam ceilings.
     if is_scope_exam and args.provider == "openai":
         ceiling = Decimal("4.00")
+    if args.exam == "identity-phrasing" and args.provider == "openai":
+        ceiling = Decimal("5.00")  # Existing amended ledger; older callers stay bounded.
     report = {"schema": exam_core.VERSION + "-report", "exam": args.exam, "provider": args.provider, "model": api.model(args.provider),
               "synthetic_only": True, "archive_records_sent": 0, "production_accepted": False,
               "new_model_calls": 0, "cases": []}

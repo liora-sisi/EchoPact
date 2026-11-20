@@ -1,8 +1,10 @@
 # 对象纠正复核：原文顺序与完整证据窗口
 
-状态：2026-11-20，隔离试验；当前本地代码为 `echo-object-evidence-review-v5`。
+状态：2026-11-20，隔离试验；当前本地代码为 `echo-object-evidence-review-v6`。
 生产 MCP、Bot、原始档案和摘要柜没有启用本功能。
 v5 只校准筛选指令，四道开发诊断题的实际结果与限制见[适用范围与对象纠正](CARETAKER_SCOPE_CALIBRATION.md)。
+v6 进一步区分属性与身份纠正，见[同材料换问法](CARETAKER_IDENTITY_PHRASING.md)：两道真实旧题均保住纠正，
+一题仍有缺口分类分歧；未据此放行正式使用。
 
 ## 为什么要补原文顺序
 

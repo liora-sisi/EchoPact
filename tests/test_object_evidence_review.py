@@ -80,7 +80,7 @@ def test_invalid_order_payload_is_rejected_before_provider(mutation):
         api.request_payload(request, "openai")
 
 
-@pytest.mark.parametrize("c", exam.load_cases("all") + exam.load_cases("all", contrast=True) + exam.load_cases("all", scope=True), ids=lambda c: c["case_id"])
+@pytest.mark.parametrize("c", exam.load_cases("all") + exam.load_cases("all", contrast=True) + exam.load_cases("all", scope=True) + exam.load_cases("all", phrasing=True), ids=lambda c: c["case_id"])
 def test_synthetic_gold_is_scoreable_and_never_enters_payload(c):
     scanned = exam.build_scout(c)
     before = copy.deepcopy(scanned)
@@ -91,7 +91,7 @@ def test_synthetic_gold_is_scoreable_and_never_enters_payload(c):
     body = json.loads(payload["input"][1]["content"])
     assert set(body) == {"question", "candidates", "source_order_windows"}
     assert all(set(x) == {"candidate_ids"} for x in body["source_order_windows"])
-    assert not any(k in json.dumps(body) for k in ('record_id', 'created_at', 'branch_id', 'required', 'sufficiency'))
+    assert not any(k in json.dumps(body) for k in ('record_id', 'created_at', 'branch_id', 'required', 'sufficiency', 'allowed_relations'))
     draft = gold_draft(c, prepared)
     brief = core.make_brief(draft, prepared)
     assert cli.score(c, prepared, draft, brief)["passed"]
