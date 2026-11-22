@@ -23,6 +23,7 @@
 | 真实旧题、当前短目录、逐字出处与新问法对照 | [CARETAKER_REAL_EVALUATION.md](CARETAKER_REAL_EVALUATION.md) |
 | 对象不明与冲突同时存在时的表达、复考与剩余容量问题 | [CARETAKER_MULTIPLE_GAPS.md](CARETAKER_MULTIPLE_GAPS.md) |
 | 重复出处共享、原文无损还原、完整组容量与旧答卷零调用重放 | [CARETAKER_COMPACT_PACKET.md](CARETAKER_COMPACT_PACKET.md) |
+| 六道新问法、无书名号漏选、接收方解释越过原文的首次失败 | [CARETAKER_NOVEL_QUESTIONS.md](CARETAKER_NOVEL_QUESTIONS.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -70,3 +71,6 @@
 随后[对象复核 v9 证据包减重](CARETAKER_COMPACT_PACKET.md)共享重复出处；旧答卷零调用重放后，
 两道真实题六条所选证据与六条相邻语境均装入上限，同内容字节减少约四分之一。
 最新全套回归 1,022 项通过；尚待未调试问法和实际读包验收，正式入口保持关闭。
+随后[新自然问法检查](CARETAKER_NOVEL_QUESTIONS.md)补对象补查 v2 的无标题备用窗口。
+六题实际整链严格 5/6；接收方机械检查 2/2、叙述复核 1/2，保留首次失败。
+最新全套回归 1,043 项通过；缺口判分与名称到属性的推断边界仍待解决。

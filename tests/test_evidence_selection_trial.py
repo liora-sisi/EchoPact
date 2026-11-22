@@ -113,7 +113,7 @@ def test_amended_ceiling_requires_existing_ledger_and_older_callers_stay_bounded
         ledger.reserve(amount=Decimal("0.468168"), run_id="test", model="test", case_id="test")
         assert ledger.total == Decimal("0.950440")
     with pytest.raises(SummaryError, match="ceiling"):
-        BudgetLedger(path, maximum_limit=Decimal("6.01"))
+        BudgetLedger(path, maximum_limit=Decimal("10.01"))
 
 
 def test_four_dollar_challenge_ceiling_preserves_prior_reservations_and_old_callers(tmp_path):

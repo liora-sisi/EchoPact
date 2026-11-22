@@ -77,6 +77,45 @@ def test_below_top_ten_and_category_free_correction_reaches_small_slate():
     assert "record_id" not in json.dumps(prepared["request"])
 
 
+def test_plain_names_retain_verified_category_free_correction_without_inventing_labels():
+    parent = row("plain", "手串青木是圆珠，手串白石是方珠。")
+    child = row("fixed", "更正：青木是方珠，白石才是圆珠。", "user", 11)
+    result, calls = run({"手串": packet([attach(parent, child)]), "珠串": packet([])})
+    assert result["subject_fallback_used"] and result["candidate_strategy"] == "literal_subject_windows"
+    assert {r["record_id"] for r in result["prepared"]["local"].values()} == {"plain", "fixed"}
+    fixed = next(r for r in result["prepared"]["local"].values() if r["record_id"] == "fixed")
+    assert fixed["object_traces"][0]["labels"] == []
+    assert fixed["object_traces"][0]["basis"] == "literal_subject_with_verified_context"
+    assert [c["query"] for c in calls] == ["手串", "珠串"] and result["needs_more"]
+
+
+def test_plain_category_fallback_does_not_borrow_neighbours_from_another_branch():
+    parent = attach(row("plain", "手串有两件，名称还不清楚。"), row("foreign", "这里有别的答案。", "user", 11))
+    parent["conversation_context"][0]["branch_memberships"][0]["branch_id"] = "other"
+    result, _ = run({"手串": packet([parent]), "珠串": packet([])})
+    assert result["rejected_context"] == 1
+    assert {r["record_id"] for r in result["prepared"]["local"].values()} == {"plain"}
+
+
+def test_plain_category_fallback_keeps_whole_windows_within_existing_limit():
+    windows = [attach(row(f"p{i}", f"手串的第{i}段说明。"),
+        row(f"c{i}", f"更正：第{i}段有误。", "user", 11),
+        row(f"n{i}", f"第{i}段仍需核对。", "assistant", 12)) for i in range(8)]
+    result, _ = run({"手串": packet(windows), "珠串": packet([])})
+    prepared = result["prepared"]
+    ids = {r["record_id"] for r in prepared["local"].values()}
+    assert len(ids) == 12 and prepared["omitted_candidates"] == 12
+    assert all(len(ids & {f"p{i}", f"c{i}", f"n{i}"}) in (0, 3) for i in range(8))
+
+
+def test_title_linked_slate_is_not_filled_with_unlabelled_category_noise():
+    titled = correction_window()
+    bare = row("unlabelled", "手串制作随笔，今日只是随便聊聊。")
+    result, _ = run({"手串": packet([bare]), "珠串": packet([titled])})
+    assert not result["subject_fallback_used"] and result["candidate_strategy"] == "source_title_windows"
+    assert "unlabelled" not in {r["record_id"] for r in result["prepared"]["local"].values()}
+
+
 @pytest.mark.parametrize("subject,title,second", [("陶瓶", "星岚", "沙洲"), ("台灯", "青屿", "远湾"), ("披肩", "冬枝", "松泉")])
 def test_unseen_categories_and_names_do_not_require_a_private_dictionary(subject, title, second):
     query = f"那两件{subject}怎么区分？"

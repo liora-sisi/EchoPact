@@ -13,7 +13,7 @@ from . import evidence_selector as selection
 from . import query_caretaker as planner
 from .named_collection import public_subject_aliases
 
-VERSION = "echo-object-recall-shadow-v1"
+VERSION = "echo-object-recall-shadow-v2"
 MAX_SCANS = 2
 SCAN_LIMIT = 48
 MAX_CONTEXT = 4
@@ -83,7 +83,7 @@ def _adjacent(parent, child):
     return False
 
 
-def _groups(scans, aliases):
+def _groups(scans, aliases, *, subject_fallback=False):
     groups, seen, records = [], {}, {}
     rejected_context = 0
     bounded_text = False
@@ -114,15 +114,16 @@ def _groups(scans, aliases):
                 seen[identity] = signature
                 records[identity] = row
                 bounded_text |= len(content) > MAX_SCAN_CHARS or row.get("content_truncated") is True
-            labels = list(dict.fromkeys(label for row in window
-                for label in _seed_labels(_text(row)[:MAX_SCAN_CHARS], aliases)))
+            labels = ([term for term in aliases if term in _text(parent)[:MAX_SCAN_CHARS]]
+                if subject_fallback else list(dict.fromkeys(label for row in window
+                    for label in _seed_labels(_text(row)[:MAX_SCAN_CHARS], aliases))))
             if not labels:
                 continue
             members = []
             for row in window:
                 content = _text(row)[:MAX_SCAN_CHARS]
                 matched = [label for label in labels if label in content]
-                if not matched:
+                if not matched and not subject_fallback:
                     continue
                 # Correction markers affect review priority, not factual truth.
                 correction = row.get("role") == "user" and bool(_CORRECTION.search(content))
@@ -132,6 +133,7 @@ def _groups(scans, aliases):
             members.sort(key=lambda x: (not x[1], x[0] != _identity(parent)))
             groups.append({"members": members, "labels": labels,
                 "scan": scan_number, "rank": rank, "parent": _identity(parent),
+                "basis": "literal_subject_with_verified_context" if subject_fallback else "nearby_source_title",
                 "has_correction": any(m[1] for m in members)})
     groups.sort(key=lambda g: (not g["has_correction"], -min(2, len(g["labels"])), g["rank"], g["scan"]))
     return groups, records, rejected_context, bounded_text
@@ -154,7 +156,7 @@ def _prepare(groups, records, *, query, coverage):
         for identity, correction, labels in fresh:
             row = records[identity]
             content = _text(row)
-            position = min(content.find(label) for label in labels if label in content)
+            position = min((content.find(label) for label in labels if label in content), default=0)
             start = max(0, position - 100)
             text = content[start:start + selection.MAX_EXCERPT_CHARS]
             cid = "c" + str(len(chosen) + len(proposed) + 1)
@@ -164,7 +166,8 @@ def _prepare(groups, records, *, query, coverage):
             new_local[cid] = {**selection._metadata(row), "text": text, "excerpt_start": start,
                 "observed_content_sha256": selection.digest(content), "source_truncated": truncated,
                 "observed_content_chars": len(content), "retrieval_round": group["scan"],
-                "retrieval_rank": group["rank"], "object_review_priority": "user_correction" if correction else "linked_label"}
+                "retrieval_rank": group["rank"], "object_review_priority": "user_correction" if correction else
+                    "subject_context" if group["basis"] == "literal_subject_with_verified_context" else "linked_label"}
         if len(selection.encoded({**request, "candidates": request["candidates"] + proposed})) > selection.MAX_INPUT_BYTES:
             skipped_groups += 1
             continue
@@ -172,7 +175,8 @@ def _prepare(groups, records, *, query, coverage):
         local.update(new_local)
         chosen.extend(m[0] for m in fresh)
         for identity, _, labels in group["members"]:
-            trace = {"scan": group["scan"], "rank": group["rank"], "parent_record_id": group["parent"][2], "labels": labels}
+            trace = {"scan": group["scan"], "rank": group["rank"], "parent_record_id": group["parent"][2],
+                     "labels": labels, "basis": group["basis"]}
             paths = traces.setdefault(identity, [])
             if trace not in paths:
                 paths.append(trace)
@@ -213,10 +217,19 @@ def run_object_shadow(shadow, *, query, as_of, runner=None):
                 raise ObjectRecallError("scan_changed_calendar_scope")
             result["scans"].append(copy.deepcopy(packet))
         groups, records, rejected, text_bound = _groups(result["scans"], aliases)
+        # Titles are useful clues, not a requirement for conversational prose.
+        # If none exists, let the reviewer inspect bounded literal-category
+        # hits with their verified neighbours. Do not invent object names or
+        # silently pool unrelated branches. Title-linked slates stay unchanged.
+        fallback = not groups
+        if fallback:
+            groups, records, rejected, text_bound = _groups(result["scans"], aliases, subject_fallback=True)
         gaps = [(p.get("coverage") or {}).get("coverage_gap") for p in result["scans"]]
         coverage = True if any(g is True for g in gaps) else False if all(g is False for g in gaps) else None
         result["prepared"] = _prepare(groups, records, query=query, coverage=coverage)
         result.update(status="prepared_local_only", rejected_context=rejected, bounded_text=text_bound,
+            candidate_strategy="literal_subject_windows" if fallback else "source_title_windows",
+            subject_fallback_used=fallback,
             scan_limit_reached=any(len(p["memories"]) == SCAN_LIMIT for p in result["scans"]))
     except Exception:
         result.update(status="failed_original_preserved", prepared=None)
