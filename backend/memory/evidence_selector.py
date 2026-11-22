@@ -14,7 +14,7 @@ from itertools import zip_longest
 
 from . import query_caretaker as planner
 
-VERSION = "echo-evidence-selector-shadow-v5"
+VERSION = "echo-evidence-selector-shadow-v6"
 MAX_CANDIDATES = 12
 MAX_EXCERPT_CHARS = 400
 MAX_INPUT_BYTES = 24_000
@@ -274,12 +274,18 @@ def validate_selection(draft, prepared, *, multiple_gaps=False):
         raise SelectionError("unjudged_candidates")
     answers = sum(row["relation"] == "answers" for row in draft["judgments"])
     uncertain = any(row["relation"] == "uncertain" for row in draft["judgments"])
+    # Ordered multi-gap review can preserve an exact retraction as non-answer
+    # evidence while still saying the requested fact is missing. Do not force
+    # a fabricated conflict, drop the retraction, or upgrade it to an answer.
+    # Legacy single-gap results and every actual ambiguity remain strict.
+    missing_with_evidence = (multiple_gaps and not answers and draft["sufficiency"] == "insufficient"
+                             and gaps == ["missing_answer"])
     if (draft["sufficiency"] == "sufficient" and (not answers or uncertain or draft["gap"] != "none")
             or draft["sufficiency"] == "partial" and (not answers or draft["gap"] == "none")
-            or draft["sufficiency"] == "insufficient" and (selected or draft["gap"] == "none")
+            or draft["sufficiency"] == "insufficient" and (draft["gap"] == "none" or selected and not missing_with_evidence)
             or draft["sufficiency"] == "ambiguous" and draft["gap"] not in ("object_identity", "conflicting_evidence")
             or draft["gap"] in ("object_identity", "conflicting_evidence") and draft["sufficiency"] != "ambiguous"
-            or uncertain and draft["sufficiency"] != "ambiguous"):
+            or uncertain and draft["sufficiency"] != "ambiguous" and not missing_with_evidence):
         raise SelectionError("inconsistent_selection_status")
     # Existing deterministic conflict groups cannot be quietly one-sided.
     for cid in selected:

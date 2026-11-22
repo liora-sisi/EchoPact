@@ -12,11 +12,12 @@ from . import evidence_selector as selection
 from . import object_recall_shadow as scout
 from . import evidence_packet as packet
 
-VERSION = "echo-object-evidence-review-v9"
+VERSION = "echo-object-evidence-review-v10"
 MAX_WINDOWS = 24
 MAX_ORDER_CONTEXT_ITEMS = 6  # Separate from six model selections; same whole-packet byte cap.
 SYSTEM_PROMPT = selection.SYSTEM_PROMPT + """
 本次还可能有 source_order_windows。每组 candidate_ids 是本机按同一原始对话分支位置核验的发言先后。
+同一条长消息里的多个摘录则按原文字符位置排列；摘录之间仍可能有未展示的正文。
 组内从先到后；不同组之间没有给出全局先后，可能是不同分支。候选数组和编号只表示展示顺序，绝不是时间。
 这只证明记录的先后，不证明事情发生的先后，不证明后一句必然正确。同一候选可出现在重叠窗口。
 明确针对同一对象、同一事实作出的修订，可以解释旧稿为何错误；当替代关系清楚且没有未解决的新冲突时，
@@ -196,12 +197,14 @@ def _retain_order_context(brief, draft, prepared, *, compact=False):
     companions of an earlier selected group. Do not interpret ranking as time.
     """
     local = prepared["local"]
-    lookup = {scout._identity(row): cid for cid, row in local.items()}
     judgments = {j["candidate_id"]: j for j in draft["judgments"] if j["relation"] in ("answers", "uncertain")}
     selected = set(judgments)
     priority = {cid: index for index, cid in enumerate(judgments)}
     components = [{cid} for cid in local]
     groups = [set(w["candidate_ids"]) for w in prepared["request"]["source_order_windows"]]
+    identities = {scout._identity(row) for row in local.values()}
+    groups.extend({cid for cid, row in local.items() if scout._identity(row) == identity}
+                  for identity in identities)
     conflicts = {r.get("conflict_group_id") for r in local.values()} - {None, ""}
     groups.extend({cid for cid, row in local.items() if row.get("conflict_group_id") == conflict}
                   for conflict in conflicts)
@@ -219,11 +222,27 @@ def _retain_order_context(brief, draft, prepared, *, compact=False):
     initial_needs_more = brief["needs_more_evidence"]
     initial_status = brief["evidence_status"]
 
+    # Several windows of one record may select different (or overlapping) quotes.
+    # Record identity alone silently attributed every quote to the last window.
+    def reference_key(ref):
+        return (*scout._identity(ref), ref["quote_start"], ref["quote_end"])
+
+    selected_refs = {}
+    for cid, judgment in judgments.items():
+        row = local[cid]
+        quote, relative, _ = selection.resolve_quote(row["text"], judgment["quote"])
+        start = row["excerpt_start"] + relative
+        selected_refs[cid] = (*scout._identity(row), start, start + len(quote))
+
+    def visible_candidates(value):
+        refs = {reference_key(ref) for item in value["items"] for ref in item["references"]}
+        return {cid for cid, key in selected_refs.items() if key in refs}
+
     def summarize(value):
         # Treat all not-yet-kept groups as withheld. Capacity is measured with
         # final counters/status, so accepting later groups cannot make these
         # fields unexpectedly grow after the last byte-budget check.
-        visible = {lookup[scout._identity(ref)] for item in value["items"] for ref in item["references"]}
+        visible = visible_candidates(value)
         withheld = [group for group in components if (group & selected) - visible]
         value["omitted_selected"] = len(selected - visible)
         value["partial_groups_withheld"] = sum(len(group & selected) > 1 for group in withheld)
@@ -267,12 +286,18 @@ def _retain_order_context(brief, draft, prepared, *, compact=False):
                 proposed["items"].append(item)
             else:
                 same["references"].extend(item["references"])
-        if companions:
+        windows = []
+        for window in prepared["request"]["source_order_windows"]:
+            if set(window["candidate_ids"]) <= group:
+                ids = list(dict.fromkeys(local[cid]["record_id"] for cid in window["candidate_ids"]))
+                value = {"record_ids": ids}
+                if len(ids) > 1 and value not in windows:
+                    windows.append(value)
+        if companions or windows and prepared.get("retain_selected_order") is True:
             proposed["source_order_context"].append({
-                "for_record_ids": [local[cid]["record_id"] for cid in sorted(wanted, key=order.get)],
+                "for_record_ids": list(dict.fromkeys(local[cid]["record_id"] for cid in sorted(wanted, key=order.get))),
                 "basis": "verified_source_order_windows_not_semantic_truth",
-                "source_order_windows": [{"record_ids": [local[cid]["record_id"] for cid in w["candidate_ids"]]}
-                    for w in prepared["request"]["source_order_windows"] if set(w["candidate_ids"]) <= group],
+                "source_order_windows": windows,
                 "items": [source_item(cid, companion=True) for cid in sorted(companions, key=order.get)]})
         context_count = sum(len(b["items"]) for b in proposed["source_order_context"])
         item_limit = len(proposed["items"]) > selection.MAX_ITEMS or context_count > MAX_ORDER_CONTEXT_ITEMS
@@ -289,7 +314,7 @@ def _retain_order_context(brief, draft, prepared, *, compact=False):
     if compact:
         summarize(brief)
         return
-    visible = {lookup[scout._identity(ref)] for item in brief["items"] for ref in item["references"]}
+    visible = visible_candidates(brief)
     brief["omitted_selected"] = len(selected - visible)
     brief["duplicate_display_count"] = sum(len(i["references"]) - 1 for i in brief["items"])
     brief["needs_more_evidence"] |= bool(brief["omitted_selected"] or brief["source_order_context"])

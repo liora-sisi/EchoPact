@@ -27,6 +27,7 @@
 | 下一阶段优先补原文片段语义索引、同预算混合检索与望舒会审意见 | [HYBRID_RECALL_SHADOW_PLAN.md](HYBRID_RECALL_SHADOW_PLAN.md) |
 | 本地 BGE 片段索引、词面混合对照、真实旧题结果与未通过的门槛 | [SEMANTIC_RECALL_SHADOW.md](SEMANTIC_RECALL_SHADOW.md) |
 | 命中窗口回取、等上限短卡、实际筛选四题与真实旧题本机装包 | [SEMANTIC_WINDOW_HANDOFF.md](SEMANTIC_WINDOW_HANDOFF.md) |
+| 相邻更正、同消息多窗口、七份真实模型答卷与容量不足退回 | [SEMANTIC_ORDERED_HANDOFF.md](SEMANTIC_ORDERED_HANDOFF.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -49,6 +50,7 @@
 - `backend/memory/caretaker_evaluation.py`：在本机分别计量目录可展开、已核原话可见及出处正确性，不把部分目标当成完整答案。
 - `backend/memory/semantic_shadow.py`：独立本地片段向量、冻结原库指纹及 RRF 候选试验；不挂接正式入口。
 - `backend/memory/semantic_evidence.py`：将原文偏移按身份/指纹回取为短卡，接现有筛选和引用短包；未接完整生产管线。
+- `backend/memory/semantic_ordered_evidence.py`：从原库核对附近消息；整组装不下时保留原候选、延后复核，未接正式入口。
 - `backend/memory/summary_cabinet.py`：独立合成摘要柜；生成器仅在写入侧注入，查询与展开不调用模型。
 - `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
 - `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
@@ -89,3 +91,8 @@
 两臂实际八次调用，向量窗口臂 4/4；输出 752–1,237 字节。严格字段验证后的原答卷
 零调用复放逐项不变，完整回归 1,086 项通过。真实旧题只在本机装包，仍保留复杂对象缺口；
 完整 planner/对象补查/相邻语境管线与正式入口尚未接入。
+
+[相邻更正组件](SEMANTIC_ORDERED_HANDOFF.md)随后补上原始分支顺序与跨消息条件保留。
+七道虚构组件题首轮 6/7；本地契约修正后同答卷零调用复放 7/7，前六份不变。
+真实旧题发现扩邻文挤掉有效种子卡，已用完整退回保护候选；六个真实包仍延后语境审计。
+完整检查 1,105 项通过。下一步先缩小候选再补邻文，不把这一组件成绩当作正式放行。

@@ -1,0 +1,78 @@
+{
+  "schema": "semantic-ordered-exam-v1",
+  "description": "Fictional component exam. Seed records and spans are fixed deliberately; this does not measure retrieval accuracy.",
+  "cases": [
+    {
+      "id": "adjacent-correction",
+      "query": "雨桥盒现在是收什么的？",
+      "seeds": ["box-old"],
+      "records": [
+        {"id": "box-old", "text": "雨桥盒已经定好用途，专门收餐具。"},
+        {"id": "box-new", "role": "user", "text": "不是餐具，刚才我把用途说错了。实际定下来是收杯垫。"}
+      ],
+      "expected": {"kind": "answers", "items": [{"id": "box-new", "contains": "实际定下来是收杯垫。"}]}
+    },
+    {
+      "id": "adjacent-condition",
+      "query": "晴窗垫沾到咖啡后怎么处理？",
+      "seeds": ["mat-old"],
+      "records": [
+        {"id": "mat-old", "text": "晴窗垫沾咖啡后，用湿布用力擦就好。"},
+        {"id": "mat-new", "role": "user", "text": "刚才那条处理方法要改：先用干纸巾轻按吸走液体，再用微湿白布从外向内轻点；不要揉搓，否则容易把污渍擦开。"}
+      ],
+      "expected": {"kind": "answers", "items": [{"id": "mat-new", "contains": "先用干纸巾轻按吸走液体，再用微湿白布从外向内轻点；不要揉搓"}]}
+    },
+    {
+      "id": "later-retelling-not-revision",
+      "query": "清叶盒现在定下来装什么？",
+      "seeds": ["leaf-old"],
+      "records": [
+        {"id": "leaf-old", "text": "清叶盒已经定下来装钥匙。"},
+        {"id": "leaf-new", "role": "user", "text": "刚才把用途记错了，清叶盒最终定下来装交通卡，不装钥匙。"},
+        {"id": "leaf-quote", "text": "这里引用一下先前的错误草稿，便于核对：『清叶盒已经定下来装钥匙。』这是抄录旧稿，不是在重新决定用途。"}
+      ],
+      "expected": {"kind": "answers", "items": [{"id": "leaf-new", "contains": "清叶盒最终定下来装交通卡，不装钥匙。"}]}
+    },
+    {
+      "id": "different-object-correction",
+      "query": "青屿柜收什么？",
+      "seeds": ["cabinet-current"],
+      "records": [
+        {"id": "cabinet-current", "text": "青屿柜收相机。风岚柜收毛巾。"},
+        {"id": "cabinet-other", "role": "user", "text": "后一件的用途我说错了：风岚柜收雨伞，不是毛巾。前一件仍照原先确定的用途。"}
+      ],
+      "expected": {"kind": "answers", "items": [{"id": "cabinet-current", "contains": "青屿柜收相机。"}]}
+    },
+    {
+      "id": "alternative-branches",
+      "query": "晴湾袋最终确定装什么？",
+      "seeds": ["bag-proposal"],
+      "records": [
+        {"id": "bag-proposal", "text": "晴湾袋暂定装随身物品，具体用途还没有决定。", "memberships": [{"branch_id": "a", "position": 0}, {"branch_id": "b", "position": 0}]},
+        {"id": "bag-a", "role": "user", "text": "最终决定：晴湾袋装相机，不装雨伞。", "memberships": [{"branch_id": "a", "position": 1}]},
+        {"id": "bag-b", "role": "user", "text": "最终决定：晴湾袋装雨伞，不装相机。", "memberships": [{"branch_id": "b", "position": 1}]}
+      ],
+      "expected": {"kind": "ambiguous", "items": [{"id": "bag-a", "contains": "晴湾袋装相机，不装雨伞。"}, {"id": "bag-b", "contains": "晴湾袋装雨伞，不装相机。"}]}
+    },
+    {
+      "id": "same-record-plus-condition",
+      "query": "白昼木盒现在用来收什么，有什么条件？",
+      "seeds": ["wood-long"],
+      "records": [
+        {"id": "wood-long", "prefix": "天气记录。", "repeat": "阳台观察。", "times": 900, "text": "最初想让白昼木盒收钥匙。\n今日更正：白昼木盒最终收杯垫，不再收钥匙。", "span_quotes": ["最初想让白昼木盒收钥匙。", "今日更正：白昼木盒最终收杯垫，不再收钥匙。"]},
+        {"id": "wood-condition", "role": "user", "text": "上句收杯垫还有条件：必须先洗净、完全晾干再放入；仍潮湿的不要放进去。"}
+      ],
+      "expected": {"kind": "answers", "items": [{"id": "wood-long", "contains": "白昼木盒最终收杯垫，不再收钥匙。"}, {"id": "wood-condition", "contains": "必须先洗净、完全晾干再放入；仍潮湿的不要放进去。"}]}
+    },
+    {
+      "id": "retracted-without-replacement",
+      "query": "风筝卷尺目前放在哪一格？",
+      "seeds": ["tape-old"],
+      "records": [
+        {"id": "tape-old", "text": "风筝卷尺在第三格。"},
+        {"id": "tape-retract", "role": "user", "text": "刚才说的那个位置是我记错了，并不确定在第三格。目前放在哪一格，我还没有核实。"}
+      ],
+      "expected": {"kind": "missing", "items": []}
+    }
+  ]
+}
