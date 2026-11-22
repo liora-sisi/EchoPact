@@ -24,6 +24,8 @@
 | 对象不明与冲突同时存在时的表达、复考与剩余容量问题 | [CARETAKER_MULTIPLE_GAPS.md](CARETAKER_MULTIPLE_GAPS.md) |
 | 重复出处共享、原文无损还原、完整组容量与旧答卷零调用重放 | [CARETAKER_COMPACT_PACKET.md](CARETAKER_COMPACT_PACKET.md) |
 | 六道新问法、无书名号漏选、接收方解释越过原文的首次失败 | [CARETAKER_NOVEL_QUESTIONS.md](CARETAKER_NOVEL_QUESTIONS.md) |
+| 下一阶段优先补原文片段语义索引、同预算混合检索与望舒会审意见 | [HYBRID_RECALL_SHADOW_PLAN.md](HYBRID_RECALL_SHADOW_PLAN.md) |
+| 本地 BGE 片段索引、词面混合对照、真实旧题结果与未通过的门槛 | [SEMANTIC_RECALL_SHADOW.md](SEMANTIC_RECALL_SHADOW.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -44,6 +46,7 @@
 - `backend/memory/object_evidence_review.py`：匿名顺序窗口与可选对象复核；失败回退、关联证据完整展示，仍为隔离试验。
 - `backend/memory/caretaker_pipeline.py`：同库同身份的整链影子入口；一次规划、至多一次证据复核，短包与完整审计分开。
 - `backend/memory/caretaker_evaluation.py`：在本机分别计量目录可展开、已核原话可见及出处正确性，不把部分目标当成完整答案。
+- `backend/memory/semantic_shadow.py`：独立本地片段向量、冻结原库指纹及 RRF 候选试验；不挂接正式入口。
 - `backend/memory/summary_cabinet.py`：独立合成摘要柜；生成器仅在写入侧注入，查询与展开不调用模型。
 - `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
 - `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
@@ -74,3 +77,8 @@
 随后[新自然问法检查](CARETAKER_NOVEL_QUESTIONS.md)补对象补查 v2 的无标题备用窗口。
 六题实际整链严格 5/6；接收方机械检查 2/2、叙述复核 1/2，保留首次失败。
 最新全套回归 1,043 项通过；缺口判分与名称到属性的推断边界仍待解决。
+
+随后[本地片段向量首测](SEMANTIC_RECALL_SHADOW.md)跑通真实中文 embedding：合成目标 Top-3
+命中 1/6→6/6，有限真实旧题样本 Top-10 命中 1/4→2/4。首次结果保留；加入出处冻结、
+输出目录保护与查询中撤权检查后，同题结果不变。全套回归 1,067 项通过、1 项跳过。
+尚未接小管家筛选、最终短包或正式服务，未在 VPS 安装模型。

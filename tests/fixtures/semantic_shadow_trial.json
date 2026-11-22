@@ -1,0 +1,28 @@
+{
+  "records": [
+    ["meal", "那次夜里在街角撸串，点了烤茄子和牛肉。"],
+    ["light", "停电的时候，把充好电的手提灯拎到客厅，别摸黑走路。"],
+    ["passport", "出国用的那本证件放在书柜上层的透明袋。"],
+    ["plant", "每个陶盆下垫一只接水托盘，免得浇完弄湿桌面。"],
+    ["laundry", "遇上下雨，就把晒在阳台的衣物挪到室内晾架。"],
+    ["mint", "薄荷浇水先摸土，表面还潮就等一等。"],
+    ["book", "床头的小说读到第五章了，书签夹在一百零八页。"],
+    ["key", "门钥匙放在玄关木碗里。"],
+    ["lamp_shop", "商店海报上的落地灯很漂亮，但只是看了一眼。"],
+    ["neighbor", "邻居家的证件都收在抽屉，她有自己的分类方法。"],
+    ["lunch", "中午吃的是青菜豆腐面，饭后把碗洗了。"],
+    ["weather", "今天晴朗，阳台窗帘晒得暖暖的。"]
+  ],
+  "cases": [
+    {"id":"paraphrase-meal","query":"夜宵烧烤吃了些什么？","target":"meal"},
+    {"id":"paraphrase-light","query":"家里断电后用什么照明？","target":"light"},
+    {"id":"paraphrase-passport","query":"护照通常收在哪儿？","target":"passport"},
+    {"id":"paraphrase-plant","query":"花盆底下的水怎么接住？","target":"plant"},
+    {"id":"paraphrase-laundry","query":"雨天晾衣服要怎么处理？","target":"laundry"},
+    {"id":"literal-mint","query":"薄荷浇水","target":"mint"},
+    {"id":"date-control","query":"2035年5月1日吃了什么？","unchanged":true},
+    {"id":"source-control","query":"GPT房间的钥匙记录","unchanged":true},
+    {"id":"speaker-control","query":"谁说要去吃烧烤？","unchanged":true},
+    {"id":"no-answer-probe","query":"月球基地的门禁口令是什么？","no_answer":true}
+  ]
+}
