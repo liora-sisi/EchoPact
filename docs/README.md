@@ -29,6 +29,7 @@
 | 命中窗口回取、等上限短卡、实际筛选四题与真实旧题本机装包 | [SEMANTIC_WINDOW_HANDOFF.md](SEMANTIC_WINDOW_HANDOFF.md) |
 | 相邻更正、同消息多窗口、七份真实模型答卷与容量不足退回 | [SEMANTIC_ORDERED_HANDOFF.md](SEMANTIC_ORDERED_HANDOFF.md) |
 | 先圈候选再补邻文、最多两次模型调用、五题首次结果与真实结构探针 | [SEMANTIC_SHORTLIST_HANDOFF.md](SEMANTIC_SHORTLIST_HANDOFF.md) |
+| 规划/对象/向量/初选/复核整条隔离线路、统一预算与首次三题 2/3 | [SEMANTIC_CARETAKER_PIPELINE.md](SEMANTIC_CARETAKER_PIPELINE.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |

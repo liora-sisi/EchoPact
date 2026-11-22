@@ -78,7 +78,7 @@ class ShortlistBridge:
     def prepare(self, raw, *, query, topic_terms=()):
         return self.base.prepare(raw, query=query, topic_terms=topic_terms)
 
-    def run(self, seed, *, shortlister=None, reviewer=None):
+    def run(self, seed, *, shortlister=None, reviewer=None, context_seed_builder=None):
         self.base.verify(seed)
         result = {"schema_version": VERSION, "status": "shortlist_disabled", "production_accepted": False,
                   "calls": {"shortlist": 0, "review": 0}, "brief": self.base.preview(seed),
@@ -103,6 +103,21 @@ class ShortlistBridge:
             return result
         try:
             focused = focused_seed(seed, draft)
+            if context_seed_builder is not None:
+                expanded = context_seed_builder(copy.deepcopy(focused))
+                self.base.verify(expanded)
+                records = {row["record_id"] for row in focused["local"].values()}
+                conflicts = {row.get("conflict_group_id") for row in focused["local"].values()} - {None, ""}
+                key = lambda row: (row["record_id"], row["excerpt_start"], len(row["text"]), row["observed_content_sha256"])
+                old_keys = {key(row) for row in focused["local"].values()}
+                new_keys = {key(row) for row in expanded["local"].values()}
+                if (expanded["request"]["question"] != seed["request"]["question"]
+                        or not old_keys <= new_keys
+                        or len({row["record_id"] for row in expanded["local"].values()}) > MAX_ROOTS
+                        or any(row["record_id"] not in records and row.get("conflict_group_id") not in conflicts
+                               for row in expanded["local"].values())):
+                    raise SemanticError("context_seed_expanded_outside_selected_records")
+                focused = expanded
             prepared = self.ordered.prepare_seed(focused)
             result["audit"]["focused"] = prepared
         except Exception:
