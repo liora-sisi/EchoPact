@@ -160,6 +160,10 @@ class OrderedWindowBridge:
     def prepare(self, raw, *, query, topic_terms=()):
         return self._assemble(self.base.prepare(raw, query=query, topic_terms=topic_terms))
 
+    def prepare_seed(self, seed):
+        """Use an already source-verified window set, without a new retrieval."""
+        return self._assemble(seed)
+
     def verify(self, prepared):
         # Reconstruct both ACL-filtered neighbors and source order. Rehashing a
         # forged order list is not proof of provenance.
