@@ -4,6 +4,9 @@
 **尚未接入小管家整链、MCP、Bot 或 VPS。** 本阶段承接
 [混合召回施工计划](HYBRID_RECALL_SHADOW_PLAN.md)，不是 M24 正式验收。
 
+本文保留第一阶段结果。随后已完成[原文窗口到筛选短包的接头试验](SEMANTIC_WINDOW_HANDOFF.md)，
+仍未启用完整小管家生产路线；下列“尚未证明”描述的是本阶段停点。
+
 ## 实现及边界
 
 - 模型为 [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)，

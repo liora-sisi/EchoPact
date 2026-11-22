@@ -26,6 +26,7 @@
 | 六道新问法、无书名号漏选、接收方解释越过原文的首次失败 | [CARETAKER_NOVEL_QUESTIONS.md](CARETAKER_NOVEL_QUESTIONS.md) |
 | 下一阶段优先补原文片段语义索引、同预算混合检索与望舒会审意见 | [HYBRID_RECALL_SHADOW_PLAN.md](HYBRID_RECALL_SHADOW_PLAN.md) |
 | 本地 BGE 片段索引、词面混合对照、真实旧题结果与未通过的门槛 | [SEMANTIC_RECALL_SHADOW.md](SEMANTIC_RECALL_SHADOW.md) |
+| 命中窗口回取、等上限短卡、实际筛选四题与真实旧题本机装包 | [SEMANTIC_WINDOW_HANDOFF.md](SEMANTIC_WINDOW_HANDOFF.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -47,6 +48,7 @@
 - `backend/memory/caretaker_pipeline.py`：同库同身份的整链影子入口；一次规划、至多一次证据复核，短包与完整审计分开。
 - `backend/memory/caretaker_evaluation.py`：在本机分别计量目录可展开、已核原话可见及出处正确性，不把部分目标当成完整答案。
 - `backend/memory/semantic_shadow.py`：独立本地片段向量、冻结原库指纹及 RRF 候选试验；不挂接正式入口。
+- `backend/memory/semantic_evidence.py`：将原文偏移按身份/指纹回取为短卡，接现有筛选和引用短包；未接完整生产管线。
 - `backend/memory/summary_cabinet.py`：独立合成摘要柜；生成器仅在写入侧注入，查询与展开不调用模型。
 - `backend/mcp/`：固定身份 MCP；`backend/telegram_bot/`：私人传输和回答呈现。
 - `backend/bad_cases/`：保留原始错题包，派生标注与回放结果另存。
@@ -82,3 +84,8 @@
 命中 1/6→6/6，有限真实旧题样本 Top-10 命中 1/4→2/4。首次结果保留；加入出处冻结、
 输出目录保护与查询中撤权检查后，同题结果不变。全套回归 1,067 项通过、1 项跳过。
 尚未接小管家筛选、最终短包或正式服务，未在 VPS 安装模型。
+
+下一节[窗口短包接头](SEMANTIC_WINDOW_HANDOFF.md)已接上现有筛选模型：四道专用虚构题
+两臂实际八次调用，向量窗口臂 4/4；输出 752–1,237 字节。严格字段验证后的原答卷
+零调用复放逐项不变，完整回归 1,086 项通过。真实旧题只在本机装包，仍保留复杂对象缺口；
+完整 planner/对象补查/相邻语境管线与正式入口尚未接入。

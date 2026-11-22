@@ -1,0 +1,19 @@
+{
+  "reference_at": "2035-05-02T00:00:00Z",
+  "records": [
+    {"id":"carpet","prefix":"这是一份家务杂记。\n","repeat":"窗外的树叶轻轻摇动，桌上放着一只空杯。\n","times":300,"suffix":"地毯沾上咖啡时，先用干布吸走液体，再用清水轻轻点洗，不要来回揉搓。"},
+    {"id":"box","prefix":"早先只是提议让玄关木盒装钥匙，尚未定下。\n","repeat":"周末杂记写到这里，窗帘已经收好。\n","times":350,"suffix":"后来已经改定：玄关木盒用来放公交卡，钥匙挂在门边挂钩。"},
+    {"id":"entry-card","prefix":"整理手记。\n","repeat":"这一页记着零散天气，午后光线照进窗边。\n","times":300,"suffix":"我们家的备用门禁卡，放在蓝色文件袋外侧的小口袋。"},
+    {"id":"fiction-card","prefix":"小说设定：旅馆老板把备用门禁卡藏在壁炉后面。这只是小说人物的做法。","repeat":"","times":0,"suffix":""},
+    {"id":"camp-light","prefix":"露营灯先放到行李箱旁，电池的具体型号还需要翻说明书确认。","repeat":"","times":0,"suffix":""},
+    {"id":"laundry","prefix":"洗衣记录：棉布袋已经晾在阳台。","repeat":"","times":0,"suffix":""},
+    {"id":"food","prefix":"晚饭吃了米饭和炒青菜。","repeat":"","times":0,"suffix":""},
+    {"id":"plant","prefix":"阳台盆栽换了接水托盘。","repeat":"","times":0,"suffix":""}
+  ],
+  "cases": [
+    {"id":"long-tail-condition","query":"地毯沾上咖啡怎么清理？","target_id":"carpet","required":"先用干布吸走液体，再用清水轻轻点洗，不要来回揉搓。"},
+    {"id":"same-record-revision","query":"玄关木盒现在用来装什么？","target_id":"box","required":"玄关木盒用来放公交卡","forbidden_answer":"木盒装钥匙"},
+    {"id":"real-life-versus-fiction","query":"家里备用门禁卡放哪里？","target_id":"entry-card","required":"蓝色文件袋外侧的小口袋"},
+    {"id":"no-answer","query":"露营灯电池的具体型号是什么？","target_id":null,"required":null}
+  ]
+}
