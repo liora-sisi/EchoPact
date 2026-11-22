@@ -50,7 +50,10 @@ def reference_draft(case, request):
         rows.append({"candidate_id": candidate["candidate_id"],
             "relation": row["relation"] if selected else "context",
             "quote": candidate["text"] if selected else ""})
-    return {"judgments": rows, "sufficiency": case["expected_sufficiency"], "gap": case["expected_gap"]}
+    draft = {"judgments": rows, "sufficiency": case["expected_sufficiency"], "gap": case["expected_gap"]}
+    if "source_order_windows" in request:
+        draft["gaps"] = [] if case["expected_gap"] == "none" else [case["expected_gap"]]
+    return draft
 
 
 def score(case, result):

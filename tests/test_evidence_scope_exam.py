@@ -13,11 +13,14 @@ from scripts import object_correction_exam as objects
 
 def gold_draft(case, prepared):
     gold = {row["id"]: row for row in case["records"]}
-    return {"judgments": [
+    draft = {"judgments": [
         {"candidate_id": cid, "relation": gold[row["record_id"]]["relation"],
          "quote": row["text"] if gold[row["record_id"]]["relation"] in ("answers", "uncertain") else ""}
         for cid, row in prepared["local"].items()],
         "sufficiency": case["sufficiency"], "gap": case["gap"]}
+    if "source_order_windows" in prepared["request"]:
+        draft["gaps"] = case.get("gaps", [] if case["gap"] == "none" else [case["gap"]])
+    return draft
 
 
 @pytest.mark.parametrize("case", cli.load_cases("all", scope=True), ids=lambda c: c["case_id"])
@@ -61,7 +64,7 @@ def test_object_correction_does_not_automatically_resolve_missing_identity():
     draft = gold_draft(case, prepared)
     correction = next(row for row in draft["judgments"] if row["relation"] == "uncertain")
     correction["relation"] = "answers"
-    draft.update(sufficiency="sufficient", gap="none")
+    draft.update(sufficiency="sufficient", gap="none", gaps=[])
     brief = reviewer.make_brief(draft, prepared)
     assert not cli.score(case, prepared, draft, brief)["passed"]
 
@@ -70,6 +73,7 @@ def test_object_correction_does_not_automatically_resolve_missing_identity():
     ("scope-general", "tests/fixtures/evidence_scope_synthetic.json", 2),
     ("scope-objects", "tests/fixtures/object_identity_scope_synthetic.json", 2),
     ("identity-phrasing", "tests/fixtures/object_identity_phrasing_synthetic.json", 4),
+    ("object-gaps", "tests/fixtures/object_gap_synthetic.json", 4),
 ])
 def test_new_scope_exams_freeze_only_fixed_synthetic_requests(tmp_path, monkeypatch, exam, fixture, count):
     monkeypatch.setattr(cli, "read_dpapi_key", lambda *a, **k: pytest.fail("no key read"))

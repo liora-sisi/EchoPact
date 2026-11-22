@@ -1,4 +1,5 @@
 """Explicit synthetic object-review trials; existing provider transport only."""
+import copy
 from decimal import Decimal
 
 from . import object_evidence_review as contract
@@ -14,6 +15,8 @@ def request_payload(request, provider):
     messages = payload["input"] if provider == "openai" else payload["messages"]
     messages[0]["content"] = contract.SYSTEM_PROMPT
     messages[1]["content"] = contract.selection.encoded(request).decode("utf-8")
+    format_spec = payload["text"]["format"] if provider == "openai" else payload["response_format"]["json_schema"]
+    format_spec.update(name="echo_object_evidence_review", schema=copy.deepcopy(contract.SCHEMA))
     return payload
 
 

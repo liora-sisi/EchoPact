@@ -27,8 +27,11 @@ def packet(rows=None, scope="not_requested"):
 
 
 def select(request):
-    return {"judgments": [{"candidate_id": c["candidate_id"], "relation": "answers", "quote": c["text"]}
+    draft = {"judgments": [{"candidate_id": c["candidate_id"], "relation": "answers", "quote": c["text"]}
                           for c in request["candidates"]], "sufficiency": "sufficient", "gap": "none"}
+    if "source_order_windows" in request:
+        draft["gaps"] = []
+    return draft
 
 
 def forbidden(*args, **kwargs):

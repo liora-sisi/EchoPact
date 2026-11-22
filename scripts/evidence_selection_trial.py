@@ -66,6 +66,8 @@ def score(case, prepared, draft, brief):
     for field in ("sufficiency", "gap"):
         if draft[field] != case[field]:
             mismatches.append({"field": field})
+    if "gaps" in case and draft.get("gaps") != case["gaps"]:
+        mismatches.append({"field": "gaps"})
     if "expected_items" in case and len(brief["items"]) != case["expected_items"]:
         mismatches.append({"field": "display_group_count"})
     return {"passed": not mismatches, "mismatches": mismatches}
@@ -75,7 +77,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="小管家证据筛选：只用固定虚构题，默认准备、不调用模型。")
     parser.add_argument("--provider", choices=("venice", "openai"), default="venice")
     parser.add_argument("--partition", choices=("development", "holdout", "fresh", "all"), default="development")
-    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts", "scope-general", "scope-objects", "identity-phrasing"), default="general")
+    parser.add_argument("--exam", choices=("general", "objects", "object-contrasts", "scope-general", "scope-objects", "identity-phrasing", "object-gaps"), default="general")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--allow-synthetic-api", action="store_true")
     parser.add_argument("--key-file", type=Path)
@@ -83,12 +85,13 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     output = _private(args.output_dir)
-    is_object_exam = args.exam in ("objects", "object-contrasts", "scope-objects", "identity-phrasing")
+    is_object_exam = args.exam in ("objects", "object-contrasts", "scope-objects", "identity-phrasing", "object-gaps")
     is_scope_exam = args.exam in ("scope-general", "scope-objects")
     exam_api = object_api if is_object_exam else api
     exam_core = object_core if is_object_exam else core
     cases = (object_correction_exam.load_cases(args.partition, contrast=args.exam == "object-contrasts",
-                                             scope=args.exam == "scope-objects", phrasing=args.exam == "identity-phrasing")
+                                             scope=args.exam == "scope-objects", phrasing=args.exam == "identity-phrasing",
+                                             gaps=args.exam == "object-gaps")
              if is_object_exam else load_cases(args.partition, scope=args.exam == "scope-general"))
     if not cases:
         raise SummaryError("selected_partition_is_empty")
@@ -114,6 +117,8 @@ def main(argv=None):
             code_paths += (object_correction_exam.SCOPE_FIXTURE,)
         if args.exam == "identity-phrasing":
             code_paths += (object_correction_exam.PHRASING_FIXTURE,)
+        if args.exam == "object-gaps":
+            code_paths += (object_correction_exam.GAPS_FIXTURE,)
     manifest = {"schema": exam_core.VERSION + "-trial", "provider": args.provider, "exam": args.exam,
         "model": api.model(args.provider), "partition": args.partition, "synthetic_only": True,
         "source_sha256": {p.relative_to(ROOT).as_posix(): file_sha(p) for p in code_paths},
@@ -154,6 +159,8 @@ def main(argv=None):
         ceiling = Decimal("4.00")
     if args.exam == "identity-phrasing" and args.provider == "openai":
         ceiling = Decimal("5.00")  # Existing amended ledger; older callers stay bounded.
+    if args.exam == "object-gaps" and args.provider == "openai":
+        ceiling = Decimal("6.00")  # Delegated small-budget continuation; this command cannot amend a ledger.
     report = {"schema": exam_core.VERSION + "-report", "exam": args.exam, "provider": args.provider, "model": api.model(args.provider),
               "synthetic_only": True, "archive_records_sent": 0, "production_accepted": False,
               "new_model_calls": 0, "cases": []}

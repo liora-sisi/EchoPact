@@ -12,13 +12,14 @@ FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_correctio
 CONTRAST_FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_correction_contrasts.json"
 SCOPE_FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_identity_scope_synthetic.json"
 PHRASING_FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_identity_phrasing_synthetic.json"
+GAPS_FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/object_gap_synthetic.json"
 AS_OF = "2031-05-07T00:00:00Z"
 
 
-def load_cases(partition, *, contrast=False, scope=False, phrasing=False):
-    if sum((contrast, scope, phrasing)) > 1:
+def load_cases(partition, *, contrast=False, scope=False, phrasing=False, gaps=False):
+    if sum((contrast, scope, phrasing, gaps)) > 1:
         raise ValueError("fixed_exam_modes_are_exclusive")
-    fixture = PHRASING_FIXTURE if phrasing else SCOPE_FIXTURE if scope else CONTRAST_FIXTURE if contrast else FIXTURE
+    fixture = GAPS_FIXTURE if gaps else PHRASING_FIXTURE if phrasing else SCOPE_FIXTURE if scope else CONTRAST_FIXTURE if contrast else FIXTURE
     cases = json.loads(fixture.read_text(encoding="utf-8"))
     return [c for c in cases if partition == "all" or c["partition"] == partition]
 

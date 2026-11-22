@@ -42,10 +42,13 @@ def create_corpus(directory):
 def reference_draft(case, request):
     """Offline wiring oracle, never passed to a live provider or called a model."""
     selected = {r["content"] for r in case["records"] if r["selected"]}
-    return {"judgments": [{"candidate_id": c["candidate_id"],
+    draft = {"judgments": [{"candidate_id": c["candidate_id"],
         "relation": "answers" if c["text"] in selected else "context",
         "quote": c["text"] if c["text"] in selected else ""} for c in request["candidates"]],
         "sufficiency": case["expected_sufficiency"], "gap": case["expected_gap"]}
+    if "source_order_windows" in request:
+        draft["gaps"] = [] if case["expected_gap"] == "none" else [case["expected_gap"]]
+    return draft
 
 
 def score(case, result):

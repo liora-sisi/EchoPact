@@ -17,7 +17,8 @@ def gold_draft(c, prepared):
     gold = {r["id"]: r for r in c["records"]}
     return {"judgments": [{"candidate_id": cid, "relation": gold[r["record_id"]]["relation"],
             "quote": r["text"] if gold[r["record_id"]]["relation"] in ("answers", "uncertain") else ""}
-            for cid, r in prepared["local"].items()], "sufficiency": c["sufficiency"], "gap": c["gap"]}
+            for cid, r in prepared["local"].items()], "sufficiency": c["sufficiency"], "gap": c["gap"],
+            "gaps": c.get("gaps", [] if c["gap"] == "none" else [c["gap"]])}
 
 
 def test_old_slate_loses_reversal_information_new_windows_restore_it():
@@ -80,7 +81,7 @@ def test_invalid_order_payload_is_rejected_before_provider(mutation):
         api.request_payload(request, "openai")
 
 
-@pytest.mark.parametrize("c", exam.load_cases("all") + exam.load_cases("all", contrast=True) + exam.load_cases("all", scope=True) + exam.load_cases("all", phrasing=True), ids=lambda c: c["case_id"])
+@pytest.mark.parametrize("c", exam.load_cases("all") + exam.load_cases("all", contrast=True) + exam.load_cases("all", scope=True) + exam.load_cases("all", phrasing=True) + exam.load_cases("all", gaps=True), ids=lambda c: c["case_id"])
 def test_synthetic_gold_is_scoreable_and_never_enters_payload(c):
     scanned = exam.build_scout(c)
     before = copy.deepcopy(scanned)
@@ -211,6 +212,7 @@ def test_brief_limit_never_keeps_only_half_of_selected_related_evidence(kind):
     draft = {"judgments": [{"candidate_id": cid, "relation": "uncertain", "quote": r["text"]}
                            for cid, r in prepared["local"].items()], "sufficiency": "ambiguous",
              "gap": "conflicting_evidence" if kind == "known_conflict" else "object_identity"}
+    draft["gaps"] = [draft["gap"]]
     result = core.make_brief(draft, prepared)
     visible = {r["record_id"] for i in result["items"] for r in i["references"]}
     if kind == "display_duplicate":

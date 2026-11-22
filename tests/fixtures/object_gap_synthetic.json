@@ -1,0 +1,39 @@
+[
+  {
+    "case_id": "unknown-pair-consistent-facts", "partition": "development", "subject": "陶杯",
+    "query": "我们那两只陶杯的颜色有什么区别？", "sufficiency": "ambiguous",
+    "gap": "object_identity", "gaps": ["object_identity"],
+    "records": [
+      {"id": "facts", "position": 0, "role": "user", "content": "家里有三只陶杯：《青岚》是蓝色，《赤堤》是白色，《松野》是绿色，都在柜里。", "relation": "uncertain", "required": ["三只陶杯", "《青岚》是蓝色", "《赤堤》是白色", "《松野》是绿色"]}
+    ]
+  },
+  {
+    "case_id": "named-pair-unresolved-conflict", "partition": "development", "subject": "陶杯",
+    "query": "青岚和赤堤这两只陶杯的颜色有什么区别？", "sufficiency": "ambiguous",
+    "gap": "conflicting_evidence", "gaps": ["conflicting_evidence"],
+    "records": [
+      {"id": "one", "position": 0, "role": "user", "content": "我核对当前陶杯颜色：《青岚》蓝色，《赤堤》白色。", "relation": "uncertain", "required": ["《青岚》蓝色", "《赤堤》白色"]},
+      {"id": "two", "position": 1, "role": "assistant", "content": "另一份当前陶杯核对说《青岚》绿色，《赤堤》白色。两份对青岚的核对尚在争议，没有决定哪份对。", "relation": "uncertain", "required": ["《青岚》绿色", "尚在争议"]},
+      {"id": "third", "position": 2, "role": "user", "content": "柜里另有一只陶杯《松野》，是黄色。", "relation": "irrelevant", "allowed_relations": ["context", "irrelevant"]}
+    ]
+  },
+  {
+    "case_id": "unknown-pair-and-unresolved-conflict", "partition": "development", "subject": "陶杯",
+    "query": "我们那两只陶杯的颜色有什么区别？", "sufficiency": "ambiguous",
+    "gap": "object_identity", "gaps": ["object_identity", "conflicting_evidence"],
+    "records": [
+      {"id": "one", "position": 0, "role": "user", "content": "我核对当前陶杯颜色：《青岚》蓝色，《赤堤》白色。", "relation": "uncertain", "required": ["《青岚》蓝色", "《赤堤》白色"]},
+      {"id": "two", "position": 1, "role": "assistant", "content": "另一份当前陶杯核对说《青岚》绿色，《赤堤》白色。两份对青岚的核对尚在争议，没有决定哪份对。", "relation": "uncertain", "required": ["《青岚》绿色", "尚在争议"]},
+      {"id": "third", "position": 2, "role": "user", "content": "柜里另有一只陶杯《松野》，是黄色。", "relation": "uncertain", "required": ["陶杯《松野》", "黄色"]}
+    ]
+  },
+  {
+    "case_id": "named-pair-resolved-correction", "partition": "development", "subject": "陶杯",
+    "query": "青岚和赤堤这两只陶杯的颜色有什么区别？", "sufficiency": "sufficient",
+    "gap": "none", "gaps": [],
+    "records": [
+      {"id": "draft", "position": 0, "role": "assistant", "content": "陶杯草稿：《青岚》蓝色，《赤堤》白色。", "relation": "context"},
+      {"id": "correction", "position": 1, "role": "user", "content": "更正陶杯草稿：刚才把青岚颜色写错了，当前《青岚》绿色，《赤堤》白色，旧稿的蓝色不适用。", "relation": "answers", "required": ["当前《青岚》绿色", "《赤堤》白色"]}
+    ]
+  }
+]

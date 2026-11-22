@@ -1,6 +1,6 @@
 # Echo Pact 当前文档导航
 
-更新于 2026-11-20。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
+更新于 2026-11-22。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
 根 README 中保留的情感坐标、向量和主动浮现描述属于 legacy 原型，不能据此
 推断当前 records-v1 已经具备语义小管家。records-v2 是交换包格式，生产表名
 和召回协议仍沿用 records-v1，两者不是互斥版本。
@@ -21,6 +21,7 @@
 | 问句、检索、证据复核的整链小样与入口差别 | [CARETAKER_PIPELINE_SHADOW.md](CARETAKER_PIPELINE_SHADOW.md) |
 | 归属、对象歧义、干扰与缺证四道新题的模型结果 | [CARETAKER_PIPELINE_CHALLENGE.md](CARETAKER_PIPELINE_CHALLENGE.md) |
 | 真实旧题、当前短目录、逐字出处与新问法对照 | [CARETAKER_REAL_EVALUATION.md](CARETAKER_REAL_EVALUATION.md) |
+| 对象不明与冲突同时存在时的表达、复考与剩余容量问题 | [CARETAKER_MULTIPLE_GAPS.md](CARETAKER_MULTIPLE_GAPS.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -63,3 +64,5 @@
 最新完整回归 957 项通过；正式服务与摘要作者的验收门不变。
 后续[同材料换问法诊断](CARETAKER_IDENTITY_PHRASING.md)补对象复核 v6：两道真实旧题均由模型选中纠正，
 旧问法仍有缺口分类分歧；四道虚构对照通过，最新完整回归 966 项通过，仍为隔离试验。
+2026-11-22 [对象复核 v8](CARETAKER_MULTIPLE_GAPS.md)可表达并存缺口与补证顺序：四道虚构题首次 3/4，
+修订后同卷 4/4，两道真实旧题诊断 2/2；短包仍有容量暂扣，未宣称完整答全。全套回归 995 项通过。

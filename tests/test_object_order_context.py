@@ -19,7 +19,7 @@ def prepared(texts=None, windows=None):
 def draft(value, selected=("c1",), discarded="context"):
     return {"judgments": [{"candidate_id": cid, "relation": "answers" if cid in selected else discarded,
                           "quote": row["text"] if cid in selected else ""} for cid, row in value["local"].items()],
-            "sufficiency": "sufficient", "gap": "none"}
+            "sufficiency": "sufficient", "gap": "none", "gaps": []}
 
 
 def ids(items):
@@ -98,7 +98,7 @@ def test_complete_early_group_gets_space_before_unrelated_later_selections(monke
 def test_whole_packet_byte_budget_never_removes_only_the_neighbour(monkeypatch):
     value, _ = prepared(["青杯用红色。", "补充内容。" * 55 + "更正：青杯用蓝色。"])
     response = draft(value)
-    base = core.selection.make_brief(response, value)
+    base = core.selection.make_brief(response, value, multiple_gaps=True)
     cap = len(core.selection.encoded(base)) + 500
     monkeypatch.setattr(core.selection, "MAX_BRIEF_BYTES", cap)
     result = core.make_brief(response, value)
