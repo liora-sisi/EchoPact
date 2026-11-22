@@ -16,9 +16,10 @@ from .records_v1 import _connect_readonly
 from .semantic_evidence import WindowBridge
 from .semantic_shadow import SemanticError, canonical_hash
 
-VERSION = "echo-semantic-ordered-evidence-shadow-v1"
+VERSION = "echo-semantic-ordered-evidence-shadow-v2"
 RADIUS = 2
 MAX_BRANCHES = 4
+MAX_MEMBERSHIPS = 64
 LIMITATIONS = ["bounded_adjacent_messages_only", "unseen_messages_may_change_interpretation",
               "source_order_is_not_event_time_or_truth"]
 
@@ -48,13 +49,15 @@ class OrderedWindowBridge:
     def _neighborhood(self, conn, row, visibility, params):
         memberships = conn.execute("""SELECT bm.branch_id, bm.position FROM records_v1_branch_memberships bm
             JOIN records_v1 r ON r.id=bm.record_rowid WHERE r.record_id=?
-            ORDER BY bm.branch_id, bm.position LIMIT ?""", (row["record_id"], MAX_BRANCHES + 1)).fetchall()
-        if len(memberships) > MAX_BRANCHES:
-            return None, "branch_limit"
+            ORDER BY bm.branch_id, bm.position LIMIT ?""", (row["record_id"], MAX_MEMBERSHIPS + 1)).fetchall()
+        stats = {"memberships_checked": 0, "duplicate_branch_windows": 0}
+        if len(memberships) > MAX_MEMBERSHIPS:
+            return None, "branch_limit", stats
         windows = []
         for membership in memberships:
+            stats["memberships_checked"] += 1
             if type(membership["position"]) is not int:
-                return None, "ambiguous_position"
+                return None, "ambiguous_position", stats
             rows = conn.execute(f"""SELECT r.record_id, bm.position FROM records_v1 r
                 JOIN records_v1_branch_memberships bm ON bm.record_rowid=r.id
                 WHERE bm.branch_id=? AND bm.position BETWEEN ? AND ?
@@ -63,13 +66,19 @@ class OrderedWindowBridge:
                 [membership["branch_id"], max(0, membership["position"] - RADIUS), membership["position"] + RADIUS,
                  row["source_kind"], row["conversation_id"], *params]).fetchall()
             if len(rows) > 5 or len({r["position"] for r in rows}) != len(rows):
-                return None, "ambiguous_position"
+                return None, "ambiguous_position", stats
             if row["record_id"] not in {r["record_id"] for r in rows}:
                 raise SemanticError("adjacent_anchor_not_visible")
             ids = [r["record_id"] for r in rows]
             if ids not in windows:
                 windows.append(ids)
-        return windows or [[row["record_id"]]], None if memberships else "order_unknown"
+                if len(windows) > MAX_BRANCHES:
+                    return None, "branch_limit", stats
+            else:
+                # Equal visible ordered record IDs share a display window.
+                # This never merges the original branches or their later facts.
+                stats["duplicate_branch_windows"] += 1
+        return windows or [[row["record_id"]]], None if memberships else "order_unknown", stats
 
     def _assemble(self, seed):
         self.base.verify(seed)
@@ -83,14 +92,18 @@ class OrderedWindowBridge:
         local, keys, pool = {}, {}, {_key(row) for row in seed["local"].values()}
         audit = {"anchor_groups": len(anchors), "admitted_groups": 0, "withheld_groups": 0,
                  "branch_limit_groups": 0, "ambiguous_position_groups": 0, "order_unknown_groups": 0,
-                 "radius": RADIUS, "max_branches": MAX_BRANCHES}
+                 "radius": RADIUS, "max_branches": MAX_BRANCHES, "max_memberships": MAX_MEMBERSHIPS,
+                 "branch_budget_basis": "distinct_visible_neighborhoods",
+                 "memberships_checked": 0, "duplicate_branch_windows": 0}
         conn = _connect_readonly(str(self.base.path))
         try:
             conn.execute("BEGIN")
             visibility, params = visible_record_rowids_query(conn, self.base.agent_id)
             for rid in anchors:
                 parent = by_record[rid][0]
-                neighborhoods, issue = self._neighborhood(conn, parent, visibility, params)
+                neighborhoods, issue, stats = self._neighborhood(conn, parent, visibility, params)
+                for name, value in stats.items():
+                    audit[name] += value
                 if issue:
                     audit[issue + "_groups"] += 1
                 if neighborhoods is None:

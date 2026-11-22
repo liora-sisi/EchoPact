@@ -12,7 +12,7 @@ import re
 from .event_timeline import resolve_query_calendar_scope
 from .caretaker_shadow import build_shadow_packet
 
-VERSION = "echo-query-caretaker-shadow-v3"
+VERSION = "echo-query-caretaker-shadow-v4"
 MAX_PAYLOAD_CHARS = 8000
 MAX_CONTENT_CHARS = 2400
 MAX_EXTRA_QUERIES = 2
@@ -23,6 +23,9 @@ topic_terms 提取一到三个真正的主题名词，每个词必须是原问�
 选足以辨认主题的短名词，可把长修饰短语拆成几个名词；不要补问句没有说出的名字、别名、事实或日期。
 intent：procedure 表示做法、规则、动作或功能规划；comparison 表示区分或比较；topic 表示一般回忆。
 有可检索的主题就 planned，即使还不知道具体是哪两个物品也只提取物品种类。
+你只判断问题能否开始检索，不判断私人记忆里有没有答案。不了解私人背景、没见到原文、
+不知道旧规则的内容或所问属性，都不能单独成为 needs_clue 的理由；这些正是后续检索要解决的。
+原问已给出具体的活动、物品类别、文档或地点主题时，先提取这些原样名词并 planned。
 完全没有主题、仅有“那件事、那个东西”等指代时 needs_clue；不需要改写时 no_rewrite。
 后两种状态 topic_terms=[]、intent=unspecified。日期、来源、否定与原话等限制由本地另行处理，不在这里猜。
 """

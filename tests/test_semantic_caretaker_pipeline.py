@@ -63,14 +63,39 @@ def test_constrained_queries_bypass_models_vectors_and_scout(tmp_path, monkeypat
     assert result["trace"]["model_calls"] == 0 and result["trace"]["retrieval_operations"] == 1
 
 
-@pytest.mark.parametrize("plan", [None, {"status": "planned", "intent": "topic", "topic_terms": ["invented"]},
-                                  {"status": "needs_clue", "intent": "unspecified", "topic_terms": []}])
+@pytest.mark.parametrize("plan", [None, {"status": "planned", "intent": "topic", "topic_terms": ["invented"]}])
 def test_disabled_or_unusable_planner_preserves_exact_original(tmp_path, plan):
     run = pipeline(tmp_path)
     result = run.run(QUERY, as_of=AS_OF, planner=None if plan is None else lambda _: plan,
                      shortlister=forbidden, reviewer=forbidden)
     assert result["status"] == "original_only" and result["trace"]["hybrid_operations"] == 0
     assert result["brief"] == result["audit"]["query_shadow"]["brief"]
+
+
+@pytest.mark.parametrize("status", ["needs_clue", "no_rewrite"])
+def test_valid_nonrewrite_plan_can_search_original_without_inventing_terms(tmp_path, status, monkeypatch):
+    run = pipeline(tmp_path)
+    monkeypatch.setattr(run, "object_runner", forbidden)
+    original = run.hybrid.recall
+    calls = []
+    def observed(args):
+        calls.append(args)
+        return original(args)
+    monkeypatch.setattr(run.hybrid, "recall", observed)
+    result = run.run(QUERY, as_of=AS_OF,
+        planner=lambda _: {"status": status, "intent": "unspecified", "topic_terms": []},
+        shortlister=shortlist, reviewer=reviewer)
+    assert result["status"] == "reviewed_requires_acceptance"
+    assert calls == [{"query": QUERY, "limit": 10, "as_of": AS_OF}]
+    assert result["audit"]["query_shadow"]["queries"] == [QUERY]
+    assert result["trace"]["lexical_operations"] == 1 and result["trace"]["retrieval_operations"] == 2
+    assert result["trace"]["model_calls"] == 3 and result["trace"]["object_operations"] == 0
+    brief = codec.expand(result["brief"])
+    if status == "needs_clue":
+        assert brief["planning_status"] == status and brief["needs_more_evidence"]
+        assert "planner_requested_clue_original_question_only" in brief["limitations"]
+    else:
+        assert "planning_status" not in brief
 
 
 def test_object_comparison_scans_rebound_to_authoritative_windows(tmp_path):

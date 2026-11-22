@@ -17,7 +17,7 @@ from .caretaker_pipeline import _source_coherence
 from .semantic_shortlist import ShortlistBridge, MAX_ROOTS
 from .semantic_shadow import HybridGateway, SemanticError, canonical_hash, file_digest
 
-VERSION = "echo-semantic-caretaker-pipeline-shadow-v1"
+VERSION = "echo-semantic-caretaker-pipeline-shadow-v2"
 MAX_CATALOG = 60  # 3 lexical packets + 1 hybrid + 1 object slate, at most 12 each.
 LIMITS = {"lexical_operations": 3, "hybrid_operations": 1, "object_operations": 2,
           "planner": 1, "shortlist": 1, "review": 1}
@@ -155,6 +155,19 @@ class SemanticCaretaker:
             elapsed = self.clock() - started
             if elapsed > self.elapsed_limit:
                 result.update(status="time_budget_exhausted_original_preserved", brief=original_brief)
+            if shadow["planner_status"] == "needs_clue":
+                # Planning uncertainty cannot veto an unchanged-question search,
+                # but it must remain visible even if the reviewer sounds sure.
+                brief = copy.deepcopy(result["brief"])
+                brief["planning_status"] = "needs_clue"
+                brief["needs_more_evidence"] = True
+                brief.setdefault("limitations", []).append("planner_requested_clue_original_question_only")
+                if len(selection.encoded(brief)) > selection.MAX_BRIEF_BYTES:
+                    brief = copy.deepcopy(original_brief)
+                    brief.update(planning_status="needs_clue", needs_more_evidence=True)
+                    brief["limitations"].append("planner_requested_clue_original_question_only")
+                    result["status"] = "pipeline_output_budget_original_preserved"
+                result["brief"] = brief
             result["trace"] = {**counts, "model_calls": sum(counts[k] for k in ("planner", "shortlist", "review")),
                 "retrieval_operations": sum(counts[k] for k in ("lexical_operations", "hybrid_operations", "object_operations")),
                 "elapsed_seconds": round(elapsed, 3), "elapsed_limit": self.elapsed_limit,
@@ -164,7 +177,7 @@ class SemanticCaretaker:
                                 "brief_bytes": selection.MAX_BRIEF_BYTES}
             return result
 
-        if shadow["planner_status"] != "planned":
+        if shadow["planner_status"] not in {"planned", "needs_clue", "no_rewrite"}:
             return finish()
         try:
             packets = [shadow["original"], *shadow["passes"]]

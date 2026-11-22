@@ -133,7 +133,7 @@ def test_unresolved_candidates_remain_reported_after_second_model(tmp_path):
 
 
 def test_context_still_over_budget_preserves_entire_original_seed(tmp_path):
-    db, ordered, _, raw=setup(tmp_path,[{"content":OLD,"branch_memberships":[{"branch_id":str(i),"position":0} for i in range(5)]},
+    db, ordered, _, raw=setup(tmp_path,[{"content":OLD,"branch_memberships":[{"branch_id":str(i),"position":0} for i in range(65)]},
                                        {"content":"other","conversation_id":"elsewhere"}],selected=("r0","r1"))
     bridge=bridge_for(db,ordered)
     seed=bridge.prepare(raw,query=QUERY)

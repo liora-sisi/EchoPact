@@ -153,7 +153,8 @@ def test_rehashing_cannot_forge_canonical_order_or_drop_correction(tmp_path, mut
 def test_ambiguous_or_unbounded_groups_are_withheld_before_model(tmp_path, kind):
     specs = [{"content": OLD}, {"content": NEW}]
     if kind == "branch_limit":
-        specs[0]["branch_memberships"] = [{"branch_id": str(i), "position": 0} for i in range(5)]
+        specs = [{"content": OLD, "branch_memberships": [{"branch_id": str(i), "position": 0} for i in range(5)]}]
+        specs += [{"content": "分支结论" + str(i), "branch_memberships": [{"branch_id": str(i), "position": 1}]} for i in range(5)]
     else:
         specs[1]["branch_memberships"] = [{"branch_id": "main", "position": 0}]
     _, bridge, _, raw = setup(tmp_path, specs)
@@ -162,6 +163,45 @@ def test_ambiguous_or_unbounded_groups_are_withheld_before_model(tmp_path, kind)
     assert prepared["adjacency"][kind + "_groups"] == 1 and prepared["adjacency"]["deferred"]
     result = bridge.review(prepared, selector=lambda _: pytest.fail("withheld group"))
     assert result["selector_attempts"] == 0 and result["brief"]["evidence_status"] == "not_assessed"
+
+
+def test_many_identical_visible_branch_windows_share_display_without_merging_sources(tmp_path):
+    memberships = [{"branch_id": str(i), "position": 0} for i in range(29)]
+    specs = [{"content": OLD, "branch_memberships": memberships},
+             {"content": NEW, "branch_memberships": [{**b, "position": 1} for b in memberships]}]
+    db, bridge, _, raw = setup(tmp_path, specs)
+    before = windows.file_digest(db)
+    prepared = bridge.prepare(raw, query=QUERY)
+    assert not prepared["adjacency"].get("deferred")
+    assert prepared["adjacency"]["memberships_checked"] == 29
+    assert prepared["adjacency"]["duplicate_branch_windows"] == 28
+    assert prepared["request"]["source_order_windows"] == [{"candidate_ids": ["c1", "c2"]}]
+    assert {row["text"] for row in prepared["local"].values()} == {OLD, NEW}
+    assert windows.file_digest(db) == before
+    bridge.verify(prepared)
+
+
+def test_duplicate_paths_do_not_erase_a_different_branch_correction(tmp_path):
+    shared = [{"branch_id": str(i), "position": 0} for i in range(12)]
+    specs = [{"content": OLD, "branch_memberships": shared},
+             {"content": NEW, "branch_memberships": [{**b, "position": 1} for b in shared[:11]]},
+             {"content": "另一分支：实际收钥匙。", "branch_memberships": [{"branch_id": "11", "position": 1}]}]
+    _, bridge, _, raw = setup(tmp_path, specs)
+    prepared = bridge.prepare(raw, query=QUERY)
+    assert not prepared["adjacency"].get("deferred")
+    assert len(prepared["request"]["source_order_windows"]) == 2
+    assert {r["record_id"] for r in prepared["local"].values()} == {"r0", "r1", "r2"}
+    assert prepared["adjacency"]["duplicate_branch_windows"] == 10
+
+
+def test_membership_scan_is_bounded_even_when_every_window_would_match(tmp_path):
+    specs = [{"content": OLD, "branch_memberships": [{"branch_id": str(i), "position": 0}
+              for i in range(core.MAX_MEMBERSHIPS + 1)]}]
+    _, bridge, _, raw = setup(tmp_path, specs)
+    prepared = bridge.prepare(raw, query=QUERY)
+    assert prepared["adjacency"]["deferred"] and prepared["adjacency"]["branch_limit_groups"] == 1
+    assert prepared["adjacency"]["memberships_checked"] == 0
+    assert prepared["local"] == prepared["seed"]["local"]
 
 
 def test_input_card_limit_defers_instead_of_publishing_a_partial_subset(tmp_path):
