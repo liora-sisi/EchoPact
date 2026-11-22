@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from backend.memory.identity import register_agent
+from backend.memory.evidence_packet import expand
 from backend.memory.records_v1 import COMPACT_RECORD_SCHEMA_VERSION, import_record_package
 from scripts.caretaker_pipeline_exam import score as base_score
 
@@ -59,7 +60,7 @@ def reference_draft(case, request):
 def score(case, result):
     report = base_score(case, result)
     stage = result["audit"].get("selection", {})
-    items = result["brief"].get("items", [])
+    items = expand(result["brief"]).get("items", [])
     prepared = stage.get("prepared", {})
     cards = prepared.get("request", {}).get("candidates", [])
     report["checks"]["review_has_challenge"] = len(cards) >= case["minimum_review_candidates"]

@@ -16,6 +16,7 @@ from backend.memory import evidence_selector as core
 from backend.memory import evidence_selector_trial as api
 from backend.memory import object_evidence_review as object_core
 from backend.memory import object_evidence_review_trial as object_api
+from backend.memory import evidence_packet
 from scripts import object_correction_exam
 from backend.memory.caretaker_summary import SummaryError
 from backend.memory.summary_trial_budget import BudgetLedger
@@ -109,6 +110,7 @@ def main(argv=None):
     if is_object_exam:
         code_paths += (ROOT / "backend/memory/object_evidence_review.py",
                        ROOT / "backend/memory/object_evidence_review_trial.py",
+                       ROOT / "backend/memory/evidence_packet.py",
                        ROOT / "backend/memory/object_recall_shadow.py", ROOT / "backend/memory/named_collection.py",
                        ROOT / "scripts/object_correction_exam.py", object_correction_exam.FIXTURE)
         if args.exam == "object-contrasts":
@@ -208,11 +210,11 @@ def main(argv=None):
             entry = {"case_id": cid, "accepted_contract": False, "quality": {"passed": False}}
             if "draft" in response:
                 try:
-                    brief = exam_core.make_brief(response["draft"], prepared[cid])
+                    brief = exam_core.make_brief(response["draft"], prepared[cid], **({"compact": True} if is_object_exam else {}))
                     entry.update(accepted_contract=True, brief=brief,
                         quality=score(case, prepared[cid], response["draft"], brief),
                         estimated_usd=response.get("estimated_usd"), usage=response.get("usage"))
-                except (core.SelectionError, object_core.ReviewError) as error:
+                except (core.SelectionError, object_core.ReviewError, evidence_packet.PacketError) as error:
                     entry["validation_error"] = str(error)
             report["cases"].append(entry)
         report.update(cumulative_reserved_usd=str(ledger.total), budget_limit_usd=str(ledger.limit))

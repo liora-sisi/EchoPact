@@ -190,11 +190,12 @@ def test_successful_review_uses_source_quotes_without_silently_releasing_scout_g
     result = core.refine_object_shadow(scanned, fallback_brief={"old": True}, reviewer=reviewer)
     assert len(called) == 1 and result["status"] == "selected_requires_review"
     assert result["brief"]["needs_more_evidence"] is True
-    assert result["brief"]["items"][0]["references"][0]["record_id"] == "s2"
+    assert core.packet.expand(result["brief"])["items"][0]["references"][0]["record_id"] == "s2"
 
 
 @pytest.mark.parametrize("kind", ["window", "transitive", "known_conflict", "display_duplicate"])
-def test_brief_limit_never_keeps_only_half_of_selected_related_evidence(kind):
+@pytest.mark.parametrize("compact", [False, True])
+def test_brief_limit_never_keeps_only_half_of_selected_related_evidence(kind, compact):
     rows = [{"record_id": f"s{i}", "source_kind": "synthetic", "conversation_id": "room",
              "content": f"陶瓶记录{i}，对象待辨。", "role": "user", "created_at": "2031-05-06T00:00:00Z"}
             for i in range(1, 8)]
@@ -213,7 +214,9 @@ def test_brief_limit_never_keeps_only_half_of_selected_related_evidence(kind):
                            for cid, r in prepared["local"].items()], "sufficiency": "ambiguous",
              "gap": "conflicting_evidence" if kind == "known_conflict" else "object_identity"}
     draft["gaps"] = [draft["gap"]]
-    result = core.make_brief(draft, prepared)
+    wire = core.make_brief(draft, prepared, compact=compact)
+    assert len(core.selection.encoded(wire)) <= core.selection.MAX_BRIEF_BYTES
+    result = core.packet.expand(wire)
     visible = {r["record_id"] for i in result["items"] for r in i["references"]}
     if kind == "display_duplicate":
         assert visible == {f"s{i}" for i in range(1, 8)}

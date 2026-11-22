@@ -10,8 +10,9 @@ import re
 
 from . import evidence_selector as selection
 from . import object_recall_shadow as scout
+from . import evidence_packet as packet
 
-VERSION = "echo-object-evidence-review-v8"
+VERSION = "echo-object-evidence-review-v9"
 MAX_WINDOWS = 24
 MAX_ORDER_CONTEXT_ITEMS = 6  # Separate from six model selections; same whole-packet byte cap.
 SYSTEM_PROMPT = selection.SYSTEM_PROMPT + """
@@ -164,7 +165,7 @@ def prepare(scanned):
     return prepared
 
 
-def make_brief(draft, prepared, *, legacy_single_gap=False):
+def make_brief(draft, prepared, *, legacy_single_gap=False, compact=False):
     validate_request(prepared["request"])
     brief = selection.make_brief(draft, prepared, multiple_gaps=not legacy_single_gap)
     brief["schema_version"] = VERSION + "-brief"
@@ -177,13 +178,15 @@ def make_brief(draft, prepared, *, legacy_single_gap=False):
     brief["source_order_windows_used"] = len(prepared["request"]["source_order_windows"])
     brief["limitations"].append("source_order_is_not_event_time_or_truth")
     brief["needs_more_evidence"] |= prepared.get("object_scout_needs_more") is not False
-    _retain_order_context(brief, draft, prepared)
+    _retain_order_context(brief, draft, prepared, compact=compact)
+    if compact:
+        brief = packet.pack(brief)
     if len(selection.encoded(brief)) > selection.MAX_BRIEF_BYTES:
         raise ReviewError("ordered_brief_budget_exceeded")
     return brief
 
 
-def _retain_order_context(brief, draft, prepared):
+def _retain_order_context(brief, draft, prepared, *, compact=False):
     """A model's 'context' label cannot silently remove a nearby correction.
 
     Preserve whole connected source windows, without deciding which speaker is
@@ -213,6 +216,25 @@ def _retain_order_context(brief, draft, prepared):
     brief["order_context_groups_withheld"] = 0
     brief["partial_groups_withheld"] = 0
     brief["limitations"].append("local_order_context_is_not_an_answer_or_a_truth_judgment")
+    initial_needs_more = brief["needs_more_evidence"]
+    initial_status = brief["evidence_status"]
+
+    def summarize(value):
+        # Treat all not-yet-kept groups as withheld. Capacity is measured with
+        # final counters/status, so accepting later groups cannot make these
+        # fields unexpectedly grow after the last byte-budget check.
+        visible = {lookup[scout._identity(ref)] for item in value["items"] for ref in item["references"]}
+        withheld = [group for group in components if (group & selected) - visible]
+        value["omitted_selected"] = len(selected - visible)
+        value["partial_groups_withheld"] = sum(len(group & selected) > 1 for group in withheld)
+        value["order_context_groups_withheld"] = sum(bool(group - selected) for group in withheld)
+        value["duplicate_display_count"] = sum(len(item["references"]) - 1 for item in value["items"])
+        value["needs_more_evidence"] = initial_needs_more or bool(value["omitted_selected"] or value["source_order_context"])
+        value["evidence_status"] = ("model_judgment_with_local_order_context_review_required"
+            if value["source_order_context"] or value["order_context_groups_withheld"] else initial_status)
+
+    if compact:
+        summarize(brief)
 
     def source_item(cid, *, companion=False):
         source = local[cid]
@@ -253,14 +275,20 @@ def _retain_order_context(brief, draft, prepared):
                     for w in prepared["request"]["source_order_windows"] if set(w["candidate_ids"]) <= group],
                 "items": [source_item(cid, companion=True) for cid in sorted(companions, key=order.get)]})
         context_count = sum(len(b["items"]) for b in proposed["source_order_context"])
-        if (len(proposed["items"]) > selection.MAX_ITEMS or context_count > MAX_ORDER_CONTEXT_ITEMS
-                or len(selection.encoded(proposed)) > selection.MAX_BRIEF_BYTES - 256):
-            brief["partial_groups_withheld"] += int(len(wanted) > 1)
-            brief["order_context_groups_withheld"] += int(bool(companions))
-            brief["needs_more_evidence"] = True
+        item_limit = len(proposed["items"]) > selection.MAX_ITEMS or context_count > MAX_ORDER_CONTEXT_ITEMS
+        if compact:
+            summarize(proposed)
+        size = 0 if item_limit else len(selection.encoded(packet.pack(proposed) if compact else proposed))
+        if item_limit or size > selection.MAX_BRIEF_BYTES - (0 if compact else 256):
+            if not compact:
+                brief["partial_groups_withheld"] += int(len(wanted) > 1)
+                brief["order_context_groups_withheld"] += int(bool(companions))
+                brief["needs_more_evidence"] = True
             continue
-        brief["items"] = proposed["items"]
-        brief["source_order_context"] = proposed["source_order_context"]
+        brief.update(proposed)
+    if compact:
+        summarize(brief)
+        return
     visible = {lookup[scout._identity(ref)] for item in brief["items"] for ref in item["references"]}
     brief["omitted_selected"] = len(selected - visible)
     brief["duplicate_display_count"] = sum(len(i["references"]) - 1 for i in brief["items"])
@@ -280,7 +308,7 @@ def refine_object_shadow(scanned, *, fallback_brief, reviewer=None):
         result["prepared"] = prepared  # Local audit only, not the client-facing brief.
         result["review_attempts"] = 1
         draft = reviewer(copy.deepcopy(prepared["request"]))
-        result["brief"] = make_brief(draft, prepared)
+        result["brief"] = make_brief(draft, prepared, compact=True)
         result.update(status="selected_requires_review", judgments=copy.deepcopy(draft))
     except Exception:
         result["status"] = "failed_original_brief_preserved"

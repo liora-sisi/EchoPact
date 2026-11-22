@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from . import assistant_baseline as baseline
 from .evidence_selector import encoded
+from . import evidence_packet
 
 VERSION = "echo-caretaker-evaluation-v1"
 IDENTITY = ("record_id", "source_kind", "conversation_id")
@@ -17,6 +18,7 @@ def _identity(row):
 
 
 def _brief_rows(brief):
+    brief = evidence_packet.expand(brief)
     for item in brief.get("items", []):
         references = item.get("references")
         if references is None:
@@ -36,6 +38,11 @@ def verify_brief(brief, resolve_record):
     An ID match or a verbatim substring in the wrong source is not a pass.
     Errors are sanitized; the report contains no source text or exception text.
     """
+    try:
+        brief = evidence_packet.expand(brief)
+    except evidence_packet.PacketError:
+        return {"references_checked": 0, "orphan_items": 0, "all_references_valid": False,
+                "checks": [], "packet_error": "invalid_compact_evidence_packet"}
     checked = []
     for channel, row in _brief_rows(brief):
         reasons = []

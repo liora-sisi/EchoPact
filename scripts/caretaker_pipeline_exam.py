@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from backend.memory.identity import register_agent
+from backend.memory.evidence_packet import expand
 from backend.memory.records_v1 import COMPACT_RECORD_SCHEMA_VERSION, import_record_package
 
 FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/caretaker_pipeline_fresh.json"
@@ -55,7 +56,7 @@ def score(case, result):
     """Visible source quotes and forbidden selections, not packet length alone."""
     selected = [r for r in case["records"] if r["selected"]]
     forbidden = {r["id"] for r in case["records"] if not r["selected"]}
-    items = result["brief"].get("items", [])
+    items = expand(result["brief"]).get("items", [])
     seen = {r["record_id"] for item in items for r in item.get("references", [])}
     target_checks = [{"record_id": row["id"], "present": any(
         any(ref["record_id"] == row["id"] for ref in item.get("references", []))

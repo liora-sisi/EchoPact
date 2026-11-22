@@ -1,6 +1,7 @@
 # 对象复核：并存缺口与补证顺序
 
-2026-11-22。对象复核当前为 `echo-object-evidence-review-v8`，通用筛选器仍为 v5。
+2026-11-22。本节记录对象复核 v7/v8 的试验，通用筛选器仍为 v5。
+后续 v9 的零调用装包对照另见[证据包减重](CARETAKER_COMPACT_PACKET.md)，本页原成绩与容量数据保留。
 承接[同材料换问法诊断](CARETAKER_IDENTITY_PHRASING.md)。仍为隔离试验，未接入正式 MCP、Bot 或导入侧摘要。
 
 ## 从单个原因改为多个独立缺口
