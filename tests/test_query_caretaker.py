@@ -11,6 +11,17 @@ QUESTION = "以前我们说过陶艺要怎么做？"
 PLAN = {"status": "planned", "intent": "procedure", "topic_terms": ["陶艺"]}
 
 
+@pytest.mark.parametrize("query", ["?" * 22, "？！……", "🙂🙂"])
+def test_question_without_searchable_text_stops_before_retrieval_or_api(query):
+    def forbidden(_):
+        pytest.fail("damaged question must not reach retrieval or a provider")
+    with pytest.raises(core.PlannerError, match="question_not_allowed"):
+        core.run_shadow(query, as_of="2031-05-07T00:00:00Z", limit=10,
+                        runner=forbidden, planner=forbidden)
+    with pytest.raises(core.PlannerError, match="question_not_allowed"):
+        api.request_payload(query)
+
+
 def packet(text="陶艺约定：烧制前晾干。", rid="s1", date_status="not_requested"):
     return {"memories": [{"record_id": rid, "source_kind": "synthetic", "conversation_id": "room",
         "content": text, "created_at": "2031-05-06T00:00:00Z", "role": "assistant"}],

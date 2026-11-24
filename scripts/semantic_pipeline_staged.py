@@ -42,6 +42,22 @@ def read(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def question_receipt(query):
+    """Reject suspect authored trial text before freezing or paying for it.
+
+    This is stricter than conversational punctuation. It cannot detect every
+    encoding error, so author scopes as UTF-8 files, not through an ASCII pipe.
+    Counts make loss visible without printing the private question.
+    """
+    core.planning.validate_question(query)
+    if "\ufffd" in query or "???" in query:
+        raise ValueError("trial_question_encoding_suspected")
+    return {"characters": len(query), "utf8_bytes": len(query.encode("utf-8")),
+            "han_characters": sum("\u3400" <= char <= "\u9fff" for char in query),
+            "ascii_question_marks": query.count("?"),
+            "utf8_sha256": core.selection.digest(query)}
+
+
 def validate_scope(scope):
     fields = {"db_path", "source_sha256", "agent_id", "index_path", "index_sha256", "reference_at",
               "cases", "controls", "source_scope"}
@@ -55,11 +71,11 @@ def validate_scope(scope):
         if not isinstance(cid, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", cid) or cid in seen:
             raise ValueError("invalid_case_id")
         seen.add(cid)
-        core.planning.validate_question(case["query"])
+        question_receipt(case["query"])
         if core.planning.assess_question(case["query"], scope["reference_at"])["decision"] != "eligible":
             raise ValueError("model_case_requires_eligible_question")
     for q in scope["controls"]:
-        core.planning.validate_question(q)
+        question_receipt(q)
     for field, digest in (("db_path", "source_sha256"), ("index_path", "index_sha256")):
         path = _private(Path(scope[field]))
         if file_digest(path) != scope[digest]:
@@ -85,11 +101,13 @@ def payload(stage, request):
 def freeze_requests(directory, stage, requests):
     entries = []
     for cid, request in requests:
+        receipt = question_receipt(request if stage == "plan" else request["question"])
         value = payload(stage, request)
         amount = plan_api.reservation(request) if stage == "plan" else ADAPTERS[stage].reservation(request, "openai")
         if amount > CEILINGS[stage]:
             raise ValueError("stage_request_exceeds_ceiling")
         entries.append({"case_id": cid, "request": copy.deepcopy(request), "reserved_usd": str(amount),
+                        "question_text_receipt": receipt,
                         "payload_sha256": core.selection.digest(core.selection.encoded(value).decode())})
     if len(entries) > 3 or len({e["case_id"] for e in entries}) != len(entries):
         raise ValueError("invalid_request_batch")
@@ -97,6 +115,7 @@ def freeze_requests(directory, stage, requests):
     manifest["sha256"] = canonical_hash(manifest)
     write(directory / (stage + ".requests.private.json"), manifest)
     return {"stage": stage, "requests": len(entries), "reserved_usd": manifest["reserved_usd"],
+            "question_text_receipts": [{"case_id": e["case_id"], **e["question_text_receipt"]} for e in entries],
             "candidate_cards": sum(len(e["request"].get("candidates", [])) for e in entries) if stage != "plan" else 0,
             "candidate_characters": sum(len(c["text"]) for e in entries for c in e["request"].get("candidates", [])) if stage != "plan" else 0}
 
@@ -108,6 +127,9 @@ def requests(directory, stage):
     if digest != canonical_hash(value) or manifest["stage"] != stage or len(manifest["entries"]) > 3:
         raise ValueError("frozen_stage_changed")
     for entry in manifest["entries"]:
+        receipt = question_receipt(entry["request"] if stage == "plan" else entry["request"]["question"])
+        if receipt != entry.get("question_text_receipt"):
+            raise ValueError("frozen_question_receipt_changed")
         actual = core.selection.digest(core.selection.encoded(payload(stage, entry["request"])).decode())
         if actual != entry["payload_sha256"]:
             raise ValueError("frozen_payload_changed")

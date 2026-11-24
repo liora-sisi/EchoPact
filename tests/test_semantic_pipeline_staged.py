@@ -81,3 +81,46 @@ def test_altered_frozen_request_is_not_accepted(tmp_path):
     path.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match="frozen_stage_changed"):
         exam.requests(output, "plan")
+
+
+@pytest.mark.parametrize("query", ["?" * 22, "10?26????????", "?? GPT ????????", "陶艺\ufffd步骤？"])
+def test_damaged_trial_questions_and_controls_fail_before_output_creation(tmp_path, query):
+    scope, output = stage_fixture(tmp_path)
+    for field in ("cases", "controls"):
+        changed = copy.deepcopy(scope)
+        if field == "cases":
+            changed[field][0]["query"] = query
+        else:
+            changed[field] = [query]
+        source = tmp_path / (field + "-damaged.json")
+        source.write_text(json.dumps(changed, ensure_ascii=False), encoding="utf-8")
+        target = tmp_path / (field + "-not-started")
+        with pytest.raises(ValueError, match="question_not_allowed|trial_question_encoding_suspected"):
+            exam.prepare(source, target)
+        assert not target.exists()
+
+
+def test_unicode_trial_receipt_preserves_text_without_revealing_it(tmp_path):
+    _, output = stage_fixture(tmp_path)
+    entry = exam.requests(output, "plan")["first"]
+    receipt = entry["question_text_receipt"]
+    assert entry["request"] == QUERY
+    assert receipt["characters"] == len(QUERY)
+    assert receipt["utf8_bytes"] == len(QUERY.encode("utf-8"))
+    assert receipt["han_characters"] > 0 and receipt["ascii_question_marks"] == 0
+    assert QUERY not in json.dumps(receipt, ensure_ascii=False)
+    # A valid UTF-8 serialization keeps accented, Chinese and ordinary English.
+    for question in ("陶艺怎么做？", "Café layout?", "How is pottery prepared?"):
+        assert exam.question_receipt(question)["utf8_sha256"] == exam.core.selection.digest(question)
+
+
+def test_frozen_text_receipt_is_checked_even_if_manifest_is_rehashed(tmp_path):
+    _, output = stage_fixture(tmp_path)
+    path = output / "plan.requests.private.json"
+    value = exam.read(path)
+    value["entries"][0]["question_text_receipt"]["han_characters"] = 0
+    value.pop("sha256")
+    value["sha256"] = exam.core.canonical_hash(value)
+    path.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ValueError, match="frozen_question_receipt_changed"):
+        exam.requests(output, "plan")

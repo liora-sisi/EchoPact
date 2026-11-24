@@ -68,6 +68,7 @@ class PlannerError(ValueError):
 
 def validate_question(query):
     if (not isinstance(query, str) or not 2 <= len(query.strip()) <= 300
+            or not any(c.isalnum() for c in query)
             or any(ord(c) < 32 for c in query)
             or re.search(r"sk-[A-Za-z0-9]|VENICE_INFERENCE_KEY|Bearer\s|PRIVATE KEY", query, re.I)):
         raise PlannerError("question_not_allowed")
@@ -246,6 +247,7 @@ def _fallback_brief(original, query, limit, guard=None):
 
 
 def run_shadow(query, *, as_of, limit, runner, planner=None):
+    validate_question(query)
     if type(limit) is not int or not 1 <= limit <= 10:
         raise PlannerError("invalid_limit")
     # Always retrieve with the original question before considering the model.
