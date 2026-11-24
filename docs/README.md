@@ -30,6 +30,7 @@
 | 相邻更正、同消息多窗口、七份真实模型答卷与容量不足退回 | [SEMANTIC_ORDERED_HANDOFF.md](SEMANTIC_ORDERED_HANDOFF.md) |
 | 先圈候选再补邻文、最多两次模型调用、五题首次结果与真实结构探针 | [SEMANTIC_SHORTLIST_HANDOFF.md](SEMANTIC_SHORTLIST_HANDOFF.md) |
 | 规划/对象/向量/初选/复核整条隔离线路、统一预算与首次三题 2/3 | [SEMANTIC_CARETAKER_PIPELINE.md](SEMANTIC_CARETAKER_PIPELINE.md) |
+| 中文模型复考、对象纠正初选修订、同材料复验及仍缺的证据 | [SEMANTIC_SHORTLIST_CORRECTION.md](SEMANTIC_SHORTLIST_CORRECTION.md) |
 | 日期故障根因、共用修复、无模型影子骨架 | [RECALL_CONTRACT_AUDIT.md](RECALL_CONTRACT_AUDIT.md) |
 | 日期、事件时间与后来复述的区别 | [EVENT_TIMELINE.md](EVENT_TIMELINE.md) |
 | 固定身份 MCP、整包受限的短清单、按编号分段取原文 | [MCP_READONLY.md](MCP_READONLY.md) |
@@ -110,3 +111,7 @@
 完整中文目标复验为纯向量第 1、合流第 2，不能沿用旧的第 286 名判断引擎。
 输入修复后完整回归 1,162 项通过；[独立留出卷协议](CARETAKER_HOLDOUT_PROTOCOL.md)已列清评分和防串题规则，
 真盲卷、全库索引、接收方理解与正式接入继续待验。
+
+后续[初选纠正复验](SEMANTIC_SHORTLIST_CORRECTION.md)完成有效中文手账整链及对象旧卷复考：
+手账原句可见，对象纠正不再被延后，仍保留对象身份和答案缺口。虚构初选三题首次 3/3，
+UTF-8 执行条件下完整检查 1,162 项通过、1 项跳过；真实题仅是已知部分目标开发检查。
