@@ -233,7 +233,8 @@ def test_cli_defaults_to_no_key_no_network():
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI interop")
-def test_powershell_envelope_decrypts_without_printing_key(tmp_path):
+@pytest.mark.parametrize("provider,title", [("venice","Venice"),("openai","OpenAI"),("deepseek","DeepSeek")])
+def test_powershell_envelope_decrypts_without_printing_key(tmp_path, provider, title):
     path = tmp_path / "synthetic.dpapi"
     secret = "synthetic-dpapi-value-not-a-real-key"
     script = """
@@ -245,8 +246,12 @@ $sealed = @{schema='echo-caretaker-key-v1'; provider='venice';
  protection='Windows-DPAPI-CurrentUser'; ciphertext_b64=[Convert]::ToBase64String($cipher)} | ConvertTo-Json
 [IO.File]::WriteAllText($env:ECHO_TEST_DPAPI_PATH, $sealed)
 """
+    script = script.replace("EchoPact.Venice.", f"EchoPact.{title}.").replace("provider='venice'", f"provider='{provider}'")
     env = dict(os.environ, ECHO_TEST_DPAPI_PATH=str(path))
     done = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
                           env=env, capture_output=True, timeout=20, check=True)
     assert secret.encode() not in done.stdout + done.stderr
-    assert read_dpapi_key(path) == secret
+    assert read_dpapi_key(path, provider=provider) == secret
+    wrong_provider = "venice" if provider != "venice" else "deepseek"
+    with pytest.raises(SummaryError, match="invalid_protected_key_file"):
+        read_dpapi_key(path, provider=wrong_provider)

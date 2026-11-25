@@ -39,7 +39,8 @@ SAFE_PROVIDER_CODES = {
 
 def read_dpapi_key(path: str | Path, *, provider: str = "venice") -> str:
     entropies = {"venice": b"EchoPact.Venice.SummaryTrial.v1",
-                 "openai": b"EchoPact.OpenAI.SummaryTrial.v1"}
+                 "openai": b"EchoPact.OpenAI.SummaryTrial.v1",
+                 "deepseek": b"EchoPact.DeepSeek.SummaryTrial.v1"}
     if provider not in entropies:
         raise SummaryError("unsupported_key_provider")
     if os.name != "nt":

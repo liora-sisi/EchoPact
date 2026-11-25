@@ -3,13 +3,13 @@
 param(
     [string]$StorePath,
     [string]$ReceiptPath,
-    [ValidateSet('venice','openai')][string]$Provider = 'venice',
+    [ValidateSet('venice','openai','deepseek')][string]$Provider = 'venice',
     [switch]$SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
-$providerTitle = if ($Provider -eq 'openai') { 'OpenAI' } else { 'Venice' }
+$providerTitle = switch ($Provider) { 'openai' { 'OpenAI' }; 'deepseek' { 'DeepSeek' }; default { 'Venice' } }
 $entropy = [Text.Encoding]::UTF8.GetBytes("EchoPact.$providerTitle.SummaryTrial.v1")
 
 function Protect-KeyBytes([byte[]]$Bytes) {
