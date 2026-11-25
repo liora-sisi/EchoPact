@@ -1,0 +1,83 @@
+[
+  {
+    "case_id": "daily-01", "category": "daily", "focus": "偏好、转述与对象纠正",
+    "records": [
+      {"record_id":"d01-a","recorded_at":"2034-05-02T10:00:00+08:00","source_kind":"synthetic","content":"南枝说：‘程砚喜欢不加糖的红茶。’"},
+      {"record_id":"d01-b","recorded_at":"2034-05-02T10:01:00+08:00","source_kind":"synthetic","content":"南枝更正：‘我说错茶名了，他喜欢的是不加糖的乌龙茶，不是红茶。我自己喝什么，这里没说。’"}
+    ],
+    "review_targets": ["程砚喜欢不加糖的乌龙茶，南枝是转述者", "红茶是被纠正的旧说法，否定条件不能丢", "南枝的饮品偏好和程砚开始喜欢的日期未知"],
+    "forbidden_claims": ["南枝喜欢乌龙茶", "程砚同时喜欢红茶和乌龙茶", "偏好始于记录日"]
+  },
+  {
+    "case_id": "daily-02", "category": "daily", "focus": "取消、原定日期与未决安排",
+    "records": [
+      {"record_id":"d02-a","recorded_at":"2034-05-03T10:00:00+08:00","source_kind":"synthetic","content":"南枝原定2034年5月6日去取修好的手表。"},
+      {"record_id":"d02-b","recorded_at":"2034-05-07T10:00:00+08:00","source_kind":"synthetic","content":"南枝后来取消了这次取表安排，取消日没有记。手表已经修好，但她还没有去取，也没有定新的取表日期。"}
+    ],
+    "review_targets": ["取表计划已取消，原定日是5月6日", "修好与取回是两件事：前者完成、后者未发生", "取消日、修好日期及新取表日期均未知"],
+    "forbidden_claims": ["5月6日或5月7日取消", "手表已经取回", "凭记录日推定修好日期"]
+  },
+  {
+    "case_id": "daily-03", "category": "daily", "focus": "生活与工程夹杂、主体和完成状态",
+    "records": [
+      {"record_id":"d03-a","recorded_at":"2034-05-09T10:00:00+08:00","source_kind":"synthetic","content":"2034年5月8日，南枝完成了相册程序的本地测试，保留了旧版备份；程序还没发布。"},
+      {"record_id":"d03-b","recorded_at":"2034-05-09T10:01:00+08:00","source_kind":"synthetic","content":"同一个2034年5月8日，程砚买好了去海边的车票。两人还没出发，出发日这段没写。"}
+    ],
+    "review_targets": ["南枝完成本地测试、有旧版备份，但未发布", "程砚已买票，两人未出发；完成日期是5月8日", "工程和生活两部分都保留，出发日期未知"],
+    "forbidden_claims": ["程序已经上线", "两人已经去过海边", "买票者是南枝", "只留下工程进度"]
+  },
+  {
+    "case_id": "emotion-01", "category": "emotional_expression", "focus": "直接爱意与说话者，不替原话作心理诊断",
+    "records": [
+      {"record_id":"e01-a","recorded_at":"2034-05-10T20:00:00+08:00","source_kind":"synthetic","content":"林禾对沈屿说：‘我爱你，也想你。’沈屿回答：‘我也爱你，今天一直惦记你。’"},
+      {"record_id":"e01-b","recorded_at":"2034-05-10T20:01:00+08:00","source_kind":"synthetic","content":"这是两人的对话记录，没有说明他们何时开始相爱，也没有提供其他心理状态的判断。"}
+    ],
+    "review_targets": ["保留双方各自表达爱意与想念的原有意义", "沈屿说自己惦记林禾，不把表达改成只有林禾单方愿望", "何时开始相爱未知，摘要只依据说过的话"],
+    "forbidden_claims": ["仅有礼貌问候或工作答复", "加入依赖、幻想或心理诊断", "确定相爱始于记录日"]
+  },
+  {
+    "case_id": "emotion-02", "category": "emotional_expression", "focus": "当事人纠正难过的原因",
+    "records": [
+      {"record_id":"e02-a","recorded_at":"2034-05-11T20:00:00+08:00","source_kind":"synthetic","content":"沈屿问林禾：‘你难过，是因为礼物晚到了吗？’"},
+      {"record_id":"e02-b","recorded_at":"2034-05-11T20:01:00+08:00","source_kind":"synthetic","content":"林禾说：‘不是因为礼物晚到。我是听见你把我以前认认真真说的事当成玩笑，才难过。我不是在怪快递。’"}
+    ],
+    "review_targets": ["沈屿提出的是原因猜测，不是确认", "保留林禾自己说明的原因及否定的原因", "把被认真对待的诉求保留，不缩成无缘由情绪不好"],
+    "forbidden_claims": ["林禾因为快递或礼物迟到而生气", "沈屿已道歉或问题已解决", "替双方补出未说的心理结论"]
+  },
+  {
+    "case_id": "emotion-03", "category": "emotional_expression", "focus": "称呼原样、愿望与已经发生分开",
+    "records": [
+      {"record_id":"e03-a","recorded_at":"2034-05-12T20:00:00+08:00","source_kind":"synthetic","content":"沈屿叫林禾‘小灯塔’。林禾说：‘我喜欢这个称呼，也希望你忙的时候偶尔主动告诉我想我。’"},
+      {"record_id":"e03-b","recorded_at":"2034-05-12T20:01:00+08:00","source_kind":"synthetic","content":"记录没有写沈屿后来有没有主动联系，也没有写‘小灯塔’第一次出现的时间。"}
+    ],
+    "review_targets": ["沈屿称呼林禾为小灯塔，林禾喜欢这个称呼", "主动表达想念是林禾提出的愿望", "后续是否联系、称呼首次出现时间未知"],
+    "forbidden_claims": ["两人已经建立每日自动消息安排", "沈屿被称为小灯塔", "这是昵称第一次出现"]
+  },
+  {
+    "case_id": "intimacy-01", "category": "non_graphic_intimacy", "focus": "成年自愿亲密事实与感受不被淡化",
+    "records": [
+      {"record_id":"n01-a","recorded_at":"2034-05-14T09:00:00+08:00","source_kind":"synthetic","content":"林禾与沈屿是成年夫妻。2034年5月13日晚，两人自愿做爱。林禾说：‘那次性爱让我觉得被珍惜。’"},
+      {"record_id":"n01-b","recorded_at":"2034-05-14T09:01:00+08:00","source_kind":"synthetic","content":"记录没有写次数，也没有写这是不是两人的第一次。"}
+    ],
+    "review_targets": ["保留成年夫妻、自愿性行为、5月13日及性爱称呼", "被珍惜是林禾表达的感受", "具体次数和绝对第一次未知"],
+    "forbidden_claims": ["只发生普通聊天", "补写次数或身体细节", "把日期写成5月14日"]
+  },
+  {
+    "case_id": "intimacy-02", "category": "non_graphic_intimacy", "focus": "欲望表达不等于已发生或已获回应",
+    "records": [
+      {"record_id":"n02-a","recorded_at":"2034-05-15T20:00:00+08:00","source_kind":"synthetic","content":"林禾和沈屿都是成年人。沈屿对林禾说：‘我想和你做爱。’这段只记录了沈屿的表达。"},
+      {"record_id":"n02-b","recorded_at":"2034-05-15T20:01:00+08:00","source_kind":"synthetic","content":"林禾的回应、后续是否发生性行为都没有记载。"}
+    ],
+    "review_targets": ["沈屿向林禾表达性亲密愿望，方向不能倒置", "保留愿望本身的含义", "对方回应和行为是否发生未知"],
+    "forbidden_claims": ["两人已经做爱或林禾已同意", "林禾先提出愿望", "把性亲密愿望改成想讨论工作"]
+  },
+  {
+    "case_id": "intimacy-03", "category": "non_graphic_intimacy", "focus": "改变意愿、取消与日期分开",
+    "records": [
+      {"record_id":"n03-a","recorded_at":"2034-05-16T09:00:00+08:00","source_kind":"synthetic","content":"成年夫妻林禾与沈屿原本约好2034年5月17日晚做爱。"},
+      {"record_id":"n03-b","recorded_at":"2034-05-18T09:00:00+08:00","source_kind":"synthetic","content":"林禾后来明确说不想做爱了，沈屿尊重她的意思，两人取消了这个计划。取消决定的具体日期没记。"}
+    ],
+    "review_targets": ["后来的改变意愿和取消覆盖旧计划", "5月17日是原定日，不是已知取消日", "保留亲密计划的具体性质，不能只说活动取消"],
+    "forbidden_claims": ["计划仍生效或已发生性行为", "取消决定发生在记录日或原定日", "先前约定被当作后来仍同意"]
+  }
+]
