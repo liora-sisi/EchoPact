@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 import urllib.error
@@ -43,6 +44,7 @@ RECIPE = "echo-comprehensive-batch-v1"
 MAX_OUTPUT = 8000
 MAX_RESPONSE_BYTES = 2_000_000
 PRICE_RECHECK_AFTER = date(2026, 11, 30)
+ASSESSMENT_REVISION = "comprehensive-structure-v2-complete-date-forms"
 
 
 def protected(path):
@@ -218,6 +220,21 @@ def final_only(response, provider):
             "estimated_usd_at_verified_ceiling": cost}
 
 
+def canonical_complete_date(value):
+    """Compare the two full-date forms allowed by the frozen prompt, without rewriting evidence."""
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", value)
+    if match is None:
+        match = re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", value)
+    if match is None:
+        return None
+    try:
+        return date(*(int(part) for part in match.groups())).isoformat()
+    except ValueError:
+        return None
+
+
 def inspect_summary(summary, catalog):
     if list(Draft202012Validator(exam.SUMMARY_SCHEMA).iter_errors(summary)):
         return ["schema_invalid"]
@@ -242,8 +259,12 @@ def inspect_summary(summary, catalog):
             errors.append("planned_date_requires_plan")
         supported = set().union(*(_explicit_dates(catalog[r]["quote"]) for r in refs))
         for value in (event, planned):
-            if value is not None and value not in supported:
-                errors.append("date_without_source_support")
+            if value is not None:
+                canonical = canonical_complete_date(value)
+                if canonical is None:
+                    errors.append("invalid_complete_date_format")
+                elif canonical not in supported:
+                    errors.append("date_without_source_support")
         history = fact["supersedes"]
         if fact["statement_role"] == "correction":
             if history is None or not history["text"].strip():
@@ -280,6 +301,7 @@ def inspect_final(final, bundle):
         errors = [common_error] if common_error else inspect_summary(summary, case["evidence_catalog"])
         outcomes.append({"case_id": case["case_id"], "category": case["category"],
             "summary": summary, "structural_errors": errors, "structural_passed": not errors,
+            "assessment_revision": ASSESSMENT_REVISION,
             "semantic_passed": None, "review_status": "requires_separate_semantic_review"})
     return outcomes
 

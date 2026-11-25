@@ -93,6 +93,24 @@ def test_provenance_and_dates_are_checked_without_relabelling_private_records(bu
     assert case["records"][0]["source_kind"] == exam.PRIVATE_KIND
 
 
+@pytest.mark.parametrize("value", ["2034-05-06", "2034年5月6日", "2034年05月06日"])
+def test_both_prompt_allowed_date_forms_use_the_same_evidence_without_rewriting(value):
+    summary = {"status":"ok","facts":[{"text":"Synthetic cancelled plan", "event_status":"cancelled",
+       "statement_role":"direct","event_date":None,"planned_date":value,
+       "evidence_ids":["s1","s2"],"supersedes":None}],"uncertainties":[],"refusal_reason":None}
+    catalog = {"s1":{"quote":"原定2034年5月6日取表。"},"s2":{"quote":"后来取消了。"}}
+    before = copy.deepcopy((summary,catalog))
+    assert live.inspect_summary(summary,catalog) == []
+    assert (summary,catalog) == before
+    summary["facts"][0]["evidence_ids"] = ["s2"]
+    assert "date_without_source_support" in live.inspect_summary(summary,catalog)
+
+
+@pytest.mark.parametrize("value", ["5月6日", "2034年2月30日", "2034-05", "明天", "2034/05/06", "2034年5月6日或7日"])
+def test_date_comparison_does_not_infer_missing_or_ambiguous_calendar_parts(value):
+    assert live.canonical_complete_date(value) is None
+
+
 def setup_run(tmp_path, monkeypatch, bundle, provider="openai", limit="10"):
     monkeypatch.setattr(exam,"PRIVATE_ROOT",tmp_path)
     ledger=tmp_path/"ledger.json"
