@@ -12,6 +12,7 @@
 | 当前架构与运行方式 | [根 README](../README.md) |
 | 小管家、派生记忆的阶段与验收门 | [CARETAKER_ROADMAP.md](CARETAKER_ROADMAP.md) |
 | 最新顺序：先摘要与主助手直用闭环，再衡量额外查询小管家的收益 | [SUMMARY_FIRST_INTEGRATION_PLAN.md](SUMMARY_FIRST_INTEGRATION_PLAN.md) |
+| 摘要门牌、事实和原话分层；生活/工程差异、模型同题验收 | [SUMMARY_CONTRACT.md](SUMMARY_CONTRACT.md) |
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |
@@ -70,7 +71,7 @@
 有限样本与未解决的真实题分别报告，不把新题通过当作 M24 全面通过。
 随后修复部分受限问法漏拦与“有什么不同”误拦，短包显式报告回退原因；
 旧虚构题换问法回归完成两次模型调用并保留歧义，完整检查 915 项通过。
-当前集中推进查询管家；自动摘要作者仍为独立待验工作线。
+上述为查询管家阶段沿革；2026-11-25 已将摘要样板与主助手直用闭环提为当前优先级。
 真实六问对照之后，固定三问已完成六次实际模型调用；筛选漏掉可见纠正的问题已补本地
 相邻原文保护，零调用重放保住目标，完整检查 942 项通过。模型语义验收及正式接入仍未放行。
 2026-11-20 [适用范围与对象纠正校准](CARETAKER_SCOPE_CALIBRATION.md)的四道虚构开发诊断题实际通过，
