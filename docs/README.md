@@ -18,6 +18,7 @@
 | Ombre 当前实现的事件整理、目录与原文边界对照 | [OMBRE_SUMMARY_REVIEW.md](OMBRE_SUMMARY_REVIEW.md) |
 | 短卡与后台档案分开、精确展开、已有答卷零调用重放 | [SUMMARY_READING_CARDS.md](SUMMARY_READING_CARDS.md) |
 | 状态/日期保真约定、六道合成实考、长对话遗漏与诊断尺寸 | [SUMMARY_FAITHFULNESS.md](SUMMARY_FAITHFULNESS.md) |
+| 单段对话原/新规则对照、固定容量与尾部遗漏、后续分卡边界 | [SUMMARY_SINGLE_WINDOW_COMPARISON.md](SUMMARY_SINGLE_WINDOW_COMPARISON.md) |
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |

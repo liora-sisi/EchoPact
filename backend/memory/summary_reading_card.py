@@ -15,9 +15,11 @@ from jsonschema import Draft202012Validator
 from .caretaker_summary import SummaryError, validate_records
 from .caretaker_summary_v4 import SUMMARY_SCHEMA
 from . import summary_faithfulness
+from . import summary_faithfulness_v2
 
 AUDIT_SCHEMA = "echo-summary-reading-audit-v1"
 CARD_SCHEMA = "echo-summary-reading-card-v2"
+EXTENDED_RECIPES = {summary_faithfulness.RECIPE, summary_faithfulness_v2.RECIPE}
 PREVIEW_SCHEMA = copy.deepcopy(SUMMARY_SCHEMA)
 PREVIEW_SCHEMA["properties"]["facts"]["maxItems"] = 8
 STATES = {"happened": "已发生", "not_happened": "明确未发生", "planned": "计划中", "cancelled": "已取消",
@@ -69,7 +71,7 @@ def make_audit(summary, *, records, catalog, identity, author, structural_errors
             or any(not isinstance(v, str) or not 1 <= len(v) <= 120 for v in author.values())
             or not re.fullmatch(r"[0-9a-f]{64}", author["prompt_sha256"])):
         raise SummaryError("reading_preview_invalid_author")
-    extended = author["recipe"] == summary_faithfulness.RECIPE
+    extended = author["recipe"] in EXTENDED_RECIPES
     _sources(records, catalog, extended=extended)
     schema = summary_faithfulness.SUMMARY_SCHEMA if extended else PREVIEW_SCHEMA
     if list(Draft202012Validator(schema).iter_errors(summary)):
@@ -148,7 +150,7 @@ def expand_preview(audit, *, card_id, fact_id, current_records, identity):
     """Resolve a local preview pointer against the entire current synthetic source window."""
     _check_audit(audit)
     _identity(identity)
-    extended = audit["author"]["recipe"] == summary_faithfulness.RECIPE
+    extended = audit["author"]["recipe"] in EXTENDED_RECIPES
     (summary_faithfulness.validate_synthetic_window if extended else validate_records)(current_records)
     if (card_id != fingerprint(audit) or identity != audit["identity"]
             or fingerprint(current_records) != audit["source_window_sha256"]):
