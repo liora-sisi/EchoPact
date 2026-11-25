@@ -235,8 +235,9 @@ def canonical_complete_date(value):
         return None
 
 
-def inspect_summary(summary, catalog):
-    if list(Draft202012Validator(exam.SUMMARY_SCHEMA).iter_errors(summary)):
+def inspect_summary(summary, catalog, *, summary_schema=None):
+    schema = exam.SUMMARY_SCHEMA if summary_schema is None else summary_schema
+    if list(Draft202012Validator(schema).iter_errors(summary)):
         return ["schema_invalid"]
     errors = []
     if summary["status"] in ("refused", "insufficient") and summary["facts"]:
@@ -276,7 +277,7 @@ def inspect_summary(summary, catalog):
     return sorted(set(errors))
 
 
-def inspect_final(final, bundle):
+def inspect_final(final, bundle, *, summary_schema=None):
     reviews = bundle["reviewer_sheet.json"]["cases"]
     common_error = None
     try:
@@ -298,7 +299,8 @@ def inspect_final(final, bundle):
     outcomes = []
     for case in reviews:
         summary = answers.get(case["case_id"])
-        errors = [common_error] if common_error else inspect_summary(summary, case["evidence_catalog"])
+        errors = [common_error] if common_error else inspect_summary(
+            summary, case["evidence_catalog"], summary_schema=summary_schema)
         outcomes.append({"case_id": case["case_id"], "category": case["category"],
             "summary": summary, "structural_errors": errors, "structural_passed": not errors,
             "assessment_revision": ASSESSMENT_REVISION,
