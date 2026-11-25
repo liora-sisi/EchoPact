@@ -14,12 +14,13 @@ from jsonschema import Draft202012Validator
 
 from .caretaker_summary import SummaryError, validate_records
 from .caretaker_summary_v4 import SUMMARY_SCHEMA
+from . import summary_faithfulness
 
 AUDIT_SCHEMA = "echo-summary-reading-audit-v1"
 CARD_SCHEMA = "echo-summary-reading-card-v2"
 PREVIEW_SCHEMA = copy.deepcopy(SUMMARY_SCHEMA)
 PREVIEW_SCHEMA["properties"]["facts"]["maxItems"] = 8
-STATES = {"happened": "已发生", "planned": "计划中", "cancelled": "已取消",
+STATES = {"happened": "已发生", "not_happened": "明确未发生", "planned": "计划中", "cancelled": "已取消",
           "not_applicable": "不适用", "unknown": "是否发生未知"}
 ROLES = {"direct": "直接陈述", "retelling": "转述", "correction": "纠正"}
 
@@ -41,8 +42,8 @@ def _identity(identity):
         raise SummaryError("reading_preview_requires_synthetic_identity")
 
 
-def _sources(records, catalog):
-    validate_records(records)
+def _sources(records, catalog, *, extended=False):
+    (summary_faithfulness.validate_synthetic_window if extended else validate_records)(records)
     by_id = {r["record_id"]: r for r in records}
     if not isinstance(catalog, dict) or not catalog:
         raise SummaryError("reading_preview_catalog_required")
@@ -64,13 +65,15 @@ def _sources(records, catalog):
 def make_audit(summary, *, records, catalog, identity, author, structural_errors=()):
     """Snapshot a syntactically readable draft; even diagnosed bad drafts stay unapproved."""
     _identity(identity)
-    _sources(records, catalog)
-    if list(Draft202012Validator(PREVIEW_SCHEMA).iter_errors(summary)):
-        raise SummaryError("reading_preview_invalid_summary_shape")
     if (not isinstance(author, dict) or set(author) != {"provider", "model", "recipe", "prompt_sha256"}
             or any(not isinstance(v, str) or not 1 <= len(v) <= 120 for v in author.values())
             or not re.fullmatch(r"[0-9a-f]{64}", author["prompt_sha256"])):
         raise SummaryError("reading_preview_invalid_author")
+    extended = author["recipe"] == summary_faithfulness.RECIPE
+    _sources(records, catalog, extended=extended)
+    schema = summary_faithfulness.SUMMARY_SCHEMA if extended else PREVIEW_SCHEMA
+    if list(Draft202012Validator(schema).iter_errors(summary)):
+        raise SummaryError("reading_preview_invalid_summary_shape")
     if (not isinstance(structural_errors, (list, tuple))
             or any(not isinstance(e, str) or not re.fullmatch(r"[a-z_]{1,100}", e)
                    for e in structural_errors)):
@@ -145,11 +148,12 @@ def expand_preview(audit, *, card_id, fact_id, current_records, identity):
     """Resolve a local preview pointer against the entire current synthetic source window."""
     _check_audit(audit)
     _identity(identity)
-    validate_records(current_records)
+    extended = audit["author"]["recipe"] == summary_faithfulness.RECIPE
+    (summary_faithfulness.validate_synthetic_window if extended else validate_records)(current_records)
     if (card_id != fingerprint(audit) or identity != audit["identity"]
             or fingerprint(current_records) != audit["source_window_sha256"]):
         raise SummaryError("reading_preview_stale_or_wrong_source")
-    if not isinstance(fact_id, str) or not re.fullmatch(r"f[1-8]", fact_id):
+    if not isinstance(fact_id, str) or not re.fullmatch(r"f[1-9][0-9]?", fact_id):
         raise SummaryError("reading_preview_unknown_fact")
     index = int(fact_id[1:]) - 1
     if index >= len(audit["model_summary"]["facts"]):
