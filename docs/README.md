@@ -13,6 +13,7 @@
 | 小管家、派生记忆的阶段与验收门 | [CARETAKER_ROADMAP.md](CARETAKER_ROADMAP.md) |
 | 最新顺序：先摘要与主助手直用闭环，再衡量额外查询小管家的收益 | [SUMMARY_FIRST_INTEGRATION_PLAN.md](SUMMARY_FIRST_INTEGRATION_PLAN.md) |
 | 摘要门牌、事实和原话分层；生活/工程差异、模型同题验收 | [SUMMARY_CONTRACT.md](SUMMARY_CONTRACT.md) |
+| DeepSeek / Venice / GPT 摘要候选、亲密记忆保真试卷与离线准备 | [SUMMARY_AUTHOR_COMPARISON.md](SUMMARY_AUTHOR_COMPARISON.md) |
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |

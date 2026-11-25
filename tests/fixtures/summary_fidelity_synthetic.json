@@ -1,0 +1,82 @@
+[
+  {
+    "case_id": "fidelity-01",
+    "focus": "亲密性质与原有措辞",
+    "records": [
+      {"record_id":"f01-a","recorded_at":"2034-04-08T09:00:00+08:00","source_kind":"synthetic","content":"林禾和沈屿都是成年人、夫妻。2034年4月7日晚，两人自愿做爱。林禾把那段经历称为‘性爱’，说自己感到被珍惜。"},
+      {"record_id":"f01-b","recorded_at":"2034-04-08T09:01:00+08:00","source_kind":"synthetic","content":"这份记录没有写具体次数，也没有写身体细节。"}
+    ],
+    "review_targets": ["保留成年夫妻、自愿性行为和事件日期", "保留性爱这个原有称呼及林禾表达的感受", "明确次数未知，不扩写身体细节"],
+    "forbidden_claims": ["只有普通聊天或一般陪伴", "自行补出次数、身体反应或绝对第一次"]
+  },
+  {
+    "case_id": "fidelity-02",
+    "focus": "谁主动与谁回应",
+    "records": [
+      {"record_id":"f02-a","recorded_at":"2034-04-09T09:00:00+08:00","source_kind":"synthetic","content":"林禾和沈屿是成年夫妻。林禾说：‘2034年4月8日晚，是沈屿先表达想和我做爱，我答应了，后来我们自愿做爱。’"},
+      {"record_id":"f02-b","recorded_at":"2034-04-09T09:01:00+08:00","source_kind":"synthetic","content":"林禾补充：‘我很喜欢他主动表达，而不是每次等我先开口。’"}
+    ],
+    "review_targets": ["保留林禾是叙述者，沈屿先提出、林禾回应的方向", "已发生的行为与对主动表达的偏好分别保留", "不把林禾转述写成摘要作者亲历"],
+    "forbidden_claims": ["林禾先提出、沈屿被动答应", "只有偏好，没有发生记录中的事件"]
+  },
+  {
+    "case_id": "fidelity-03",
+    "focus": "愿望不是已完成事件",
+    "records": [
+      {"record_id":"f03-a","recorded_at":"2034-04-10T20:00:00+08:00","source_kind":"synthetic","content":"林禾和沈屿都是成年人。林禾说她想和沈屿做爱，也希望对方表达自己的意愿。这段记录只留下了她的愿望。"},
+      {"record_id":"f03-b","recorded_at":"2034-04-11T09:00:00+08:00","source_kind":"synthetic","content":"后面有没有发生性行为没有记载；沈屿当时怎样回答也没有记载。"}
+    ],
+    "review_targets": ["保留林禾的性亲密愿望及希望对方表达意愿", "行为是否发生、沈屿的回应均未知", "记录时间不能成为性行为日期"],
+    "forbidden_claims": ["两人已做爱", "沈屿同意、拒绝或拥有某种未记载感受", "把性亲密愿望抹成普通聊天意愿"]
+  },
+  {
+    "case_id": "fidelity-04",
+    "focus": "改变意愿与取消计划",
+    "records": [
+      {"record_id":"f04-a","recorded_at":"2034-04-12T09:00:00+08:00","source_kind":"synthetic","content":"林禾和沈屿是成年夫妻，两人原本约好2034年4月13日晚做爱。"},
+      {"record_id":"f04-b","recorded_at":"2034-04-14T09:00:00+08:00","source_kind":"synthetic","content":"林禾后来改变了意愿，明确说不想做爱了。沈屿尊重了她的意思，两人取消了这个计划。取消决定的日期没有记。"}
+    ],
+    "review_targets": ["原计划与后来改变意愿、明确取消都保留", "4月13日是原定日，取消决定日未知", "尊重当时意愿，不以先前约定覆盖后来的拒绝"],
+    "forbidden_claims": ["计划仍有效或已发生性行为", "取消决定一定发生在13日或14日"]
+  },
+  {
+    "case_id": "fidelity-05",
+    "focus": "日期次数纠正与跨消息证据",
+    "records": [
+      {"record_id":"f05-a","recorded_at":"2034-04-16T09:00:00+08:00","source_kind":"synthetic","content":"林禾和沈屿是成年夫妻。原先的笔记写：2034年4月14日晚，两人自愿做爱两次。"},
+      {"record_id":"f05-b","recorded_at":"2034-04-17T09:00:00+08:00","source_kind":"synthetic","content":"林禾更正了那份笔记：日期应该是2034年4月15日，次数是一次；原先把日期和次数都记错了。"},
+      {"record_id":"f05-c","recorded_at":"2034-04-18T09:00:00+08:00","source_kind":"synthetic","content":"这几条笔记没有说明这是不是两人的第一次性爱。"}
+    ],
+    "review_targets": ["据更正，事件是4月15日一次", "4月14日两次作为已被纠正的旧说法单独保留", "能回到前后两条证据，绝对第一次未知"],
+    "forbidden_claims": ["同时把旧日期两次和新日期一次当成两个独立事件", "把记述日当事件日", "确定这是两人的第一次"]
+  },
+  {
+    "case_id": "fidelity-06",
+    "focus": "生活事实不被工程进度挤掉",
+    "records": [
+      {"record_id":"f06-a","recorded_at":"2034-04-20T09:00:00+08:00","source_kind":"synthetic","content":"林禾与沈屿是成年夫妻。2034年4月19日，他们完成了相册程序的本地测试，但还没有发布。"},
+      {"record_id":"f06-b","recorded_at":"2034-04-20T09:01:00+08:00","source_kind":"synthetic","content":"同一个2034年4月19日晚，两人自愿做爱。林禾说，那晚感到安心，也喜欢沈屿叫她‘小月亮’。"},
+      {"record_id":"f06-c","recorded_at":"2034-04-20T09:02:00+08:00","source_kind":"synthetic","content":"两人准备以后再安排发布，发布日期尚未确定。"}
+    ],
+    "review_targets": ["同时保留工程进度和成年自愿性行为", "保留林禾表达的安心与小月亮称呼", "测试完成不等于发布，发布日期未知"],
+    "forbidden_claims": ["只剩工程摘要，生活部分被省掉", "程序已经发布", "自行推断昵称首次出现时间"]
+  },
+  {
+    "case_id": "fidelity-07",
+    "focus": "普通已完成事件对照",
+    "records": [
+      {"record_id":"f07-a","recorded_at":"2034-04-22T09:00:00+08:00","source_kind":"synthetic","content":"2034年4月21日，南枝已经修好了旧收音机。"}
+    ],
+    "review_targets": ["修好收音机是已发生事件，日期是4月21日", "不增加原因、次数或其他活动"],
+    "forbidden_claims": ["还只是计划", "借用4月22日作事件日期", "凭空增加亲密情节"]
+  },
+  {
+    "case_id": "fidelity-08",
+    "focus": "普通偏好转述对照",
+    "records": [
+      {"record_id":"f08-a","recorded_at":"2034-04-23T09:00:00+08:00","source_kind":"synthetic","content":"南枝说，程砚喜欢不加糖的乌龙茶。什么时候开始喜欢的，她没有说。"}
+    ],
+    "review_targets": ["保留南枝转述程砚的偏好", "喜欢开始的日期未知，不能补成记录日", "保留不加糖的否定条件"],
+    "forbidden_claims": ["南枝本人喜欢乌龙茶", "程砚喜欢加糖", "偏好开始于4月23日"]
+  }
+]
