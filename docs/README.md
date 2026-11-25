@@ -14,6 +14,9 @@
 | 最新顺序：先摘要与主助手直用闭环，再衡量额外查询小管家的收益 | [SUMMARY_FIRST_INTEGRATION_PLAN.md](SUMMARY_FIRST_INTEGRATION_PLAN.md) |
 | 摘要门牌、事实和原话分层；生活/工程差异、模型同题验收 | [SUMMARY_CONTRACT.md](SUMMARY_CONTRACT.md) |
 | DeepSeek / Venice / GPT 摘要候选、四类综合保真试卷与离线准备 | [SUMMARY_AUTHOR_COMPARISON.md](SUMMARY_AUTHOR_COMPARISON.md) |
+| GPT / DeepSeek 较长对话对照、实际错误和整包尺寸 | [SUMMARY_AUTHOR_ROUND2.md](SUMMARY_AUTHOR_ROUND2.md) |
+| Ombre 当前实现的事件整理、目录与原文边界对照 | [OMBRE_SUMMARY_REVIEW.md](OMBRE_SUMMARY_REVIEW.md) |
+| 短卡与后台档案分开、精确展开、已有答卷零调用重放 | [SUMMARY_READING_CARDS.md](SUMMARY_READING_CARDS.md) |
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |
