@@ -87,6 +87,8 @@ python -m pytest -q --basetemp '<仓库外的新临时目录>'
 和房间标识不进入 Git。工作分支原提交 `0d88b8554ccf753de91ddc412bc524b4754fc816`
 保留，可按普通反向提交退回本次提示调整；不需要改库或迁移。
 
-下一阶段先检查接收方是否正确保留这些缺口，再执行
-[独立留出卷协议](CARETAKER_HOLDOUT_PROTOCOL.md)。真实盲卷、完整档案索引及资源验收仍未完成；
+本节收工时安排先检查接收方是否正确保留这些缺口，再执行
+[独立留出卷协议](CARETAKER_HOLDOUT_PROTOCOL.md)。随后同日根据 Liora 对摘要接入返工的提醒，
+当前顺序已改为[先摘要与主助手直用闭环](SUMMARY_FIRST_INTEGRATION_PLAN.md)，本节成果保留为对照基线。
+真实盲卷、完整档案索引及资源验收仍未完成；
 MCP、Bot、VPS 及导入侧摘要柜均未因此改接或放行。

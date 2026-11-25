@@ -153,6 +153,10 @@ context records and mirror provenance bodies from flooding the response.
   verification/authority, cutoff/conflict marker, heuristic confidence when
   available, original text length, SHA-256, and at most 120 original characters.
   It intentionally defers long source references and branch metadata to expansion.
+  This preview is the **prefix** (`content[:120]`), not a query-centered excerpt
+  or a summary. Retrieval still indexes original content; a hit in the later text
+  may therefore be absent from the visible preview. Expand before dismissing or
+  interpreting a candidate whose preview does not explain the hit.
 - Preview offsets count Unicode code points. `content_chars` and the fingerprint
   are computed **before** full-mode truncation; `content_truncated` says whether
   the preview omits any original text. Nonzero context/claim/phase counts indicate

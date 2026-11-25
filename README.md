@@ -5,6 +5,10 @@
 以固定身份只读访问；MCP、Telegram 和本地调试共用 `adaptive_recall`。
 Telegram 的回答模型是末端表达器，尚不是通用小管家。
 
+**施工优先级（2026-11-25）**：先补小批合格摘要，接“摘要＋原文关键词/向量＋展开”的
+主助手直用闭环；额外查询小管家保留已测基线，之后同材料比较增益。见
+[摘要优先接入计划](docs/SUMMARY_FIRST_INTEGRATION_PLAN.md)。这是施工排序，正式入口未切换。
+
 ```text
 官方导出 / Codex 会话 / 浏览器抓取
   → 各自适配器 → records-v1/v2 交换包 → SQLite 原始记录 + FTS

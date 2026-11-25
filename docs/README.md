@@ -1,6 +1,6 @@
 # Echo Pact 当前文档导航
 
-更新于 2026-11-22。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
+更新于 2026-11-25。生产链是原始记录与 SQLite FTS5 的只读、有界召回。
 根 README 中保留的情感坐标、向量和主动浮现描述属于 legacy 原型，不能据此
 推断当前 records-v1 已经具备语义小管家。records-v2 是交换包格式，生产表名
 和召回协议仍沿用 records-v1，两者不是互斥版本。
@@ -11,6 +11,7 @@
 |---|---|
 | 当前架构与运行方式 | [根 README](../README.md) |
 | 小管家、派生记忆的阶段与验收门 | [CARETAKER_ROADMAP.md](CARETAKER_ROADMAP.md) |
+| 最新顺序：先摘要与主助手直用闭环，再衡量额外查询小管家的收益 | [SUMMARY_FIRST_INTEGRATION_PLAN.md](SUMMARY_FIRST_INTEGRATION_PLAN.md) |
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |
