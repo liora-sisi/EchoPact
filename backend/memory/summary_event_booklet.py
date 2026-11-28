@@ -17,8 +17,9 @@ from . import summary_faithfulness as facts
 from . import summary_reading_card as reading
 
 RECIPE = "echo-summary-event-author-v1"
-# V2 changes authoring instructions, not the immutable V1 audit representation.
-AUTHOR_RECIPES = {RECIPE, "echo-summary-event-author-v2"}
+# Versioned experimental author contracts; legacy audits keep their original checks.
+DATE_GROUNDED_RECIPES = {"echo-summary-event-author-v3-date-witness", "echo-summary-event-author-v4-date-index"}
+AUTHOR_RECIPES = {RECIPE, "echo-summary-event-author-v2"} | DATE_GROUNDED_RECIPES
 AUDIT_SCHEMA = "echo-summary-event-audit-v1"
 BOOK_SCHEMA = "echo-summary-event-booklet-v1"
 MAX_FACTS = 128
@@ -149,7 +150,9 @@ def make_audit(draft, *, records, catalog, identity, author):
                 used.update(refs)
         flat = {"status": "ok", "facts": event["facts"],
                 "uncertainties": [u["text"] for u in event["uncertainties"]], "refusal_reason": None}
-        errors += [{"event_id": event["event_id"], **e} for e in facts.inspect_draft(flat, catalog)["errors"]]
+        checked = facts.inspect_draft(flat, catalog,
+            join_contiguous=author["recipe"] in DATE_GROUNDED_RECIPES)
+        errors += [{"event_id": event["event_id"], **e} for e in checked["errors"]]
     unknowns = draft["uncertainties"] + [u for e in events for u in e["uncertainties"]]
     for unknown in unknowns:
         if not unknown["text"].strip():

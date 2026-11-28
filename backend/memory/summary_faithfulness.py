@@ -87,7 +87,24 @@ def canonical_date(value):
         return None
 
 
-def inspect_draft(summary, catalog):
+def referenced_dates(catalog, refs, *, join_contiguous=False):
+    found = set().union(*(_explicit_dates(catalog[r]["quote"]) for r in refs))
+    if not join_contiguous:
+        return found
+    # A date can straddle the fixed-width source slices; never join across a gap or record.
+    parts = [catalog[r] for r in refs if all(k in catalog[r] for k in ("record_id", "start", "end"))]
+    parts.sort(key=lambda part: (part["record_id"], part["start"]))
+    previous, text = None, ""
+    for part in parts:
+        if previous is None or (previous["record_id"], previous["end"]) != (part["record_id"], part["start"]):
+            found.update(_explicit_dates(text))
+            text = ""
+        text += part["quote"]
+        previous = part
+    return found | _explicit_dates(text)
+
+
+def inspect_draft(summary, catalog, *, join_contiguous=False):
     """Mechanical errors block a draft; overlap is a review hint, never deletion."""
     errors, hints = [], []
 
@@ -128,7 +145,7 @@ def inspect_draft(summary, catalog):
             error("event_date_requires_happened", index)
         if planned is not None and fact["event_status"] not in ("planned", "cancelled"):
             error("planned_date_requires_plan", index)
-        supported = set().union(*(_explicit_dates(catalog[r]["quote"]) for r in refs)) if valid_refs else set()
+        supported = referenced_dates(catalog, refs, join_contiguous=join_contiguous) if valid_refs else set()
         for value in (event, planned):
             if value is not None:
                 canonical = canonical_date(value)

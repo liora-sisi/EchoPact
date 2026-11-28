@@ -5,6 +5,7 @@ import copy
 
 from . import summary_event_booklet as book
 from .caretaker_summary_v2 import _explicit_dates
+from .summary_faithfulness import referenced_dates
 
 RECIPE = "echo-summary-event-author-v2"
 SYSTEM_PROMPT = book.SYSTEM_PROMPT + """
@@ -57,14 +58,14 @@ def prepare_author_window(records):
     return prepared
 
 
-def inspect_text_dates(draft, catalog):
+def inspect_text_dates(draft, catalog, *, join_contiguous=False):
     """Catch literal date overreach, without changing or semantically approving text."""
     errors = []
 
     def check(item, code, **location):
         refs = item["evidence_ids"]
         # Invalid references are already blocked by the host audit.
-        supported = set().union(*(_explicit_dates(catalog[r]["quote"]) for r in refs))
+        supported = referenced_dates(catalog, refs, join_contiguous=join_contiguous)
         if _explicit_dates(item["text"]) - supported:
             errors.append({"code": code, **location})
 
