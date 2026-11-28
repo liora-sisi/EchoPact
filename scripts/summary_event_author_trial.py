@@ -20,6 +20,7 @@ from backend.memory import summary_event_booklet as book
 from backend.memory import summary_event_author_v2 as author
 from backend.memory import summary_event_author_v3 as date_author
 from backend.memory import summary_event_author_v4 as indexed_author
+from backend.memory import summary_event_author_v5 as timeline_author
 from backend.memory import summary_reading_card as cards
 from backend.memory.summary_trial_budget import BudgetLedger
 from scripts import summary_faithfulness_trial as previous
@@ -58,13 +59,15 @@ def _version(suite):
         return "v3"
     if recipe == indexed_author.RECIPE:
         return "v4"
+    if recipe == timeline_author.RECIPE:
+        return "v5"
     raise SummaryError("event_author_unknown_version")
 
 
 def build_suite(*, legacy_schema=False, author_version="v2"):
-    if author_version not in ("v2", "v3", "v4"):
+    if author_version not in ("v2", "v3", "v4", "v5"):
         raise SummaryError("event_author_unknown_version")
-    contract = {"v2": author, "v3": date_author, "v4": indexed_author}[author_version]
+    contract = {"v2": author, "v3": date_author, "v4": indexed_author, "v5": timeline_author}[author_version]
     cases = {case["case_id"]: case for case in previous.build_suite()["reviewer.json"]}
     jobs, reviewers = [], []
     for cid in CASE_IDS:
@@ -75,7 +78,7 @@ def build_suite(*, legacy_schema=False, author_version="v2"):
         payload = {"model": transport.PROVIDERS["openai"]["model"],
             "input": prepared["messages"], "store": False, "stream": False,
             "service_tier": "default", "reasoning": {"effort": "low"},
-            "max_output_tokens": 8000 if author_version == "v3" else MAX_OUTPUT,
+            "max_output_tokens": 8000 if author_version in ("v3", "v5") else MAX_OUTPUT,
             "text": {"format": {"type": "json_schema", "name": "echo_event_booklet",
                                 "strict": True, "schema": prepared["response_schema"] if legacy_schema else provider_schema(prepared["response_schema"])}}}
         jobs.append({"job_id": cid + "-event-" + author_version, "case_id": cid, "author_recipe": contract.RECIPE,
@@ -145,6 +148,8 @@ def inspect_final(final, job, case):
         draft, date_witnesses = date_author.inspect_and_project(draft, case["records"], case["evidence_catalog"])
     elif job["author_recipe"] == indexed_author.RECIPE:
         draft, date_witnesses = indexed_author.inspect_and_project(draft, case["records"], case["evidence_catalog"])
+    elif job["author_recipe"] == timeline_author.RECIPE:
+        draft, date_witnesses = timeline_author.inspect_and_project(draft, case["records"], case["evidence_catalog"])
     try:
         audit = book.make_audit(draft, records=case["records"], catalog=case["evidence_catalog"],
             identity=job["identity"], author={"provider": "openai", "model": final["model"],
@@ -281,7 +286,7 @@ def main(argv=None):
     for name in ("prepare-dir", "suite-dir", "output-dir", "key-file", "ledger"):
         parser.add_argument("--" + name, type=Path)
     parser.add_argument("--enable-api", action="store_true")
-    parser.add_argument("--author-version", choices=("v2", "v3", "v4"), default="v2")
+    parser.add_argument("--author-version", choices=("v2", "v3", "v4", "v5"), default="v2")
     args = parser.parse_args(argv)
     try:
         suite = load_frozen(args.suite_dir) if args.suite_dir else build_suite(author_version=args.author_version)
