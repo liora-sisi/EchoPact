@@ -378,6 +378,50 @@ def read_cards(audit, booklet, *, card_ids, current_records, identity, max_bytes
     return _bounded(copy.deepcopy(packet), max_bytes)
 
 
+def read_events(audit, booklet, *, event_ids, current_records, identity, max_bytes=16384):
+    """Read whole events with required peers, without unrelated physical card neighbours.
+
+    This is a selection/delivery view, not a new summary or relevance decision.
+    Fact text and item IDs match the existing cards and expand() interface.
+    """
+    _current(audit, booklet, current_records, identity)
+    draft = audit["draft"]
+    known = {e["event_id"] for e in draft["events"]}
+    if (not isinstance(event_ids, list) or not event_ids
+            or any(not isinstance(e, str) or e not in known for e in event_ids)
+            or len(event_ids) != len(set(event_ids))):
+        raise SummaryError("event_booklet_unknown_event")
+    selected = set(event_ids)
+    while True:
+        before = set(selected)
+        for relation in draft["relations"]:
+            pair = {relation["from_event"], relation["to_event"]}
+            if relation["kind"] in HARD_LINKS and pair.intersection(selected):
+                selected.update(pair)
+        if selected == before:
+            break
+    blocked = [e for e in booklet["blocked_events"] if e["event_id"] in selected]
+    schema = "echo-summary-event-reading-v1"
+    if blocked:
+        return _bounded({"schema": schema, "book_id": booklet["book_id"],
+            "status": "required_context_unavailable", "blocked_events": blocked,
+            "notice": "所选事件或必要的更正、更新、冲突未能装下，整组暂扣。"}, max_bytes)
+    events = [e for e in draft["events"] if e["event_id"] in selected]
+    packet = {"schema": schema, "book_id": booklet["book_id"], "source": identity,
+        "status": "unapproved_preview", "author_status": draft["status"],
+        "requested_event_ids": event_ids, "included_event_ids": [e["event_id"] for e in events],
+        "events": [_render_event(e) for e in events],
+        "relations": [{"relation_id": f"r{i}", "from_event": r["from_event"], "to_event": r["to_event"],
+                       "kind": r["kind"], "label": LABELS[r["kind"]]} for i, r in enumerate(draft["relations"], 1)
+                      if selected.intersection((r["from_event"], r["to_event"]))],
+        "structural_errors": [e for e in audit["review"]["structural_errors"] if e["event_id"] in selected],
+        "global_uncertainties": [{"item_id": f"u{i}", "text": u["text"]}
+                                  for i, u in enumerate(draft["uncertainties"], 1)],
+        "declared_gaps": draft["gaps"], "semantic_passed": None, "production_accepted": False,
+        "notice": "待复核摘要；完整保留所选事件及必要关联，可按原编号展开；未选事件仍在目录，不代表不存在。"}
+    return _bounded(packet, max_bytes)
+
+
 def expand(audit, booklet, *, item_id, current_records, identity, max_bytes=8192):
     _current(audit, booklet, current_records, identity)
     if not isinstance(item_id, str):

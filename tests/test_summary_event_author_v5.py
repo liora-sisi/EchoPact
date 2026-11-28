@@ -50,6 +50,8 @@ def test_cancellation_time_and_scheduled_day_survive_cards_and_raw_is_immutable(
     assert fact["time_context"]["cancelled_at"] == "2044-02-06"
     booklet = book.build_booklet(audit)
     body = booklet["cards"][0]["events"][0]["body"]
+    selected = book.read_events(audit, booklet, event_ids=["e1"], current_records=records, identity=identity)
+    assert selected["events"][0]["body"] == body
     assert "历史安排" in body and "后续=e1.f2" in body and "计划中" not in body
     assert "原定日=2044-02-09" in body and "取消决定日=2044-02-06" in body
     assert "仍期待以后和爱人一起去" in body and "尚未约定" in body
