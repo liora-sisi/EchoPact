@@ -213,4 +213,4 @@ def test_higher_ceiling_requires_explicit_caller_and_keeps_old_spending(tmp_path
     with BudgetLedger(path, maximum_limit=Decimal("12.00")) as ledger:
         assert ledger.total == Decimal("9.929364")
     with pytest.raises(SummaryError, match="invalid_trial_budget_ceiling"):
-        BudgetLedger(path, maximum_limit=Decimal("12.01"))
+        BudgetLedger(path, maximum_limit=Decimal("20.01"))

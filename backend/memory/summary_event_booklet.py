@@ -17,6 +17,8 @@ from . import summary_faithfulness as facts
 from . import summary_reading_card as reading
 
 RECIPE = "echo-summary-event-author-v1"
+# V2 changes authoring instructions, not the immutable V1 audit representation.
+AUTHOR_RECIPES = {RECIPE, "echo-summary-event-author-v2"}
 AUDIT_SCHEMA = "echo-summary-event-audit-v1"
 BOOK_SCHEMA = "echo-summary-event-booklet-v1"
 MAX_FACTS = 128
@@ -114,7 +116,7 @@ def make_audit(draft, *, records, catalog, identity, author):
     reading._sources(records, catalog, extended=True)
     if (not isinstance(author, dict) or set(author) != {"provider", "model", "recipe", "prompt_sha256"}
             or any(not isinstance(v, str) or not 1 <= len(v) <= 120 for v in author.values())
-            or author["recipe"] != RECIPE or not re.fullmatch(r"[0-9a-f]{64}", author["prompt_sha256"])):
+            or author["recipe"] not in AUTHOR_RECIPES or not re.fullmatch(r"[0-9a-f]{64}", author["prompt_sha256"])):
         raise SummaryError("event_booklet_invalid_author")
     if len(reading.compact(draft)) > MAX_DRAFT_BYTES:
         raise SummaryError("event_booklet_draft_budget_exceeded")

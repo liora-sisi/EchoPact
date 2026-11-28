@@ -47,6 +47,34 @@ PRICE_RECHECK_AFTER = date(2026, 11, 30)
 ASSESSMENT_REVISION = "comprehensive-structure-v2-complete-date-forms"
 
 
+def http_error_diagnostic(raw, secret):
+    """Only known error categories, never echoed prompts, headers or arbitrary text."""
+    if not isinstance(raw, bytes) or len(raw) > 16384 or secret.encode() in raw:
+        return {}
+    try:
+        error = json.loads(raw).get("error", {})
+        if not isinstance(error, dict):
+            return {}
+    except (ValueError, TypeError, AttributeError):
+        return {}
+    result = {}
+    for field, allowed in {
+        "code": {"invalid_json_schema", "invalid_value", "unsupported_value", "invalid_api_key", "insufficient_quota"},
+        "type": {"invalid_request_error", "authentication_error", "insufficient_quota"},
+        "param": {"text.format", "text.format.schema", "response_format", "model", "max_output_tokens"},
+    }.items():
+        value = error.get(field)
+        if isinstance(value, str) and value in allowed:
+            result[field] = value
+    message = error.get("message")
+    if isinstance(message, str) and "schema" in message.lower():
+        keywords = [word for word in ("uniqueItems", "additionalProperties", "required", "minItems", "maxItems", "pattern")
+                    if "'" + word + "'" in message or '"' + word + '"' in message]
+        if keywords:
+            result["mentioned_schema_keywords"] = keywords
+    return result
+
+
 def protected(path):
     path, root = Path(path).resolve(), exam.PRIVATE_ROOT.resolve()
     if path == root or root not in path.parents:
@@ -147,7 +175,12 @@ class Client:
             with urllib.request.build_opener(_NoRedirect()).open(req, timeout=180) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as error:
-            raise SummaryError(f"{self.provider}_http_{error.code}") from None
+            failure = SummaryError(f"{self.provider}_http_{error.code}")
+            try:
+                failure.provider_diagnostic = http_error_diagnostic(error.read(16385), self.api_key)
+            except Exception:
+                failure.provider_diagnostic = {}
+            raise failure from None
         except SummaryError:
             raise
         except Exception:
