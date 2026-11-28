@@ -23,6 +23,7 @@
 | 事件作者首稿、日期原句及时间角色复验 | [SUMMARY_TIMELINE_REVIEW.md](SUMMARY_TIMELINE_REVIEW.md) |
 | 保留首稿的有界校对、部分日期保真、正确对照与剩余阅读成本 | [SUMMARY_STATE_REVIEW.md](SUMMARY_STATE_REVIEW.md) |
 | 按事件选读、必要纠正联读与完整阅读包的零调用体积对照 | [SUMMARY_EVENT_DELIVERY.md](SUMMARY_EVENT_DELIVERY.md) |
+| 自然问句的目录选读、原文回查、首轮留痕与整趟累计开销 | [SUMMARY_DIRECT_READING_TRIAL.md](SUMMARY_DIRECT_READING_TRIAL.md) |
 | 入库侧摘要柜、查询侧原文回溯与两种模型职责 | [SUMMARY_CABINET.md](SUMMARY_CABINET.md) |
 | OpenAI / Venice 同题摘要对照与独立预算 | [OPENAI_SUMMARY_COMPARISON.md](OPENAI_SUMMARY_COMPARISON.md) |
 | 助手自然问法、追查轮次与上下文负担实测 | [ASSISTANT_RECALL_BASELINE.md](ASSISTANT_RECALL_BASELINE.md) |

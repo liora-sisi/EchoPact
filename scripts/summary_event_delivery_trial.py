@@ -75,10 +75,11 @@ def compare(audit, booklet, records):
         "semantic_passed": None, "production_accepted": False}, packets
 
 
-def replay(suite_directory, first_directory, prior_directory, output_directory):
+def load_cases(suite_directory, first_directory, prior_directory):
+    """Revalidate frozen source/answers before either delivery or reading trials."""
     paths = [review_trial.transport.protected(p) for p in
-             (suite_directory, first_directory, prior_directory, output_directory)]
-    suite_directory, first_directory, prior_directory, output_directory = paths
+             (suite_directory, first_directory, prior_directory)]
+    suite_directory, first_directory, prior_directory = paths
     suite = review_trial.load_frozen(suite_directory, first_directory, review_version="v3")
     observed = {}
     def read(path):
@@ -87,10 +88,7 @@ def replay(suite_directory, first_directory, prior_directory, output_directory):
         return json.loads(blob)
     if read(prior_directory / "manifest.json") != suite["manifest.json"]:
         raise SummaryError("delivery_comparison_changed_run")
-    report = {"schema": RECIPE, "model_calls": 0, "source_kind": "synthetic_only",
-        "evaluation": "explicit_event_selection_delivery_not_retrieval_or_semantic_acceptance",
-        "production_accepted": False, "cases": []}
-    artifacts = {}
+    cases = []
     for job, case in zip(suite["jobs.json"], suite["reviewer.json"]):
         folder = prior_directory / job["job_id"]
         if (read(folder / "request.json") != job["request"]
@@ -101,12 +99,27 @@ def replay(suite_directory, first_directory, prior_directory, output_directory):
         for name in ("audit", "booklet", "candidate-raw"):
             if read(folder / (name + ".json")) != inspected[name]:
                 raise SummaryError("delivery_comparison_changed_artifact")
-        measured, packets = compare(inspected["audit"], inspected["booklet"], case["records"])
-        measured.update(case_id=case["case_id"], first_review_response_sha256=observed[folder / "final-response.json"])
-        report["cases"].append(measured)
-        artifacts[case["case_id"]] = packets
+        cases.append({"case_id": case["case_id"], "records": case["records"],
+            "audit": inspected["audit"], "booklet": inspected["booklet"],
+            "first_review_response_sha256": observed[folder / "final-response.json"]})
     if any(hashlib.sha256(p.read_bytes()).hexdigest() != sha for p, sha in observed.items()):
         raise SummaryError("delivery_comparison_input_changed_during_replay")
+    return cases
+
+
+def replay(suite_directory, first_directory, prior_directory, output_directory):
+    cases = load_cases(suite_directory, first_directory, prior_directory)
+    report = {"schema": RECIPE, "model_calls": 0, "source_kind": "synthetic_only",
+        "evaluation": "explicit_event_selection_delivery_not_retrieval_or_semantic_acceptance",
+        "production_accepted": False, "cases": []}
+    artifacts = {}
+    for case in cases:
+        measured, packets = compare(case["audit"], case["booklet"], case["records"])
+        measured.update(case_id=case["case_id"],
+            first_review_response_sha256=case["first_review_response_sha256"])
+        report["cases"].append(measured)
+        artifacts[case["case_id"]] = packets
+    output_directory = review_trial.transport.protected(output_directory)
     output_directory.mkdir(parents=True, exist_ok=False)
     for name, data in {"report": report, **artifacts}.items():
         review_trial.transport.write_new(output_directory / (name + ".json"), data)
